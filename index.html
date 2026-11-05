@@ -53,7 +53,8 @@ label.inline select,label.inline input{width:auto;margin:0}
 .gate-box{width:min(430px,100%);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:2rem}
 .gate h1{font-size:1.65rem;margin:0 0 .2rem;letter-spacing:-.03em}
 .gate .sub{color:var(--muted);margin:0 0 1rem}
-.gate .primary{width:100%;margin-top:.4rem;padding:.65rem}
+.gate .primary,.gate .wide{width:100%;margin-top:.4rem;padding:.65rem}
+.gate .or{margin-top:1.4rem;padding-top:1rem;border-top:1px solid var(--line)}
 .msg{color:var(--stamp);min-height:1.3em;font-size:.9rem;margin:.6rem 0 0}
 .gate-foot{display:flex;justify-content:space-between;gap:1rem;margin-top:1.2rem;font-size:.85rem;flex-wrap:wrap}
 .gate-foot label,.gate-foot button{margin:0;color:var(--accent);cursor:pointer;background:none;border:0;padding:0;font-size:.85rem}
@@ -239,7 +240,9 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
       <p id="gateMsg" class="msg" role="status"></p>
     </div>
     <div id="gateNew" hidden>
-      <p class="hint">새 대장을 만듭니다. 여기서 정한 비밀번호로 데이터 전체가 암호화됩니다. 비밀번호를 잊으면 복구할 수 없으니 따로 보관하세요.</p>
+      <p class="hint">다른 PC에서 쓰던 대장이 있으면 Drive 유틸 폴더의 data.enc.json을 여세요.</p>
+      <button type="button" class="ghost wide" id="btnOpenFile">Drive에서 대장 파일 열기</button>
+      <p class="hint or">처음 쓰는 경우에만 새 대장을 만드세요. 여기서 정한 비밀번호로 데이터 전체가 암호화됩니다. 비밀번호를 잊으면 복구할 수 없으니 따로 보관하세요.</p>
       <label>새 비밀번호 (10자 이상)<input type="password" id="pw1" autocomplete="new-password"></label>
       <label>비밀번호 확인<input type="password" id="pw2" autocomplete="new-password"></label>
       <label class="check"><input type="checkbox" id="withSample" checked> 예시 데이터 넣기 (나중에 지울 수 있음)</label>
@@ -247,7 +250,7 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
       <p id="gateMsg2" class="msg" role="status"></p>
     </div>
     <div class="gate-foot">
-      <label>암호화 파일 직접 열기<input type="file" id="gateFile" accept=".json,application/json" hidden></label>
+      <label id="gateFileLink">다른 대장 파일 열기<input type="file" id="gateFile" accept=".json,application/json" hidden></label>
       <button id="gateToNew" hidden>새 대장으로 시작</button>
       <button id="gateToUnlock" hidden>기존 대장 열기</button>
     </div>
@@ -449,6 +452,7 @@ function showGate(mode){
   const u = mode === 'unlock';
   $('#gateUnlock').hidden = !u; $('#gateNew').hidden = u;
   $('#gateToNew').hidden = !u; $('#gateToUnlock').hidden = u || !(remoteBlob || localBlob);
+  $('#gateFileLink').hidden = !u;
   (u ? $('#pw') : $('#pw1')).focus();
 }
 async function unlock(){
@@ -463,23 +467,24 @@ async function unlock(){
   if(remote && local && (local.data.meta?.updatedAt || '') > (remote.data.meta?.updatedAt || '')) pick = local;
   remoteUpdatedAt = remote ? (remote.data.meta?.updatedAt || null) : null;
   db = migrate(pick.data); key = pick.key; salt = pick.salt; iterUsed = pick.iter;
+  try{exportedAt = localStorage.getItem(LS_KEY + '-exported');}catch{}
   await persistLocal();
   enterApp();
-  if(remoteBlob && !remote) toast('저장소 파일은 이 비밀번호로 열리지 않아, 이 브라우저에 저장된 사본을 열었습니다.');
-  else if(remote && pick === local) toast('저장소에 아직 올리지 않은 최근 변경을 불러왔습니다.');
+  if(remoteBlob && !remote) toast('고른 파일은 이 비밀번호로 열리지 않아, 이 브라우저에 저장된 사본을 열었습니다.');
+  else if(remote && pick === local) toast('이 브라우저에 있는 내용이 고른 파일보다 최신이라 그것을 열었습니다. 작업 후 Drive 파일을 새로 저장하세요.');
 }
 async function createNew(){
   const a = $('#pw1').value, b = $('#pw2').value, msg = $('#gateMsg2');
   if(a.length < 10){msg.textContent = '비밀번호는 10자 이상으로 정하세요.'; return;}
   if(a !== b){msg.textContent = '두 비밀번호가 다릅니다.'; return;}
-  if(localBlob && !confirm('이 브라우저에 저장된 기존 대장을 새 대장으로 덮어씁니다. 저장소에 올린 파일은 그대로 남습니다. 계속할까요?')) return;
+  if(localBlob && !confirm('이 브라우저에 저장된 기존 대장을 새 대장으로 덮어씁니다. Drive에 저장한 파일은 그대로 남습니다. 계속할까요?')) return;
   msg.textContent = '만드는 중…';
   salt = crypto.getRandomValues(new Uint8Array(16)); iterUsed = ITER;
   key = await deriveKey(a, salt, ITER);
   db = newDb($('#withSample').checked); remoteUpdatedAt = null; remoteBlob = null;
   await persistLocal();
   enterApp();
-  toast('새 대장을 만들었습니다. ‘암호화 파일 받기’로 받은 파일을 저장소에 올리세요.');
+  toast('새 대장을 만들었습니다. ‘암호화 파일 받기’로 받은 파일을 Drive 유틸 폴더에 저장하세요.');
 }
 function enterApp(){$('#gate').hidden = true; $('#app').hidden = false; render();}
 
@@ -487,16 +492,17 @@ function enterApp(){$('#gate').hidden = true; $('#app').hidden = false; render()
 function commit(){db.meta.updatedAt = nowIso(); render(); persistLocal();}
 function updateSaveState(){
   const el = $('#saveState'); let text, dirty = false;
-  if(remoteUpdatedAt && db.meta.updatedAt === remoteUpdatedAt) text = '저장소 파일과 같습니다';
-  else if(exportedAt === db.meta.updatedAt) text = '받은 파일을 저장소에 올리면 반영됩니다';
-  else {text = '저장소에 올리지 않은 변경이 있습니다'; dirty = true;}
+  if(remoteUpdatedAt && db.meta.updatedAt === remoteUpdatedAt) text = '연 파일과 같습니다';
+  else if(exportedAt === db.meta.updatedAt) text = '최신 파일을 받아 두었습니다';
+  else {text = 'Drive에 저장할 변경이 있습니다'; dirty = true;}
   el.textContent = text; el.classList.toggle('dirty', dirty);
 }
 async function exportEnc(){
   const b = await encryptDb();
   download('data.enc.json', JSON.stringify(b));
   exportedAt = db.meta.updatedAt; updateSaveState();
-  toast('data.enc.json을 받았습니다. 저장소에 같은 이름으로 올리면 다른 PC에서도 열립니다.');
+  try{localStorage.setItem(LS_KEY + '-exported', exportedAt);}catch{}
+  toast('data.enc.json을 받았습니다. Drive 유틸 폴더의 기존 파일에 같은 이름으로 덮어쓰세요.');
 }
 
 /* ---------- render ---------- */
@@ -1132,12 +1138,12 @@ function openDataMenu(){
       </div>
       <div class="dlg-section">
         <h4>비밀번호 변경</h4>
-        <p class="hint">바꾼 뒤에는 암호화 파일을 새로 받아 저장소에 올려야 다른 PC에서 새 비밀번호로 열립니다.</p>
+        <p class="hint">바꾼 뒤에는 암호화 파일을 새로 받아 Drive에 저장해야 다른 PC에서 새 비밀번호로 열립니다. Drive의 이전 버전 파일은 예전 비밀번호로 열립니다.</p>
         <div class="row2"><input type="password" name="npw" placeholder="새 비밀번호 (비우면 유지)" autocomplete="new-password"><input type="password" name="npw2" placeholder="새 비밀번호 확인" autocomplete="new-password"></div>
       </div>
       <div class="dlg-section">
         <h4>백업</h4>
-        <p class="hint">평문 JSON은 암호화되지 않습니다. 저장소에 올리지 말고 개인 Drive 보관용으로만 쓰세요.</p>
+        <p class="hint">평문 JSON은 암호화되지 않습니다. 공유 폴더나 GitHub에 두지 말고 개인 폴더에만 보관하세요.</p>
         <div class="btn-row"><button type="button" class="ghost" data-act="plain">평문 JSON 받기</button><label class="btn">JSON 가져오기<input type="file" data-act="import" accept=".json,application/json" hidden></label></div>
       </div>`,
     onSave(fd){
@@ -1156,7 +1162,7 @@ function openDataMenu(){
           salt = crypto.getRandomValues(new Uint8Array(16)); iterUsed = ITER;
           key = await deriveKey(np, salt, ITER);
           $('#dlg').close(); commit();
-          toast('비밀번호를 바꿨습니다. 암호화 파일을 새로 받아 저장소에 올리세요.');
+          toast('비밀번호를 바꿨습니다. 암호화 파일을 새로 받아 Drive에 저장하세요.');
         })();
         return false;
       }
@@ -1168,7 +1174,7 @@ function openDataMenu(){
         const file = e.target.files[0]; if(!file) return;
         try{
           const obj = JSON.parse(await file.text());
-          if(obj.ct){toast('암호화 파일은 잠근 뒤 첫 화면의 ‘암호화 파일 직접 열기’로 여세요.'); return;}
+          if(obj.ct){toast('암호화 파일은 잠근 뒤 첫 화면의 ‘다른 대장 파일 열기’로 여세요.'); return;}
           if(!Array.isArray(obj.clients) || !Array.isArray(obj.records)){toast('업무 대장 백업 파일이 아닙니다.'); return;}
           if(!confirm(`현재 데이터를 이 파일 내용(업체 ${obj.clients.length}곳, 기록 ${obj.records.length}건)으로 바꿉니다. 계속할까요?`)) return;
           db = migrate(obj); $('#dlg').close(); route = {name:'home', id:null}; commit(); toast('백업 파일을 불러왔습니다.');
@@ -1251,6 +1257,7 @@ $('#btnCreate').onclick = createNew;
 $('#pw2').addEventListener('keydown', e => {if(e.key === 'Enter') createNew();});
 $('#gateToNew').onclick = () => showGate('new');
 $('#gateToUnlock').onclick = () => showGate('unlock');
+$('#btnOpenFile').onclick = () => $('#gateFile').click();
 $('#gateFile').addEventListener('change', async e => {
   const file = e.target.files[0]; if(!file) return;
   try{
