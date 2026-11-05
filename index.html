@@ -1,0 +1,1267 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>BSGC 업무 대장</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --ink:#16202A; --muted:#5B6774; --line:#D3D9DF;
+  --accent:#1E4E79; --accent-ink:#FFFFFF; --stamp:#B3261E; --stamp-bg:#FBEDEC; --chip:#E3E9EF;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#11161B; --surface:#1A2128; --ink:#E6EBEF; --muted:#95A1AC; --line:#2C3640;
+    --accent:#7FB0DC; --accent-ink:#0E1A26; --stamp:#F07167; --stamp-bg:#2A1B1C; --chip:#24303A;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{font-family:Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h2{font-size:1.5rem;margin:0;letter-spacing:-.02em;line-height:1.3}
+h3{font-size:1.05rem;margin:0;letter-spacing:-.01em}
+h4{font-size:1rem;margin:0;font-weight:650}
+.primary{background:var(--accent);color:var(--accent-ink);border:0;border-radius:6px;padding:.5rem .9rem;font-weight:600}
+.ghost,.btn{background:transparent;border:1px solid var(--line);border-radius:6px;padding:.45rem .8rem;text-decoration:none;display:inline-block;color:var(--ink)}
+.mini{background:transparent;border:1px solid var(--line);border-radius:4px;padding:.1rem .55rem;font-size:.84rem;color:var(--muted);white-space:nowrap}
+.mini.strong{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.danger{background:transparent;border:1px solid var(--stamp);color:var(--stamp);border-radius:6px;padding:.45rem .8rem}
+.linkish{background:none;border:0;padding:0;color:var(--accent);font-size:inherit;text-align:left}
+input,select,textarea{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.5rem .6rem}
+input[type=checkbox]{width:auto;accent-color:var(--accent)}
+textarea{resize:vertical;line-height:1.55}
+label{display:block;font-size:.88rem;color:var(--muted);margin:.7rem 0}
+label>input,label>select,label>textarea{margin-top:.25rem}
+label.check{display:flex;gap:.5rem;align-items:center;color:var(--ink)}
+label.check input{margin:0}
+label.inline{display:flex;gap:.5rem;align-items:center;margin:0;white-space:nowrap}
+label.inline select,label.inline input{width:auto;margin:0}
+.hint{color:var(--muted);font-size:.85rem}
+.empty{color:var(--muted);padding:1rem 0;margin:0}
+.cnt{color:var(--muted);font-weight:400;font-size:.85rem}
+
+/* gate */
+.gate{min-height:100vh;display:grid;place-items:center;padding:1.5rem}
+.gate-box{width:min(430px,100%);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:2rem}
+.gate h1{font-size:1.65rem;margin:0 0 .2rem;letter-spacing:-.03em}
+.gate .sub{color:var(--muted);margin:0 0 1rem}
+.gate .primary{width:100%;margin-top:.4rem;padding:.65rem}
+.msg{color:var(--stamp);min-height:1.3em;font-size:.9rem;margin:.6rem 0 0}
+.gate-foot{display:flex;justify-content:space-between;gap:1rem;margin-top:1.2rem;font-size:.85rem;flex-wrap:wrap}
+.gate-foot label,.gate-foot button{margin:0;color:var(--accent);cursor:pointer;background:none;border:0;padding:0;font-size:.85rem}
+
+/* shell */
+.top{position:sticky;top:0;z-index:5;display:flex;gap:1rem;align-items:center;padding:.7rem 1.25rem;background:var(--surface);border-bottom:1px solid var(--line)}
+.brand{border:0;background:none;font-weight:800;font-size:1.05rem;letter-spacing:-.02em;padding:0;white-space:nowrap}
+.search{flex:1;max-width:560px}
+.top-actions{display:flex;gap:.5rem;align-items:center;margin-left:auto}
+.save-state{font-size:.82rem;color:var(--muted);max-width:15rem;line-height:1.3;text-align:right}
+.save-state.dirty{color:var(--stamp)}
+.layout{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:calc(100vh - 58px)}
+.side{border-right:1px solid var(--line);padding:1rem .75rem}
+.side-link,#clientList button{display:flex;justify-content:space-between;gap:.5rem;width:100%;text-align:left;background:none;border:0;padding:.4rem .6rem;border-radius:6px}
+.side-link.on,#clientList button.on{background:var(--chip);font-weight:600}
+.side-head{display:flex;justify-content:space-between;align-items:center;margin:1.2rem .6rem .4rem;font-size:.85rem;color:var(--muted)}
+#clientList{list-style:none;margin:0;padding:0}
+.side-empty{padding:.4rem .6rem;font-size:.88rem}
+.view{padding:1.75rem 2rem 4rem;max-width:1200px}
+
+/* home */
+.home-intro p{max-width:62ch;color:var(--muted);margin:.4rem 0 0}
+.quick{display:flex;gap:.5rem;margin-top:1.1rem;flex-wrap:wrap}
+.two-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5rem;margin-top:2.25rem}
+.sec-head{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;border-bottom:2px solid var(--ink);padding-bottom:.4rem}
+.more{margin-top:.6rem}
+
+/* records */
+.rec{display:grid;grid-template-columns:6.2rem minmax(0,1fr) auto;gap:.75rem;padding:.9rem 0;border-bottom:1px solid var(--line)}
+.rec-date{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.88rem;padding-top:.08rem;line-height:1.35}
+.rec-date small{display:block;font-size:.75rem}
+.rec-head{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.rec-meta{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;margin-top:.25rem;font-size:.85rem;color:var(--muted)}
+.rec-act{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
+.tag{background:var(--chip);border-radius:4px;padding:0 .45rem;font-size:.8rem;color:var(--ink)}
+.tag.type{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.ref{font-variant-numeric:tabular-nums}
+.tags{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.45rem}
+.links{margin-top:.35rem;display:flex;gap:.8rem;flex-wrap:wrap}
+.links a{font-size:.85rem;color:var(--accent)}
+.rec-sum{margin:.4rem 0 0;white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.rec-sum.open{display:block}
+.stamp{display:inline-block;border:2px solid var(--stamp);color:var(--stamp);border-radius:5px;padding:0 .38rem;font-size:.74rem;font-weight:800;line-height:1.45;transform:rotate(-6deg);letter-spacing:.06em;flex:none}
+.stamp.sm{font-size:.66rem;border-width:1.5px;padding:0 .3rem}
+.status{font-size:.74rem;font-weight:700;border-radius:4px;padding:0 .4rem;line-height:1.6}
+.status.진행중{background:var(--accent);color:var(--accent-ink)}
+.status.보류{background:var(--chip);color:var(--muted)}
+.special-note{margin-top:.55rem;background:var(--stamp-bg);border-left:3px solid var(--stamp);padding:.5rem .75rem;border-radius:0 6px 6px 0}
+.special-note strong{font-size:.8rem;color:var(--stamp)}
+.special-note .rec-sum{margin-top:.15rem}
+.reflected{font-size:.78rem;color:var(--muted)}
+mark{background:#FFE58A;color:#16202A;border-radius:2px;padding:0 1px}
+
+/* d-day */
+.dday{font-variant-numeric:tabular-nums;font-weight:700;font-size:.78rem;border-radius:4px;padding:0 .4rem;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.dday.soon{color:var(--stamp);border-color:var(--stamp)}
+.dday.over{background:var(--stamp);border-color:var(--stamp);color:#fff}
+.dl-chip{display:inline-flex;gap:.3rem;align-items:center;font-size:.8rem}
+.dl-row{display:grid;grid-template-columns:auto 4.6rem minmax(0,1fr);gap:.6rem;align-items:start;padding:.6rem 0;border-bottom:1px solid var(--line)}
+.dl-row input{margin-top:.3rem}
+.dl-row .dday{justify-self:start;margin-top:.15rem}
+
+/* checklist */
+.progress{height:4px;background:var(--chip);border-radius:2px;margin-top:.55rem;overflow:hidden;max-width:320px}
+.progress i{display:block;height:100%;background:var(--accent)}
+details.ck summary{cursor:pointer;font-size:.85rem;color:var(--muted);margin-top:.3rem}
+.ck ul{list-style:none;padding:0;margin:.3rem 0 .2rem}
+.ck li label{display:flex;gap:.45rem;align-items:flex-start;margin:.1rem 0;color:var(--ink);font-size:.9rem}
+.ck li label input{margin-top:.3rem}
+.ck li.done span{color:var(--muted);text-decoration:line-through}
+.ck li small{color:var(--muted);font-size:.75rem;margin-left:.3rem}
+.ck .ck-sub{font-size:.8rem;color:var(--muted);margin:.4rem 0 0}
+
+/* client */
+.client-head{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:flex-start}
+.client-meta{color:var(--muted);margin:.25rem 0 0}
+.client-act{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+.client-notes{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.75rem 1rem;white-space:pre-wrap;max-width:75ch;margin:1rem 0 0}
+.chips{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:1.25rem}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:.2rem .8rem;font-size:.88rem}
+.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.client-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:2.5rem;margin-top:1.75rem}
+.items{margin-top:1.75rem}
+.narrow{max-width:780px;margin-top:1.5rem}
+
+/* tables */
+.table-wrap{overflow-x:auto}
+table.grid{width:100%;border-collapse:collapse;font-size:.9rem}
+table.grid th,table.grid td{text-align:left;padding:.5rem .55rem;border-bottom:1px solid var(--line);vertical-align:top}
+table.grid th{font-weight:600;color:var(--muted);font-size:.82rem;white-space:nowrap}
+table.grid td.pre{white-space:pre-wrap;min-width:14rem}
+table.grid .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.grid .hs{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* procedures */
+.proc{padding:1rem 0;border-bottom:1px solid var(--line)}
+.proc header{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.proc header .p-act{margin-left:auto;display:flex;gap:.3rem}
+.proc ol{margin:.6rem 0 0;padding-left:1.5rem}
+.proc li{margin:.15rem 0}
+.proc li::marker{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums}
+.proc-docs,.proc-caution{margin-top:.55rem;font-size:.9rem}
+.proc-docs p,.proc-caution p{margin:.1rem 0 0;white-space:pre-wrap}
+.proc-caution strong{color:var(--stamp)}
+.proc.is-common h4{color:var(--muted)}
+.note{font-size:.8rem;color:var(--muted)}
+.upd{font-size:.78rem;color:var(--muted);margin-top:.45rem}
+
+/* search, report */
+.filters{display:flex;gap:1.25rem;align-items:center;flex-wrap:wrap;margin:1rem 0 .5rem}
+.filters label.check{margin:0}
+.result-block{margin-top:1.75rem}
+.result-block .chips{margin-top:.75rem}
+.report-lead{max-width:66ch;color:var(--muted);margin:.75rem 0 0}
+.bars{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:.4rem;align-items:end;height:150px;margin-top:1.75rem;max-width:760px}
+.bar{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end;height:100%;font-size:.75rem;color:var(--muted);background:none;border:0;padding:0;text-align:center}
+.bar i{display:block;background:var(--line);border-radius:3px 3px 0 0;min-height:2px}
+.bar.on i{background:var(--accent)}
+.bar b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.bar span{margin-top:.2rem}
+
+/* dialog */
+dialog{border:1px solid var(--line);border-radius:10px;padding:0;background:var(--surface);color:var(--ink);width:min(720px,94vw);max-height:92vh}
+dialog::backdrop{background:rgba(10,15,20,.45)}
+.dlg{display:flex;flex-direction:column;max-height:92vh}
+.dlg>h3{padding:1rem 1.25rem;border-bottom:1px solid var(--line)}
+.dlg-body{padding:.25rem 1.25rem 1rem;overflow:auto}
+.dlg footer{display:flex;gap:.5rem;padding:.8rem 1.25rem;border-top:1px solid var(--line)}
+.sp{flex:1}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+.dlg-section{border-top:1px solid var(--line);margin-top:1rem;padding-top:.25rem}
+.dlg-section h4{margin:.75rem 0 .25rem}
+.dlg-section p{margin:.25rem 0 .6rem}
+.btn-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.btn-row select{flex:1;min-width:12rem;width:auto}
+.btn-row label{margin:0;cursor:pointer;color:var(--ink)}
+.dl-list{list-style:none;padding:0;margin:.4rem 0}
+.dl-list li{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.3rem 0;border-bottom:1px dashed var(--line)}
+.dl-list li .mini{margin-left:auto}
+.dl-add{display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap}
+.dl-add label{margin:.4rem 0 0;flex:1;min-width:9rem}
+.dl-add button{flex:none}
+.related{margin-top:1rem;border-top:1px dashed var(--line);padding-top:.25rem;font-size:.88rem}
+.related h4{font-size:.85rem;margin:.75rem 0 .2rem;color:var(--muted);font-weight:600}
+.related ul{list-style:none;padding:0;margin:0}
+.related li{padding:.25rem 0}
+.related .rec-date{font-size:.82rem;margin-right:.3rem}
+.mini-ol{margin:.15rem 0 .3rem;padding-left:1.3rem;color:var(--muted)}
+.setup{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:1rem 1.25rem;max-width:70ch;margin-top:1.25rem}
+.setup ol{padding-left:1.3rem;margin:.4rem 0}
+
+.toast{position:fixed;bottom:1.25rem;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:.6rem 1rem;border-radius:8px;font-size:.9rem;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;z-index:20}
+.toast.show{opacity:1}
+
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr}
+  .side{border-right:0;border-bottom:1px solid var(--line);display:flex;gap:.25rem;overflow-x:auto;padding:.5rem;align-items:center}
+  .side-head{margin:0 .4rem;white-space:nowrap}
+  #clientList{display:flex;gap:.25rem}
+  #clientList button,.side-link{white-space:nowrap;width:auto}
+  .two-col,.client-grid,.row2{grid-template-columns:1fr}
+  .view{padding:1.1rem 1rem 3rem}
+  .top{flex-wrap:wrap;padding:.6rem 1rem}
+  .search{order:3;flex-basis:100%;max-width:none}
+  .save-state{display:none}
+  .rec{grid-template-columns:minmax(0,1fr) auto}
+  .rec-date{grid-column:1/-1;padding:0}
+  .rec-date small{display:inline;margin-left:.3rem}
+}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+@media print{.top,.side,.mini,.client-act,.quick,.rec-act{display:none!important}.layout{display:block}}
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate">
+  <div class="gate-box">
+    <h1>BSGC 업무 대장</h1>
+    <p class="sub">업체별 처리 절차와 업무 기록을 모아 두는 곳입니다.</p>
+    <div id="gateUnlock" hidden>
+      <label>비밀번호<input type="password" id="pw" autocomplete="current-password"></label>
+      <button id="btnUnlock" class="primary">열기</button>
+      <p id="gateMsg" class="msg" role="status"></p>
+    </div>
+    <div id="gateNew" hidden>
+      <p class="hint">새 대장을 만듭니다. 여기서 정한 비밀번호로 데이터 전체가 암호화됩니다. 비밀번호를 잊으면 복구할 수 없으니 따로 보관하세요.</p>
+      <label>새 비밀번호 (10자 이상)<input type="password" id="pw1" autocomplete="new-password"></label>
+      <label>비밀번호 확인<input type="password" id="pw2" autocomplete="new-password"></label>
+      <label class="check"><input type="checkbox" id="withSample" checked> 예시 데이터 넣기 (나중에 지울 수 있음)</label>
+      <button id="btnCreate" class="primary">새 대장 만들기</button>
+      <p id="gateMsg2" class="msg" role="status"></p>
+    </div>
+    <div class="gate-foot">
+      <label>암호화 파일 직접 열기<input type="file" id="gateFile" accept=".json,application/json" hidden></label>
+      <button id="gateToNew" hidden>새 대장으로 시작</button>
+      <button id="gateToUnlock" hidden>기존 대장 열기</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header class="top">
+    <button class="brand" data-go="home">BSGC 업무 대장</button>
+    <div class="search"><input id="q" type="search" placeholder="업체, 신고번호, 품목, HS 코드, 특이사항 검색 ( / 키)" aria-label="검색"></div>
+    <div class="top-actions">
+      <span id="saveState" class="save-state" role="status"></span>
+      <button id="btnExport" class="primary">암호화 파일 받기</button>
+      <button id="btnData" class="ghost">데이터</button>
+      <button id="btnLock" class="ghost">잠그기</button>
+    </div>
+  </header>
+  <div class="layout">
+    <nav class="side" aria-label="이동">
+      <button class="side-link" data-go="home">홈</button>
+      <button class="side-link" data-go="active"><span>진행 중 업무</span><span class="cnt" id="cntActive"></span></button>
+      <button class="side-link" data-go="mail"><span>메일 초안</span><span class="cnt" id="cntMail"></span></button>
+      <button class="side-link" data-go="report">월간 리포트</button>
+      <button class="side-link" data-go="common">공통 절차</button>
+      <div class="side-head"><span>업체</span><button class="mini" data-new-client>추가</button></div>
+      <ul id="clientList"></ul>
+    </nav>
+    <main id="view" class="view"></main>
+  </div>
+</div>
+
+<dialog id="dlg"></dialog>
+<div id="toast" class="toast" aria-live="polite"></div>
+
+<script>
+'use strict';
+const ITER = 310000;
+const LS_KEY = 'bsgc-ledger-v1';
+const GMAIL_ACCOUNT = 0; // Gmail 계정이 여러 개면 숫자를 바꾸세요 (mail/u/0, u/1 ...)
+const DEFAULT_TYPES = ['수입통관','수출신고','요건확인·검역','화학물질','품목분류','관세환급','외환신고','AEO','FTA원산지','기타'];
+const STATUSES = ['진행중','보류','완료'];
+// 법정 기한 계산 규칙 (일반 규정 기준 참고값)
+const DL_RULES = [
+  {kind:'FTA 사후적용 신청', base:'수입신고 수리일', n:1, u:'y'},
+  {kind:'세액 보정신청', base:'신고납부일', n:6, u:'m'},
+  {kind:'경정청구', base:'최초 신고납부일', n:5, u:'y'},
+  {kind:'수출물품 적재기한', base:'수출신고 수리일', n:30, u:'d'},
+  {kind:'관세환급 신청', base:'수출 이행일', n:2, u:'y'},
+  {kind:'직접 입력', base:null}
+];
+const enc = new TextEncoder(), dec = new TextDecoder();
+const $ = s => document.querySelector(s);
+
+let db = null, key = null, salt = null, iterUsed = ITER;
+let remoteBlob = null, localBlob = null, remoteUpdatedAt = null, exportedAt = null;
+let route = {name:'home', id:null}, typeFilter = '전체';
+let sOpt = {type:'', special:false}, hlRe = null;
+let openCk = new Set(), rptMonth = null;
+let mailCache = null, mailLoading = false, mailErr = '';
+
+/* ---------- helpers ---------- */
+function esc(s){return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function uid(){return Date.now().toString(36) + Math.random().toString(36).slice(2,8);}
+function today(){const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10);}
+function nowIso(){return new Date().toISOString();}
+function b64(buf){const b = new Uint8Array(buf); let s = ''; for(let i=0;i<b.length;i+=0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i+0x8000)); return btoa(s);}
+function unb64(s){const bin = atob(s); const u = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i] = bin.charCodeAt(i); return u;}
+function hl(t){const s = esc(t); return hlRe ? s.replace(hlRe, '<mark>$1</mark>') : s;}
+function safeUrl(u){try{const x = new URL(String(u).trim()); return /^https?:$/.test(x.protocol) ? x.href : null;}catch{return null;}}
+function linkLabel(u){try{const h = new URL(u).hostname; if(h.includes('mail.google')) return 'Gmail'; if(h.includes('drive.google')||h.includes('docs.google')) return 'Drive'; return h.replace(/^www\./,'');}catch{return '링크';}}
+function clientName(id){if(!id) return '공통'; const c = db.clients.find(c => c.id === id); return c ? c.name : '(삭제된 업체)';}
+function typeOrder(t){const i = db.settings.taskTypes.indexOf(t); return i < 0 ? 999 : i;}
+function recDate(r){return r.status === '완료' ? (r.date || r.startDate || '') : (r.startDate || r.date || '');}
+function byDateDesc(a,b){return recDate(b).localeCompare(recDate(a)) || (b.createdAt||'').localeCompare(a.createdAt||'');}
+function hay(...a){return a.map(v => Array.isArray(v) ? v.map(x => typeof x === 'object' ? (x.text||'') : x).join(' ') : (v || '')).join(' ').toLowerCase();}
+function lines(s){return String(s||'').split('\n').map(x => x.trim()).filter(Boolean);}
+function splitDocs(s){return String(s||'').split(/[,\n]/).map(x => x.trim()).filter(Boolean);}
+function opts(list, sel){return list.map(v => {const [val,lab] = Array.isArray(v) ? v : [v,v]; return `<option value="${esc(val)}"${val===sel?' selected':''}>${esc(lab)}</option>`;}).join('');}
+function typeList(sel){const t = [...db.settings.taskTypes]; if(sel && !t.includes(sel)) t.push(sel); return t;}
+function sortedClients(){return [...db.clients].sort((a,b) => a.name.localeCompare(b.name,'ko'));}
+function won(n){return (n||0).toLocaleString('ko-KR') + '원';}
+function toast(msg){const el = $('#toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 3600);}
+function download(name, text, mime = 'application/json'){const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type:mime})); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1500);}
+
+/* 기간 계산: 초일 불산입 기준으로 '기준일 + 기간'의 같은 날짜를 말일로 봄 (월말은 해당 월 말일로 맞춤) */
+function addPeriod(iso, n, u){
+  const [y,m,d] = iso.split('-').map(Number);
+  if(u === 'd') return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10);
+  const tm = (m-1) + (u === 'y' ? n*12 : n);
+  const ty = y + Math.floor(tm/12), mm = ((tm % 12) + 12) % 12;
+  const last = new Date(Date.UTC(ty, mm+1, 0)).getUTCDate();
+  return `${ty}-${String(mm+1).padStart(2,'0')}-${String(Math.min(d,last)).padStart(2,'0')}`;
+}
+function daysLeft(due){return Math.round((Date.parse(due) - Date.parse(today())) / 864e5);}
+function ddayHTML(due){
+  const n = daysLeft(due);
+  const cls = n < 0 ? 'over' : n <= 7 ? 'soon' : '';
+  return `<span class="dday ${cls}">${n < 0 ? 'D+' + (-n) : n === 0 ? 'D-day' : 'D-' + n}</span>`;
+}
+function openDeadlines(){
+  const out = [];
+  db.records.forEach(r => (r.deadlines||[]).forEach(d => { if(!d.done) out.push({r, d}); }));
+  return out.sort((a,b) => a.d.due.localeCompare(b.d.due));
+}
+
+/* ---------- crypto ---------- */
+async function deriveKey(pw, s, iter){
+  const base = await crypto.subtle.importKey('raw', enc.encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2', salt:s, iterations:iter, hash:'SHA-256'}, base, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']);
+}
+async function encryptDb(){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, enc.encode(JSON.stringify(db)));
+  return {format:'bsgc-ledger', v:2, iter:iterUsed, salt:b64(salt), iv:b64(iv), ct:b64(ct)};
+}
+async function decryptBlob(blob, pw){
+  const s = unb64(blob.salt), it = blob.iter || ITER;
+  const k = await deriveKey(pw, s, it);
+  const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:unb64(blob.iv)}, k, unb64(blob.ct));
+  return {data:JSON.parse(dec.decode(pt)), key:k, salt:s, iter:it};
+}
+async function persistLocal(){
+  try{const b = await encryptDb(); localStorage.setItem(LS_KEY, JSON.stringify(b)); localBlob = b;}
+  catch(e){toast('브라우저 저장에 실패했습니다. 지금 암호화 파일을 받아 두세요.');}
+}
+
+/* ---------- data ---------- */
+function migrate(d){
+  d.meta = d.meta || {}; d.settings = d.settings || {};
+  if(!Array.isArray(d.settings.taskTypes) || !d.settings.taskTypes.length) d.settings.taskTypes = [...DEFAULT_TYPES];
+  d.settings.mail = d.settings.mail || {endpoint:'', token:''};
+  ['clients','procedures','records','items','mailSeen'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
+  d.records.forEach(r => {
+    if(!STATUSES.includes(r.status)) r.status = '완료';
+    r.startDate = r.startDate || r.date || '';
+    ['checklist','docs','deadlines','tags','links','reflected'].forEach(k => { if(!Array.isArray(r[k])) r[k] = []; });
+  });
+  d.meta.version = 2;
+  d.meta.updatedAt = d.meta.updatedAt || nowIso();
+  return d;
+}
+function newDb(withSample){
+  const t = nowIso();
+  const d = {meta:{version:2, createdAt:t, updatedAt:t}, settings:{taskTypes:[...DEFAULT_TYPES], mail:{endpoint:'', token:''}}, clients:[], procedures:[], records:[], items:[], mailSeen:[]};
+  if(withSample) Object.assign(d, sampleData(t));
+  return migrate(d);
+}
+function sampleData(t){
+  const c1 = uid(), c2 = uid(), c3 = uid();
+  const td = today();
+  const P = (clientId, type, title, steps, docs, cautions) => ({id:uid(), clientId, type, title, steps, docs, cautions, createdAt:t, updatedAt:t});
+  const R = (o) => Object.assign({id:uid(), status:'완료', refNo:'', summary:'', special:false, specialNote:'', tags:[], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[], createdAt:t, updatedAt:t}, o);
+  const I = (clientId, name, hs, tariff, reqs, agency) => ({id:uid(), clientId, name, hs, tariff, reqs, agency, notes:'', createdAt:t});
+  const it1 = I(c1,'비이온 계면활성제','3402.42-0000','기본 6.5%, 한-미 FTA 0%','화학물질확인명세서 사전 제출\n유해화학물질 해당 여부 확인','한국화학물질관리협회');
+  const it2 = I(c2,'옥수수 글루텐 피드','2303.10-2000','기본세율 확인 필요','수입 검역\n사료 검사','농림축산검역본부, 사료 검사기관');
+  return {
+    clients:[
+      {id:c1, name:'한빛케미칼(예시)', bizNo:'000-00-00001', industry:'화학원료 수입 (계면활성제, 용제)', contact:'구매팀 김대리', keyword:'', notes:'매월 2~3회 컨테이너 반입.\n신규 물질은 발주 전에 성분표를 먼저 받기로 합의.', createdAt:t},
+      {id:c2, name:'그린피드(예시)', bizNo:'000-00-00002', industry:'사료원료 수입 (옥수수 글루텐, 대두박)', contact:'수입팀 박과장', keyword:'', notes:'원산지증명서 원본이 늦게 도착하는 편.', createdAt:t},
+      {id:c3, name:'서해로지스(예시)', bizNo:'000-00-00003', industry:'포워더 (동남아 수출 혼재)', contact:'오퍼레이션팀', keyword:'', notes:'베트남, 태국 수출 건 위주.', createdAt:t}
+    ],
+    items:[it1, it2],
+    procedures:[
+      P(null,'수입통관','일반 수입통관 기본 절차',['선적서류 수령 (Invoice, Packing List, B/L)','HS 분류 및 세율, 수입요건 확인','요건 대상이면 요건 확인 먼저 진행','수입신고 작성 및 전송','서류제출 또는 검사 대응','세액 납부 확인 후 수리','신고필증 전달, 업무 기록 남기기'],'Invoice, Packing List, B/L, 원산지증명서(협정세율 적용 시)','협정세율 적용 시 원산지증명서 원본 여부와 발급일을 먼저 확인.'),
+      P(c1,'화학물질','신규 화학물질 수입 전 확인',['업체에서 MSDS와 성분 함량표(CAS No.) 수령','기존·신규 화학물질 여부와 등록 대상 확인','화학물질확인명세서 제출','유해화학물질 해당 여부와 영업허가 필요 여부 확인','확인 결과 받은 뒤 수입신고'],'MSDS, 성분 함량표, 화학물질확인명세서 확인증','해외 제조사가 함량 공개를 거부하면 제조사 측 대리인을 통한 제출 방법부터 협의.'),
+      P(c2,'요건확인·검역','수입 사료원료 통관',['선적 전 제품 사양과 원산지 확인','수입 검역 신청','사료 검사 신청','검역·검사 결과 확인','수입신고 및 수리','반출 일정 업체 공유'],'Invoice, Packing List, B/L, 위생증명서, 성분 분석서','검사 결과가 늦어지면 보관료 발생. 반입 1주 전에 검사 일정 확인.'),
+      P(c3,'수출신고','혼재 화물 수출신고',['화주별 Invoice, Packing List 수령','품목별 HS와 수출요건 확인','수출신고 및 수리','적재 확인','신고필증 화주 전달'],'화주별 Invoice, Packing List','선적 일정이 바뀌면 적재기한(수리일부터 30일)을 다시 확인.')
+    ],
+    records:[
+      R({clientId:c1, type:'화학물질', startDate:'2026-10-09', date:'2026-10-15', refNo:'예시-2610-001', itemId:it1.id, fee:350000, title:'계면활성제 신규 성분, 확인명세서 제출 후 통관', summary:'성분표 수령부터 확인증 발급까지 4영업일.\n확인증 받은 다음 날 수입신고, 서류제출 후 당일 수리.', special:true, specialNote:'해외 제조사가 함량을 공개하지 않음. 제조사 측 대리인이 직접 제출하는 방식으로 진행.\n다음부터 신규 물질은 발주 단계에서 성분 공개 가능 여부를 먼저 묻기.', tags:['신규물질','확인명세서']}),
+      R({clientId:c1, type:'수입통관', startDate:'2026-10-27', date:'2026-10-28', refNo:'예시-2610-014', itemId:it1.id, fee:120000, title:'용제 정기 수입 (컨테이너 2대)', summary:'통상 절차대로 진행. 협정세율 적용, 검사 없이 수리.', tags:['정기']}),
+      R({clientId:c2, type:'요건확인·검역', startDate:'2026-09-14', date:'2026-09-22', refNo:'예시-2609-007', itemId:it2.id, fee:280000, title:'옥수수 글루텐 수입, 검사 결과 지연', summary:'검역 합격 후 사료 검사 결과가 6일 늦어짐.', special:true, specialNote:'보관료가 걱정되어 업체와 상의 후 검사기관에 결과 일정 확인 요청.\n다음 건부터 반입 1주 전에 검사 일정을 미리 조율.', tags:['검사지연','보관료']}),
+      R({clientId:c2, type:'수입통관', startDate:'2026-10-29', date:'2026-10-30', refNo:'예시-2610-021', fee:150000, title:'대두박 수입, 원산지증명서 원본 지연', summary:'원산지증명서 원본 도착 전 일반세율로 먼저 통관.', special:true, specialNote:'수리 후 협정관세 사후적용 신청으로 차액을 돌려받는 방식으로 업체에 안내.', tags:['FTA','사후적용'],
+        deadlines:[{id:uid(), kind:'FTA 사후적용 신청', base:'2026-10-30', due:addPeriod('2026-10-30',1,'y'), done:false}]}),
+      R({clientId:c3, type:'수출신고', startDate:'2026-10-07', date:'2026-10-08', refNo:'예시-2610-003', fee:250000, title:'베트남향 혼재 수출 5건', summary:'화주 5곳, 신고 5건 모두 당일 수리.', tags:['베트남']}),
+      R({clientId:c3, type:'수출신고', status:'진행중', startDate:'2026-10-30', date:'', refNo:'예시-2610-030', title:'태국향 수출, 선적 2주 연기', summary:'수출신고 수리 후 선박 스케줄 변경으로 적재가 2주 미뤄짐.', special:true, specialNote:'적재기한 안이라 별도 조치 없이 진행 중. 기한을 넘길 것 같으면 적재기간 연장 신청이 필요하다고 화주에 미리 안내.', tags:['선적연기','적재기한'],
+        checklist:[{text:'화주별 Invoice, Packing List 수령',done:true,doneAt:'2026-10-30'},{text:'품목별 HS와 수출요건 확인',done:true,doneAt:'2026-10-30'},{text:'수출신고 및 수리',done:true,doneAt:'2026-10-31'},{text:'적재 확인',done:false},{text:'신고필증 화주 전달',done:false}],
+        deadlines:[{id:uid(), kind:'수출물품 적재기한', base:'2026-10-31', due:addPeriod('2026-10-31',30,'d'), done:false}]}),
+      R({clientId:c2, type:'요건확인·검역', status:'진행중', startDate:td, date:'', itemId:it2.id, title:'옥수수 글루텐 11월 반입분',
+        checklist:[{text:'선적 전 제품 사양과 원산지 확인',done:true,doneAt:td},{text:'수입 검역 신청',done:false},{text:'사료 검사 신청',done:false},{text:'검역·검사 결과 확인',done:false},{text:'수입신고 및 수리',done:false},{text:'반출 일정 업체 공유',done:false}],
+        docs:[{text:'Invoice',done:true},{text:'Packing List',done:true},{text:'B/L',done:false},{text:'위생증명서',done:false},{text:'성분 분석서',done:false}],
+        deadlines:[{id:uid(), kind:'검사 일정 조율', base:null, due:addPeriod(td,5,'d'), done:false}]})
+    ]
+  };
+}
+
+/* ---------- gate ---------- */
+async function boot(){
+  if(!(window.crypto && crypto.subtle)){
+    $('#gateUnlock').hidden = false;
+    $('#gateMsg').textContent = '이 화면에서는 암호화를 쓸 수 없습니다. https 주소(GitHub Pages)나 최신 브라우저로 여세요.';
+    return;
+  }
+  try{const r = await fetch('data.enc.json', {cache:'no-store'}); if(r.ok){const j = await r.json(); if(j && j.ct) remoteBlob = j;}}catch{}
+  try{const s = localStorage.getItem(LS_KEY); if(s) localBlob = JSON.parse(s);}catch{}
+  showGate(remoteBlob || localBlob ? 'unlock' : 'new');
+}
+function showGate(mode){
+  const u = mode === 'unlock';
+  $('#gateUnlock').hidden = !u; $('#gateNew').hidden = u;
+  $('#gateToNew').hidden = !u; $('#gateToUnlock').hidden = u || !(remoteBlob || localBlob);
+  (u ? $('#pw') : $('#pw1')).focus();
+}
+async function unlock(){
+  const pw = $('#pw').value, msg = $('#gateMsg');
+  if(!pw){msg.textContent = '비밀번호를 입력하세요.'; return;}
+  msg.textContent = '여는 중…';
+  let remote = null, local = null;
+  if(remoteBlob) try{remote = await decryptBlob(remoteBlob, pw);}catch{}
+  if(localBlob) try{local = await decryptBlob(localBlob, pw);}catch{}
+  if(!remote && !local){msg.textContent = '비밀번호가 맞지 않습니다.'; return;}
+  let pick = remote || local;
+  if(remote && local && (local.data.meta?.updatedAt || '') > (remote.data.meta?.updatedAt || '')) pick = local;
+  remoteUpdatedAt = remote ? (remote.data.meta?.updatedAt || null) : null;
+  db = migrate(pick.data); key = pick.key; salt = pick.salt; iterUsed = pick.iter;
+  await persistLocal();
+  enterApp();
+  if(remoteBlob && !remote) toast('저장소 파일은 이 비밀번호로 열리지 않아, 이 브라우저에 저장된 사본을 열었습니다.');
+  else if(remote && pick === local) toast('저장소에 아직 올리지 않은 최근 변경을 불러왔습니다.');
+}
+async function createNew(){
+  const a = $('#pw1').value, b = $('#pw2').value, msg = $('#gateMsg2');
+  if(a.length < 10){msg.textContent = '비밀번호는 10자 이상으로 정하세요.'; return;}
+  if(a !== b){msg.textContent = '두 비밀번호가 다릅니다.'; return;}
+  if(localBlob && !confirm('이 브라우저에 저장된 기존 대장을 새 대장으로 덮어씁니다. 저장소에 올린 파일은 그대로 남습니다. 계속할까요?')) return;
+  msg.textContent = '만드는 중…';
+  salt = crypto.getRandomValues(new Uint8Array(16)); iterUsed = ITER;
+  key = await deriveKey(a, salt, ITER);
+  db = newDb($('#withSample').checked); remoteUpdatedAt = null; remoteBlob = null;
+  await persistLocal();
+  enterApp();
+  toast('새 대장을 만들었습니다. ‘암호화 파일 받기’로 받은 파일을 저장소에 올리세요.');
+}
+function enterApp(){$('#gate').hidden = true; $('#app').hidden = false; render();}
+
+/* ---------- save state ---------- */
+function commit(){db.meta.updatedAt = nowIso(); render(); persistLocal();}
+function updateSaveState(){
+  const el = $('#saveState'); let text, dirty = false;
+  if(remoteUpdatedAt && db.meta.updatedAt === remoteUpdatedAt) text = '저장소 파일과 같습니다';
+  else if(exportedAt === db.meta.updatedAt) text = '받은 파일을 저장소에 올리면 반영됩니다';
+  else {text = '저장소에 올리지 않은 변경이 있습니다'; dirty = true;}
+  el.textContent = text; el.classList.toggle('dirty', dirty);
+}
+async function exportEnc(){
+  const b = await encryptDb();
+  download('data.enc.json', JSON.stringify(b));
+  exportedAt = db.meta.updatedAt; updateSaveState();
+  toast('data.enc.json을 받았습니다. 저장소에 같은 이름으로 올리면 다른 PC에서도 열립니다.');
+}
+
+/* ---------- render ---------- */
+function render(){renderSidebar(); renderView(); updateSaveState();}
+function renderSidebar(){
+  document.querySelectorAll('.side-link').forEach(b => b.classList.toggle('on', b.dataset.go === route.name));
+  const active = db.records.filter(r => r.status !== '완료').length;
+  $('#cntActive').textContent = active || '';
+  const pendingMail = mailCache ? mailCache.filter(m => !db.mailSeen.includes(m.id)).length : 0;
+  $('#cntMail').textContent = pendingMail || '';
+  const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
+  const list = sortedClients();
+  $('#clientList').innerHTML = list.length
+    ? list.map(c => `<li><button data-go="client" data-id="${esc(c.id)}" class="${route.name==='client'&&route.id===c.id?'on':''}"><span>${esc(c.name)}</span><span class="cnt">${counts[c.id]||0}</span></button></li>`).join('')
+    : '<li class="hint side-empty">업체를 추가하세요</li>';
+}
+function renderView(){
+  hlRe = null;
+  const v = $('#view');
+  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon};
+  if(route.name === 'client' && db.clients.some(c => c.id === route.id)) v.innerHTML = viewClient();
+  else if(views[route.name]) v.innerHTML = views[route.name]();
+  else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
+}
+function go(name, id){route = {name, id:id || null}; typeFilter = '전체'; render(); window.scrollTo(0,0);}
+
+function ckItem(rid, kind, i, x){
+  return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${x.done && x.doneAt ? `<small>${esc(x.doneAt)}</small>` : ''}</span></label></li>`;
+}
+function recordHTML(r, o = {}){
+  const active = r.status !== '완료';
+  const ck = r.checklist || [], dc = r.docs || [];
+  const ckDone = ck.filter(x => x.done).length, dcDone = dc.filter(x => x.done).length;
+  const total = ck.length + dc.length, pct = total ? Math.round((ckDone + dcDone) / total * 100) : 0;
+  const dls = (r.deadlines || []).filter(d => !d.done).sort((a,b) => a.due.localeCompare(b.due));
+  const links = (r.links || []).filter(safeUrl);
+  const item = r.itemId ? db.items.find(i => i.id === r.itemId) : null;
+  const tags = (r.tags || []).length ? `<div class="tags">${r.tags.map(t => `<span class="tag">${hl(t)}</span>`).join('')}</div>` : '';
+  const linkHtml = links.length ? `<div class="links">${links.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(u))}</a>`).join('')}</div>` : '';
+  const ckHtml = total && !o.compact ? `<div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
+    <details class="ck" data-ck-rec="${esc(r.id)}"${openCk.has(r.id) ? ' open' : ''}><summary>${ck.length ? `단계 ${ckDone}/${ck.length}` : ''}${ck.length && dc.length ? ', ' : ''}${dc.length ? `서류 ${dcDone}/${dc.length}` : ''}</summary>
+      ${ck.length ? `<ul>${ck.map((x,i) => ckItem(r.id,'c',i,x)).join('')}</ul>` : ''}
+      ${dc.length ? `<p class="ck-sub">필요 서류</p><ul>${dc.map((x,i) => ckItem(r.id,'d',i,x)).join('')}</ul>` : ''}
+    </details>` : '';
+  const dateCol = active
+    ? `${esc(r.startDate || '')}<small>${r.status === '보류' ? '보류' : '접수'}</small>`
+    : `${esc(r.date)}${r.startDate && r.startDate !== r.date ? `<small>접수 ${esc(r.startDate.slice(5))}</small>` : ''}`;
+  return `<article class="rec">
+    <div class="rec-date">${dateCol}</div>
+    <div class="rec-body">
+      <div class="rec-head">${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}</div>
+      ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
+      ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
+      ${ckHtml}
+      ${o.compact ? '' : tags + linkHtml}
+    </div>
+    <div class="rec-act">
+      <button class="mini" data-edit-rec="${esc(r.id)}">수정</button>
+      ${active ? `<button class="mini strong" data-complete="${esc(r.id)}">완료 처리</button>` : ''}
+      ${r.special ? `<button class="mini" data-reflect="${esc(r.id)}">절차에 반영</button>` : ''}
+    </div>
+  </article>`;
+}
+function procHTML(p, o = {}){
+  return `<section class="proc${o.common ? ' is-common' : ''}">
+    <header><span class="tag type">${esc(p.type)}</span><h4>${hl(p.title)}</h4>${o.common ? '<span class="note">공통 절차</span>' : ''}${o.showClient ? `<span class="note">${esc(clientName(p.clientId))}</span>` : ''}
+      <span class="p-act"><button class="mini" data-start-proc="${esc(p.id)}">이 절차로 시작</button><button class="mini" data-edit-proc="${esc(p.id)}">수정</button></span></header>
+    ${(p.steps || []).length ? `<ol>${p.steps.map(s => `<li>${hl(s)}</li>`).join('')}</ol>` : ''}
+    ${p.docs ? `<div class="proc-docs"><strong>필요 서류</strong><p>${hl(p.docs)}</p></div>` : ''}
+    ${p.cautions ? `<div class="proc-caution"><strong>주의</strong><p>${hl(p.cautions)}</p></div>` : ''}
+    <div class="upd">최종 수정 ${esc((p.updatedAt || '').slice(0,10))}</div>
+  </section>`;
+}
+function deadlineRow({r, d}){
+  return `<div class="dl-row">
+    <input type="checkbox" data-dl="${esc(r.id)}|${esc(d.id)}" title="처리 완료로 표시" aria-label="${esc(d.kind)} 처리 완료">
+    ${ddayHTML(d.due)}
+    <div><strong>${esc(d.kind)}</strong> <span class="hint">${esc(d.due)}${d.base ? `, 기준일 ${esc(d.base)}` : ''}</span>
+      <div class="hint"><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.title)}</button> (${esc(clientName(r.clientId))})</div></div>
+  </div>`;
+}
+
+/* ---------- views ---------- */
+function viewHome(){
+  const recs = [...db.records].sort(byDateDesc);
+  const active = db.records.filter(r => r.status !== '완료').sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
+  const done = recs.filter(r => r.status === '완료');
+  const sp = done.filter(r => r.special);
+  const dls = openDeadlines();
+  const over = dls.filter(x => daysLeft(x.d.due) < 0).length, soon = dls.filter(x => { const n = daysLeft(x.d.due); return n >= 0 && n <= 7; }).length;
+  const month = today().slice(0,7);
+  const m = done.filter(r => (r.date || '').startsWith(month)).length;
+  return `<section class="home-intro">
+    <h2>${today()}</h2>
+    <p>진행 중인 업무가 ${active.length}건이고, 7일 안에 돌아오는 기한이 ${soon}건${over ? `, 이미 지난 기한이 ${over}건` : ''} 있습니다. 이번 달에는 ${m}건을 완료했습니다.</p>
+    <div class="quick"><button class="primary" data-new-rec data-status="진행중">업무 시작</button><button class="ghost" data-new-rec data-status="완료">완료 기록 남기기</button><button class="ghost" data-new-proc>처리 절차 추가</button><button class="ghost" data-new-client>업체 추가</button></div>
+  </section>
+  <div class="two-col">
+    <section><div class="sec-head"><h3>진행 중 업무</h3>${active.length > 6 ? '<button class="mini" data-go="active">전체 보기</button>' : ''}</div>
+      ${active.length ? active.slice(0,6).map(r => recordHTML(r, {showClient:true})).join('') : '<p class="empty">진행 중인 업무가 없습니다. 새 건을 받으면 ‘업무 시작’으로 등록하고 단계를 체크해 가세요.</p>'}
+    </section>
+    <section><div class="sec-head"><h3>챙길 기한</h3></div>
+      ${dls.length ? dls.slice(0,10).map(deadlineRow).join('') : '<p class="empty">등록된 기한이 없습니다. 기록에 FTA 사후적용, 적재기한 같은 기한을 넣으면 여기서 날짜순으로 챙길 수 있습니다.</p>'}
+    </section>
+  </div>
+  <div class="two-col">
+    <section><div class="sec-head"><h3>최근 완료 기록</h3></div>
+      ${done.length ? done.slice(0,8).map(r => recordHTML(r, {showClient:true})).join('') : '<p class="empty">아직 완료 기록이 없습니다.</p>'}
+    </section>
+    <section><div class="sec-head"><h3>특이 처리 사례</h3></div>
+      ${sp.length ? sp.slice(0,8).map(r => recordHTML(r, {showClient:true, compact:true})).join('') : '<p class="empty">일반 절차와 다르게 처리한 건을 기록하면 여기에 모입니다.</p>'}
+    </section>
+  </div>`;
+}
+
+function viewActive(){
+  const act = db.records.filter(r => r.status === '진행중').sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
+  const hold = db.records.filter(r => r.status === '보류').sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
+  const dls = openDeadlines();
+  return `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
+    <div class="client-act"><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>
+  <div class="two-col">
+    <section>
+      <div class="sec-head"><h3>진행중</h3></div>
+      ${act.length ? act.map(r => recordHTML(r, {showClient:true})).join('') : '<p class="empty">진행중인 업무가 없습니다.</p>'}
+      ${hold.length ? `<div class="sec-head" style="margin-top:2rem"><h3>보류</h3></div>${hold.map(r => recordHTML(r, {showClient:true})).join('')}` : ''}
+    </section>
+    <section><div class="sec-head"><h3>전체 기한</h3></div>
+      ${dls.length ? dls.map(deadlineRow).join('') : '<p class="empty">남은 기한이 없습니다.</p>'}
+    </section>
+  </div>`;
+}
+
+function viewClient(){
+  const c = db.clients.find(x => x.id === route.id);
+  const recs = db.records.filter(r => r.clientId === c.id).sort(byDateDesc);
+  const procs = db.procedures.filter(p => p.clientId === c.id);
+  const items = db.items.filter(i => i.clientId === c.id).sort((a,b) => a.name.localeCompare(b.name,'ko'));
+  const types = [...new Set([...procs, ...recs].map(x => x.type))].sort((a,b) => typeOrder(a) - typeOrder(b));
+  if(typeFilter !== '전체' && !types.includes(typeFilter)) typeFilter = '전체';
+  const f = x => typeFilter === '전체' || x.type === typeFilter;
+  const fp = procs.filter(f).sort((a,b) => typeOrder(a.type) - typeOrder(b.type));
+  const common = typeFilter === '전체' ? [] : db.procedures.filter(p => !p.clientId && p.type === typeFilter);
+  const fr = recs.filter(f);
+  const spCount = fr.filter(r => r.special).length, actCount = fr.filter(r => r.status !== '완료').length;
+  const kw = (c.keyword || c.name).trim();
+  const gmail = `https://mail.google.com/mail/u/${GMAIL_ACCOUNT}/#search/` + encodeURIComponent(kw);
+  const drive = 'https://drive.google.com/drive/search?q=' + encodeURIComponent(kw);
+  const meta = [c.bizNo, c.industry, c.contact].filter(Boolean).map(esc).join(' / ');
+  return `<header class="client-head">
+      <div><h2>${esc(c.name)}</h2>${meta ? `<p class="client-meta">${meta}</p>` : ''}</div>
+      <div class="client-act">
+        <a class="btn" href="${esc(gmail)}" target="_blank" rel="noopener noreferrer">Gmail에서 찾기</a>
+        <a class="btn" href="${esc(drive)}" target="_blank" rel="noopener noreferrer">Drive에서 찾기</a>
+        <button class="ghost" data-edit-client="${esc(c.id)}">업체 정보 수정</button>
+      </div>
+    </header>
+    ${c.notes ? `<p class="client-notes">${esc(c.notes)}</p>` : ''}
+    <section class="items">
+      <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개</span></h3><button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></div>
+      ${items.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th><th>요건 기관</th><th></th></tr></thead><tbody>
+        ${items.map(i => `<tr><td><strong>${esc(i.name)}</strong>${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}
+    </section>
+    <div class="chips" role="group" aria-label="업무 유형">${['전체', ...types].map(t => `<button class="chip${t === typeFilter ? ' on' : ''}" data-chip="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+    <div class="client-grid">
+      <section>
+        <div class="sec-head"><h3>처리 절차</h3><button class="mini" data-new-proc data-client="${esc(c.id)}">절차 추가</button></div>
+        ${fp.length || common.length
+          ? fp.map(p => procHTML(p)).join('') + common.map(p => procHTML(p, {common:true})).join('')
+          : '<p class="empty">이 업체만의 처리 순서를 정리해 두면 다음 건을 진행할 때 체크리스트로 바로 불러올 수 있습니다.</p>'}
+        ${typeFilter === '전체' && db.procedures.some(p => !p.clientId) ? '<p class="hint">업무 유형을 고르면 해당 공통 절차도 함께 보입니다.</p>' : ''}
+      </section>
+      <section>
+        <div class="sec-head"><h3>업무 히스토리 <span class="cnt">${fr.length}건${actCount ? `, 진행 ${actCount}건` : ''}${spCount ? `, 특이 ${spCount}건` : ''}</span></h3><button class="mini" data-new-rec data-client="${esc(c.id)}">기록 추가</button></div>
+        ${fr.length ? fr.map(r => recordHTML(r)).join('') : '<p class="empty">이 조건의 기록이 없습니다.</p>'}
+      </section>
+    </div>`;
+}
+
+function viewCommon(){
+  const ps = db.procedures.filter(p => !p.clientId).sort((a,b) => typeOrder(a.type) - typeOrder(b.type));
+  return `<header class="client-head">
+      <div><h2>공통 절차</h2><p class="client-meta">모든 업체에 적용하는 기본 처리 순서입니다. 업체 화면에서 업무 유형을 고르면 함께 보입니다.</p></div>
+      <div class="client-act"><button class="primary" data-new-proc data-client="">공통 절차 추가</button></div>
+    </header>
+    <div class="narrow">${ps.length ? ps.map(p => procHTML(p)).join('') : '<p class="empty">아직 공통 절차가 없습니다.</p>'}</div>`;
+}
+
+function viewSearch(){
+  const q = $('#q').value.trim();
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  hlRe = new RegExp('(' + terms.map(t => esc(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+  const has = s => terms.every(t => s.includes(t));
+  const tOk = x => !sOpt.type || x.type === sOpt.type;
+  const narrowed = sOpt.special || sOpt.type;
+  const cl = narrowed ? [] : sortedClients().filter(c => has(hay(c.name, c.bizNo, c.industry, c.contact, c.notes, c.keyword)));
+  const its = narrowed ? [] : db.items.filter(i => has(hay(i.name, i.hs, (i.hs||'').replace(/[.\-\s]/g,''), i.tariff, i.reqs, i.agency, i.notes, clientName(i.clientId))));
+  const pr = sOpt.special ? [] : db.procedures.filter(p => tOk(p) && has(hay(p.title, p.type, p.steps, p.docs, p.cautions, clientName(p.clientId))));
+  const rc = db.records.filter(r => tOk(r) && (!sOpt.special || r.special) && has(hay(r.title, r.type, r.status, r.refNo, r.summary, r.specialNote, r.tags, r.checklist, clientName(r.clientId), (db.items.find(i => i.id === r.itemId)||{}).name))).sort(byDateDesc);
+  const total = cl.length + its.length + pr.length + rc.length;
+  return `<h2>‘${esc(q)}’ 검색 결과</h2>
+    <div class="filters">
+      <label class="inline">업무 유형 <select id="sType"><option value="">전체</option>${opts(db.settings.taskTypes, sOpt.type)}</select></label>
+      <label class="check"><input type="checkbox" id="sSpecial"${sOpt.special ? ' checked' : ''}> 특이 처리만</label>
+      <span class="hint">업체 ${cl.length}곳, 품목 ${its.length}개, 절차 ${pr.length}건, 기록 ${rc.length}건</span>
+    </div>
+    ${total ? '' : '<p class="empty">찾는 내용이 없습니다. 단어를 줄이거나 다른 표현으로 검색해 보세요. 여러 단어는 모두 포함된 결과만 보여 줍니다.</p>'}
+    ${cl.length ? `<section class="result-block"><div class="sec-head"><h3>업체</h3></div><div class="chips">${cl.map(c => `<button class="chip" data-go="client" data-id="${esc(c.id)}">${hl(c.name)}</button>`).join('')}</div></section>` : ''}
+    ${its.length ? `<section class="result-block"><div class="sec-head"><h3>품목·요건</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>업체</th><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th></tr></thead><tbody>
+      ${its.map(i => `<tr><td><button class="linkish" data-go="client" data-id="${esc(i.clientId)}">${esc(clientName(i.clientId))}</button></td><td>${hl(i.name)}</td><td class="hs">${hl(i.hs)}</td><td>${hl(i.tariff)}</td><td class="pre">${hl(i.reqs)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+    ${pr.length ? `<section class="result-block narrow"><div class="sec-head"><h3>처리 절차</h3></div>${pr.map(p => procHTML(p, {showClient:true})).join('')}</section>` : ''}
+    ${rc.length ? `<section class="result-block narrow"><div class="sec-head"><h3>업무 기록</h3></div>${rc.map(r => recordHTML(r, {showClient:true})).join('')}</section>` : ''}`;
+}
+
+function monthLabel(ym){const [y,m] = ym.split('-'); return `${y}년 ${Number(m)}월`;}
+function shiftMonth(ym, n){const [y,m] = ym.split('-').map(Number); const t = (m-1) + n; return `${y + Math.floor(t/12)}-${String(((t%12)+12)%12 + 1).padStart(2,'0')}`;}
+function doneIn(ym){return db.records.filter(r => r.status === '완료' && (r.date || '').startsWith(ym));}
+function viewReport(){
+  const mon = rptMonth || today().slice(0,7);
+  const done = doneIn(mon).sort(byDateDesc);
+  const sp = done.filter(r => r.special).length;
+  const fee = done.reduce((s,r) => s + (r.fee || 0), 0);
+  const opened = db.records.filter(r => (r.startDate || '').startsWith(mon)).length;
+  const dueIn = db.records.flatMap(r => r.deadlines || []).filter(d => d.due.startsWith(mon)).length;
+  const byClient = {}, byType = {};
+  done.forEach(r => {
+    const c = byClient[r.clientId] = byClient[r.clientId] || {n:0, sp:0, fee:0};
+    c.n++; if(r.special) c.sp++; c.fee += r.fee || 0;
+    byType[r.type] = (byType[r.type] || 0) + 1;
+  });
+  const months = Array.from({length:12}, (_,i) => shiftMonth(mon, i - 11));
+  const counts = months.map(m => doneIn(m).length), max = Math.max(1, ...counts);
+  const clientRows = Object.entries(byClient).sort((a,b) => b[1].n - a[1].n);
+  const typeRows = Object.entries(byType).sort((a,b) => b[1] - a[1]);
+  return `<header class="client-head">
+      <div><h2>${monthLabel(mon)} 리포트</h2></div>
+      <div class="client-act"><label class="inline">월 선택 <input type="month" id="rptMonth" value="${mon}"></label><button class="ghost" data-csv="${mon}">청구용 CSV 받기</button></div>
+    </header>
+    <p class="report-lead">이 달 완료 ${done.length}건 가운데 특이 처리가 ${sp}건${done.length ? `(${Math.round(sp / done.length * 100)}%)` : ''}이고, 기록된 대행 수수료 합계는 ${won(fee)}입니다. 같은 달에 새로 접수한 업무는 ${opened}건, 기한이 이 달에 돌아오는 항목은 ${dueIn}건입니다.</p>
+    <div class="bars" role="group" aria-label="최근 12개월 완료 건수">
+      ${months.map((m,i) => `<button class="bar${m === mon ? ' on' : ''}" data-month="${m}" title="${monthLabel(m)} ${counts[i]}건"><b>${counts[i]}</b><i style="height:${Math.round(counts[i] / max * 100)}%"></i><span>${Number(m.slice(5))}월</span></button>`).join('')}
+    </div>
+    <div class="two-col">
+      <section><div class="sec-head"><h3>업체별</h3></div>
+        ${clientRows.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>업체</th><th class="num">완료</th><th class="num">특이</th><th class="num">수수료</th></tr></thead><tbody>
+          ${clientRows.map(([id,v]) => `<tr><td><button class="linkish" data-go="client" data-id="${esc(id)}">${esc(clientName(id))}</button></td><td class="num">${v.n}</td><td class="num">${v.sp}</td><td class="num">${won(v.fee)}</td></tr>`).join('')}
+          <tr><td><strong>합계</strong></td><td class="num"><strong>${done.length}</strong></td><td class="num"><strong>${sp}</strong></td><td class="num"><strong>${won(fee)}</strong></td></tr>
+        </tbody></table></div>` : '<p class="empty">이 달에 완료한 기록이 없습니다.</p>'}
+      </section>
+      <section><div class="sec-head"><h3>업무 유형별</h3></div>
+        ${typeRows.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>업무 유형</th><th class="num">건수</th></tr></thead><tbody>${typeRows.map(([t,n]) => `<tr><td>${esc(t)}</td><td class="num">${n}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">이 달에 완료한 기록이 없습니다.</p>'}
+      </section>
+    </div>
+    <section class="result-block narrow"><div class="sec-head"><h3>완료 기록 <span class="cnt">${done.length}건</span></h3></div>
+      ${done.length ? done.map(r => recordHTML(r, {showClient:true, compact:true})).join('') : '<p class="empty">이 달에 완료한 기록이 없습니다.</p>'}
+    </section>`;
+}
+function exportCsv(mon){
+  const rows = doneIn(mon).sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  const cell = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
+  const head = ['완료일','업체','업무 유형','참조번호','제목','특이 처리','대행 수수료'];
+  const body = rows.map(r => [r.date, clientName(r.clientId), r.type, r.refNo, r.title, r.special ? 'Y' : '', r.fee || ''].map(cell).join(','));
+  download(`업무대장-${mon}.csv`, '\uFEFF' + [head.map(cell).join(','), ...body].join('\r\n'), 'text/csv;charset=utf-8');
+}
+
+/* ---------- mail ---------- */
+function matchClient(m){
+  const h = hay(m.from, m.lastFrom, m.subject, m.snippet);
+  const byKw = db.clients.find(c => c.keyword && h.includes(c.keyword.toLowerCase()));
+  if(byKw) return byKw;
+  return db.clients.find(c => h.includes(c.name.replace(/\(.*?\)/g,'').trim().toLowerCase())) || null;
+}
+function findRefNo(text){const m = String(text||'').match(/\b\d{5}-\d{2}-\d{6,7}[A-Z]?\b/); return m ? m[0] : '';}
+function viewMail(){
+  const cfg = db.settings.mail || {};
+  if(!cfg.endpoint || !cfg.token) return `<h2>메일 초안</h2>
+    <div class="setup"><p>Gmail에서 ‘업무완료’ 라벨을 붙인 메일을 기록 초안으로 가져옵니다. 처음 한 번 설정이 필요합니다.</p>
+    <ol><li>함께 받은 <strong>gmail-to-ledger.gs</strong>를 Google Apps Script에 붙여 넣고 <code>setup</code>을 한 번 실행합니다.</li>
+    <li>웹 앱으로 배포해 받은 주소와, 실행 기록에 표시된 토큰을 복사합니다.</li>
+    <li>오른쪽 위 ‘데이터’ 메뉴의 Gmail 연동 칸에 붙여 넣고 저장합니다.</li></ol>
+    <p class="hint">자세한 순서는 README의 ‘Gmail 라벨 연동’을 보세요.</p>
+    <button class="primary" data-open-data>데이터 메뉴 열기</button></div>`;
+  const list = (mailCache || []).filter(m => !db.mailSeen.includes(m.id));
+  return `<header class="client-head"><div><h2>메일 초안</h2><p class="client-meta">‘업무완료’ 라벨이 붙은 메일 가운데 아직 기록하지 않은 것입니다.</p></div>
+      <div class="client-act"><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '메일 불러오기'}</button></div></header>
+    ${mailErr ? `<p class="msg">${esc(mailErr)}</p>` : ''}
+    <div class="narrow">
+    ${mailCache === null ? '<p class="empty">‘메일 불러오기’를 누르면 Gmail에서 라벨 붙은 메일을 가져옵니다.</p>'
+      : list.length ? list.map(m => { const c = matchClient(m); return `<article class="rec">
+        <div class="rec-date">${esc(m.date)}${m.count > 1 ? `<small>메일 ${m.count}통</small>` : ''}</div>
+        <div class="rec-body"><h4>${esc(m.subject)}</h4>
+          <div class="rec-meta"><span>${esc(m.from)}</span>${c ? `<span class="tag">${esc(c.name)}</span>` : '<span class="tag type">업체 미지정</span>'}</div>
+          ${m.summary ? `<p class="rec-sum">${esc(m.summary)}</p>` : m.snippet ? `<p class="rec-sum">${esc(m.snippet)}</p>` : ''}
+          ${safeUrl(m.link) ? `<div class="links"><a href="${esc(m.link)}" target="_blank" rel="noopener noreferrer">Gmail에서 열기</a></div>` : ''}
+        </div>
+        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(m.id)}">기록 만들기</button><button class="mini" data-mail-ignore="${esc(m.id)}">무시</button></div>
+      </article>`; }).join('')
+      : '<p class="empty">새로 기록할 메일이 없습니다.</p>'}
+    </div>`;
+}
+async function loadMail(){
+  const cfg = db.settings.mail;
+  mailLoading = true; mailErr = ''; renderView();
+  try{
+    const u = new URL(cfg.endpoint); u.searchParams.set('token', cfg.token); u.searchParams.set('days', '90');
+    const r = await fetch(u.href);
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || '응답 오류');
+    mailCache = j.items || [];
+  }catch(e){
+    mailErr = `메일을 불러오지 못했습니다 (${e.message}). 웹 앱 주소, 토큰, 배포 권한(모든 사용자)을 확인하세요.`;
+  }
+  mailLoading = false; renderSidebar(); renderView();
+}
+function markMailDone(m){
+  const cfg = db.settings.mail;
+  if(!cfg.endpoint || !m.threadId) return;
+  try{const u = new URL(cfg.endpoint); u.searchParams.set('token', cfg.token); u.searchParams.set('done', m.threadId); fetch(u.href).catch(() => {});}catch{}
+}
+function seeMail(id){db.mailSeen.push(id); if(db.mailSeen.length > 3000) db.mailSeen = db.mailSeen.slice(-3000);}
+
+/* ---------- dialogs ---------- */
+function openDialog({title, body, onSave, onDelete, onOpen, saveLabel = '저장'}){
+  const dlg = $('#dlg');
+  dlg.innerHTML = `<form class="dlg"><h3>${esc(title)}</h3><div class="dlg-body">${body}</div>
+    <footer>${onDelete ? '<button type="button" class="danger" data-act="del">삭제</button>' : ''}<span class="sp"></span>
+    <button type="button" class="ghost" data-act="cancel">취소</button><button type="submit" class="primary">${esc(saveLabel)}</button></footer></form>`;
+  const f = dlg.querySelector('form');
+  f.addEventListener('submit', e => {e.preventDefault(); if(onSave(new FormData(f), f) === false) return; dlg.close(); commit();});
+  f.querySelector('[data-act="cancel"]').onclick = () => dlg.close();
+  if(onDelete) f.querySelector('[data-act="del"]').onclick = () => {if(onDelete() === false) return; dlg.close(); commit();};
+  dlg.showModal();
+  if(onOpen) onOpen(f);
+}
+
+function relatedHTML(clientId, type, selfId, itemId){
+  const item = itemId ? db.items.find(i => i.id === itemId) : null;
+  const procs = db.procedures.filter(p => p.type === type && (p.clientId === clientId || !p.clientId));
+  const same = db.records.filter(r => r.id !== selfId && r.clientId === clientId && r.type === type).sort(byDateDesc).slice(0,4);
+  const others = db.records.filter(r => r.id !== selfId && r.clientId !== clientId && r.type === type && r.special).sort(byDateDesc).slice(0,3);
+  if(!item && !procs.length && !same.length && !others.length) return '<p class="hint">이 업체의 같은 유형 기록과 절차가 아직 없습니다.</p>';
+  const li = (r, extra = '') => `<li>${r.special ? '<span class="stamp sm">특이</span> ' : ''}<span class="rec-date">${esc(recDate(r))}</span>${esc(r.title)}${extra}${r.special && r.specialNote ? `<div class="hint" style="white-space:pre-wrap">${esc(r.specialNote)}</div>` : ''}</li>`;
+  return `${item ? `<h4>품목 요건: ${esc(item.name)}</h4><ul><li>${item.hs ? `HS ${esc(item.hs)}` : ''}${item.tariff ? `, ${esc(item.tariff)}` : ''}${item.reqs ? `<div class="hint" style="white-space:pre-wrap">${esc(item.reqs)}</div>` : ''}${item.agency ? `<div class="hint">기관: ${esc(item.agency)}</div>` : ''}</li></ul>` : ''}
+    ${procs.length ? `<h4>참고할 절차</h4><ul>${procs.map(p => `<li><strong>${esc(p.title)}</strong> <span class="hint">${p.clientId ? '업체 전용' : '공통'}</span>${(p.steps || []).length ? `<ol class="mini-ol">${p.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}${p.cautions ? `<div class="hint" style="white-space:pre-wrap">주의: ${esc(p.cautions)}</div>` : ''}</li>`).join('')}</ul>` : ''}
+    ${same.length ? `<h4>이 업체의 같은 업무</h4><ul>${same.map(r => li(r)).join('')}</ul>` : ''}
+    ${others.length ? `<h4>다른 업체의 같은 유형 특이 사례</h4><ul>${others.map(r => li(r, ` <span class="hint">${esc(clientName(r.clientId))}</span>`)).join('')}</ul>` : ''}`;
+}
+
+function openRecord(r, preset = {}){
+  if(!db.clients.length){toast('먼저 업체를 추가하세요.'); openClient(null); return;}
+  const isNew = !r;
+  const first = sortedClients()[0].id;
+  const status = preset.status || '완료';
+  const rec = r || {id:uid(), clientId:preset.clientId || first, type:preset.type || db.settings.taskTypes[0], status,
+    startDate:today(), date:status === '완료' ? today() : '', refNo:'', title:'', summary:'', special:false, specialNote:'',
+    tags:[], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[]};
+  if(isNew && preset.mail){
+    const m = preset.mail, c = matchClient(m);
+    Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:m.date || today(), date:m.date || today(), summary:m.summary || m.snippet || '', refNo:findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:safeUrl(m.link) ? [m.link] : []});
+  }
+  if(!db.clients.some(c => c.id === rec.clientId)) rec.clientId = first;
+  const dls = (rec.deadlines || []).map(d => ({...d}));
+  openDialog({
+    title: isNew ? (status === '진행중' ? '업무 시작' : '업무 기록 남기기') : '업무 기록 수정',
+    body: `<div class="row2">
+        <label>업체<select name="clientId">${opts(sortedClients().map(c => [c.id, c.name]), rec.clientId)}</select></label>
+        <label>업무 유형<select name="type">${opts(typeList(rec.type), rec.type)}</select></label>
+      </div>
+      <div class="row2">
+        <label>상태<select name="status">${opts(STATUSES, rec.status)}</select></label>
+        <label>품목<select name="itemId"></select></label>
+      </div>
+      <div class="row2">
+        <label>접수일<input type="date" name="startDate" value="${esc(rec.startDate)}"></label>
+        <label>완료일<input type="date" name="date" value="${esc(rec.date)}"></label>
+      </div>
+      <div class="row2">
+        <label>참조번호<input name="refNo" value="${esc(rec.refNo)}" placeholder="신고번호, B/L 번호 등"></label>
+        <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
+      </div>
+      <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
+      <label>진행 요약<textarea name="summary" rows="4" placeholder="진행 순서, 제출 서류, 소요 기간 등. 완료 시 비워 두면 체크리스트로 자동 작성됩니다.">${esc(rec.summary)}</textarea></label>
+      <label class="check"><input type="checkbox" name="special"${rec.special ? ' checked' : ''}> 일반 절차와 다르게 처리함</label>
+      <div class="special-fields"><label>특이 처리 내용<textarea name="specialNote" rows="4" placeholder="무엇이 달랐는지 / 어떻게 해결했는지 / 다음에 적용할 점">${esc(rec.specialNote)}</textarea></label></div>
+      <div class="dlg-section">
+        <h4>체크리스트</h4>
+        <div class="btn-row"><select data-x="procPick" aria-label="불러올 절차"></select><button type="button" class="ghost" data-x="loadProc">절차 불러오기</button></div>
+        <div class="row2">
+          <label>처리 단계 (한 줄에 하나)<textarea name="checklist" rows="5">${esc((rec.checklist || []).map(x => x.text).join('\n'))}</textarea></label>
+          <label>필요 서류 (한 줄에 하나)<textarea name="docs" rows="5">${esc((rec.docs || []).map(x => x.text).join('\n'))}</textarea></label>
+        </div>
+        <p class="hint">완료 표시는 목록 화면에서 항목을 체크하면 됩니다.</p>
+      </div>
+      <div class="dlg-section">
+        <h4>기한</h4>
+        <ul class="dl-list"></ul>
+        <div class="dl-add">
+          <label>기한 종류<select data-x="dlKind">${opts(DL_RULES.map(x => x.kind), DL_RULES[0].kind)}</select></label>
+          <label><span data-x="dlBaseLbl">기준일</span><input type="date" data-x="dlDate"></label>
+          <label data-x="dlNameWrap" hidden>기한명<input data-x="dlName" placeholder="예: 검사 결과 확인"></label>
+          <button type="button" class="ghost" data-x="dlAdd">기한 추가</button>
+        </div>
+        <p class="hint" data-x="dlPrev"></p>
+        <p class="hint">법정 기한은 일반 규정으로 계산한 참고값입니다. 말일이 공휴일인 경우나 개별 사정은 직접 확인하세요.</p>
+      </div>
+      <div class="dlg-section">
+        <label>태그<input name="tags" value="${esc((rec.tags || []).join(', '))}" placeholder="쉼표로 구분: 검역, 정정신고"></label>
+        <label>관련 링크<textarea name="links" rows="2" placeholder="Gmail 메일 주소, Drive 폴더 주소를 한 줄에 하나씩">${esc((rec.links || []).join('\n'))}</textarea></label>
+      </div>
+      <aside class="related" aria-label="참고 자료"></aside>`,
+    onSave(fd){
+      const t = nowIso(), status = fd.get('status');
+      if(status === '완료' && !fd.get('date')){toast('완료 상태는 완료일이 필요합니다.'); return false;}
+      const rawLinks = lines(fd.get('links'));
+      const links = rawLinks.map(safeUrl).filter(Boolean);
+      if(links.length < rawLinks.length) toast('http(s)로 시작하지 않는 링크는 빼고 저장했습니다.');
+      const keep = (old, texts) => {const m = new Map(old.map(x => [x.text, x])); return texts.map(tx => m.get(tx) || {text:tx, done:false});};
+      const checklist = keep(rec.checklist || [], lines(fd.get('checklist')));
+      let summary = fd.get('summary').trim();
+      if(status === '완료' && !summary && checklist.length)
+        summary = '처리 단계\n' + checklist.map(x => `${x.done ? '✓' : '–'} ${x.text}${x.doneAt ? ` (${x.doneAt})` : ''}`).join('\n');
+      const feeNum = Number(String(fd.get('fee')).replace(/[^\d]/g,''));
+      Object.assign(rec, {
+        clientId: fd.get('clientId'), type: fd.get('type'), status, itemId: fd.get('itemId') || '',
+        startDate: fd.get('startDate') || fd.get('date') || today(), date: fd.get('date'),
+        refNo: fd.get('refNo').trim(), fee: feeNum || null, title: fd.get('title').trim(), summary,
+        special: fd.get('special') === 'on', specialNote: fd.get('specialNote').trim(),
+        checklist, docs: keep(rec.docs || [], lines(fd.get('docs'))), deadlines: dls,
+        tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, updatedAt: t
+      });
+      if(isNew){
+        rec.createdAt = t; db.records.push(rec);
+        if(preset.mail){seeMail(preset.mail.id); markMailDone(preset.mail);}
+        toast(status === '진행중' ? '업무를 시작했습니다.' : '기록을 저장했습니다.');
+      } else toast(preset.complete ? '완료 처리했습니다.' : '기록을 수정했습니다.');
+    },
+    onDelete: isNew ? null : () => {
+      if(!confirm(`‘${rec.title}’ 기록을 삭제할까요?`)) return false;
+      db.records = db.records.filter(x => x.id !== rec.id); toast('기록을 삭제했습니다.');
+    },
+    onOpen(f){
+      const N = n => f.elements.namedItem(n), X = n => f.querySelector(`[data-x="${n}"]`);
+      const rel = f.querySelector('.related'), spf = f.querySelector('.special-fields');
+      const itemSel = N('itemId'), procPick = X('procPick');
+      const fillItems = (sel) => {
+        const its = db.items.filter(i => i.clientId === N('clientId').value);
+        itemSel.innerHTML = '<option value="">선택 안 함</option>' + opts(its.map(i => [i.id, i.name + (i.hs ? ` (${i.hs})` : '')]), sel);
+      };
+      const fillProcs = () => {
+        const cid = N('clientId').value, ty = N('type').value;
+        const ps = db.procedures.filter(p => !p.clientId || p.clientId === cid)
+          .sort((a,b) => ((b.type === ty) - (a.type === ty)) || ((!!b.clientId) - (!!a.clientId)));
+        procPick.innerHTML = ps.length ? opts(ps.map(p => [p.id, `${p.title} (${p.clientId ? '업체 전용' : '공통'}, ${p.type})`]), ps[0].id) : '<option value="">불러올 절차가 없습니다</option>';
+      };
+      const upd = () => {rel.innerHTML = relatedHTML(N('clientId').value, N('type').value, rec.id, itemSel.value);};
+      const tog = () => {spf.hidden = !N('special').checked;};
+      const stat = () => {if(N('status').value === '완료' && !N('date').value) N('date').value = today();};
+      const loadProc = (id, ask) => {
+        const p = db.procedures.find(x => x.id === id); if(!p) return;
+        if(ask && (N('checklist').value.trim() || N('docs').value.trim()) && !confirm('체크리스트를 이 절차 내용으로 바꿀까요?')) return;
+        N('checklist').value = (p.steps || []).join('\n'); N('docs').value = splitDocs(p.docs).join('\n');
+      };
+      N('clientId').addEventListener('change', () => {fillItems(''); fillProcs(); upd();});
+      N('type').addEventListener('change', () => {fillProcs(); upd();});
+      itemSel.addEventListener('change', upd);
+      N('special').addEventListener('change', tog);
+      N('status').addEventListener('change', stat);
+      X('loadProc').onclick = () => loadProc(procPick.value, true);
+      // deadlines
+      const dlList = f.querySelector('.dl-list');
+      const rule = () => DL_RULES.find(x => x.kind === X('dlKind').value);
+      const renderDls = () => {
+        dlList.innerHTML = dls.length
+          ? dls.map((d,i) => `<li>${ddayHTML(d.due)}<strong>${esc(d.kind)}</strong><span class="hint">기한 ${esc(d.due)}${d.base ? `, 기준일 ${esc(d.base)}` : ''}${d.done ? ', 처리됨' : ''}</span><button type="button" class="mini" data-x-del="${i}">삭제</button></li>`).join('')
+          : '<li class="hint">등록된 기한이 없습니다.</li>';
+      };
+      const prev = () => {
+        const ru = rule(), dt = X('dlDate').value;
+        X('dlBaseLbl').textContent = ru.base || '기한일';
+        X('dlNameWrap').hidden = !!ru.base;
+        X('dlPrev').textContent = ru.base && dt ? `계산된 기한: ${addPeriod(dt, ru.n, ru.u)}` : '';
+      };
+      X('dlKind').onchange = prev; X('dlDate').oninput = prev;
+      X('dlAdd').onclick = () => {
+        const ru = rule(), dt = X('dlDate').value;
+        if(!dt){toast('날짜를 입력하세요.'); return;}
+        dls.push({id:uid(), kind:ru.base ? ru.kind : (X('dlName').value.trim() || '기한'), base:ru.base ? dt : null, due:ru.base ? addPeriod(dt, ru.n, ru.u) : dt, done:false});
+        X('dlDate').value = ''; X('dlName').value = ''; prev(); renderDls();
+      };
+      dlList.onclick = e => {const b = e.target.closest('[data-x-del]'); if(b){dls.splice(Number(b.dataset.xDel), 1); renderDls();}};
+      fillItems(rec.itemId); fillProcs(); upd(); tog(); prev(); renderDls();
+      if(preset.procId){loadProc(preset.procId, false); procPick.value = preset.procId;}
+      if(preset.complete){N('status').value = '완료'; stat(); N('summary').focus();}
+      else if(isNew) N('title').focus();
+    }
+  });
+}
+
+function openProc(p, preset = {}){
+  const isNew = !p;
+  const pr = p || {id:uid(), clientId:preset.clientId || null, type:preset.type || db.settings.taskTypes[0], title:'', steps:[], docs:'', cautions:''};
+  openDialog({
+    title: isNew ? '처리 절차 추가' : '처리 절차 수정',
+    body: `<div class="row2">
+        <label>적용 대상<select name="clientId">${opts([['', '공통 (전 업체)'], ...sortedClients().map(c => [c.id, c.name])], pr.clientId || '')}</select></label>
+        <label>업무 유형<select name="type">${opts(typeList(pr.type), pr.type)}</select></label>
+      </div>
+      <label>절차명<input name="title" required value="${esc(pr.title)}" placeholder="예: 수입 사료원료 통관"></label>
+      <label>처리 단계 (한 줄에 한 단계)<textarea name="steps" rows="8" placeholder="선적서류 수령&#10;HS 분류 및 요건 확인&#10;…">${esc((pr.steps || []).join('\n'))}</textarea></label>
+      <label>필요 서류 (쉼표나 줄바꿈으로 구분)<textarea name="docs" rows="3">${esc(pr.docs)}</textarea></label>
+      <label>주의사항<textarea name="cautions" rows="4" placeholder="이 업체·업무에서 자주 걸리는 부분">${esc(pr.cautions)}</textarea></label>`,
+    onSave(fd){
+      const t = nowIso();
+      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: lines(fd.get('steps')), docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), updatedAt: t});
+      if(isNew){pr.createdAt = t; db.procedures.push(pr); toast('절차를 저장했습니다.');}
+      else toast('절차를 수정했습니다.');
+    },
+    onDelete: isNew ? null : () => {
+      if(!confirm(`‘${pr.title}’ 절차를 삭제할까요?`)) return false;
+      db.procedures = db.procedures.filter(x => x.id !== pr.id); toast('절차를 삭제했습니다.');
+    },
+    onOpen(f){ if(isNew) f.elements.namedItem('title').focus(); }
+  });
+}
+
+function openReflect(rec){
+  const targets = db.procedures.filter(p => p.type === rec.type && (p.clientId === rec.clientId || !p.clientId))
+    .sort((a,b) => (!!b.clientId) - (!!a.clientId));
+  const lastLine = lines(rec.specialNote).slice(-1)[0] || '';
+  openDialog({
+    title: '특이 사례를 절차에 반영',
+    saveLabel: '반영',
+    body: `<p class="hint">‘${esc(rec.title)}’에서 다음에 적용할 점을 절차의 주의사항에 덧붙입니다. 날짜와 함께 기록되어 어느 사례에서 나온 내용인지 남습니다.</p>
+      <label>반영할 절차<select name="target">${opts([...targets.map(p => [p.id, `${p.title} (${p.clientId ? '업체 전용' : '공통'})`]), ['__new', `새 절차 만들기 (${clientName(rec.clientId)} 전용)`]], targets.find(p => p.clientId)?.id || targets[0]?.id || '__new')}</select></label>
+      <label>덧붙일 내용<textarea name="text" rows="4">${esc(lastLine)}</textarea></label>
+      <details><summary class="hint">특이 처리 내용 전체 보기</summary><p style="white-space:pre-wrap">${esc(rec.specialNote)}</p></details>`,
+    onSave(fd){
+      const text = fd.get('text').trim().replace(/\s*\n\s*/g, ' ');
+      if(!text){toast('덧붙일 내용을 입력하세요.'); return false;}
+      const line = `- ${text} (${rec.date || rec.startDate || today()} 사례)`;
+      const t = nowIso(); let p;
+      if(fd.get('target') === '__new'){
+        p = {id:uid(), clientId:rec.clientId, type:rec.type, title:`${rec.type} 처리 절차`, steps:[], docs:'', cautions:line, createdAt:t, updatedAt:t};
+        db.procedures.push(p);
+      } else {
+        p = db.procedures.find(x => x.id === fd.get('target'));
+        p.cautions = (p.cautions ? p.cautions + '\n' : '') + line; p.updatedAt = t;
+      }
+      rec.reflected = [...new Set([...(rec.reflected || []), p.id])];
+      toast(`‘${p.title}’ 주의사항에 반영했습니다.`);
+    }
+  });
+}
+
+function openItem(it, clientId){
+  const isNew = !it;
+  const item = it || {id:uid(), clientId, name:'', hs:'', tariff:'', reqs:'', agency:'', notes:''};
+  openDialog({
+    title: isNew ? '품목 추가' : '품목 수정',
+    body: `<div class="row2">
+        <label>품목명<input name="name" required value="${esc(item.name)}"></label>
+        <label>HS 코드<input name="hs" value="${esc(item.hs)}" placeholder="예: 3402.42-0000"></label>
+      </div>
+      <label>세율·FTA<input name="tariff" value="${esc(item.tariff)}" placeholder="기본세율, 적용 협정과 협정세율"></label>
+      <div class="row2">
+        <label>수입요건 (한 줄에 하나)<textarea name="reqs" rows="4">${esc(item.reqs)}</textarea></label>
+        <label>요건 기관<textarea name="agency" rows="4">${esc(item.agency)}</textarea></label>
+      </div>
+      <label>메모<textarea name="notes" rows="2" placeholder="원산지, 제조사, 품목분류 근거 등">${esc(item.notes)}</textarea></label>`,
+    onSave(fd){
+      Object.assign(item, {name: fd.get('name').trim(), hs: fd.get('hs').trim(), tariff: fd.get('tariff').trim(), reqs: fd.get('reqs').trim(), agency: fd.get('agency').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
+      if(isNew){item.createdAt = nowIso(); db.items.push(item); toast('품목을 추가했습니다.');}
+      else toast('품목을 수정했습니다.');
+    },
+    onDelete: isNew ? null : () => {
+      if(!confirm(`‘${item.name}’ 품목을 삭제할까요? 기록에 연결된 품목 표시만 사라지고 기록은 남습니다.`)) return false;
+      db.items = db.items.filter(x => x.id !== item.id);
+      db.records.forEach(r => { if(r.itemId === item.id) r.itemId = ''; });
+      toast('품목을 삭제했습니다.');
+    },
+    onOpen(f){ if(isNew) f.elements.namedItem('name').focus(); }
+  });
+}
+
+function openClient(c){
+  const isNew = !c;
+  const cl = c || {id:uid(), name:'', bizNo:'', industry:'', contact:'', keyword:'', notes:''};
+  openDialog({
+    title: isNew ? '업체 추가' : '업체 정보 수정',
+    body: `<label>업체명<input name="name" required value="${esc(cl.name)}"></label>
+      <div class="row2">
+        <label>사업자등록번호<input name="bizNo" value="${esc(cl.bizNo)}"></label>
+        <label>업종, 주요 품목<input name="industry" value="${esc(cl.industry)}"></label>
+      </div>
+      <div class="row2">
+        <label>담당자<input name="contact" value="${esc(cl.contact)}" placeholder="부서, 직함 정도만"></label>
+        <label>메일·Drive 검색어<input name="keyword" value="${esc(cl.keyword)}" placeholder="비우면 업체명 (예: @abc.co.kr)"></label>
+      </div>
+      <p class="hint">검색어에 업체 메일 도메인을 넣으면 메일 초안이 이 업체로 자동 연결됩니다.</p>
+      <label>메모<textarea name="notes" rows="4" placeholder="거래 특성, 합의 사항, 자주 생기는 이슈">${esc(cl.notes)}</textarea></label>`,
+    onSave(fd){
+      Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
+      if(isNew){cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');}
+      else toast('업체 정보를 수정했습니다.');
+      route = {name:'client', id:cl.id}; $('#q').value = '';
+    },
+    onDelete: isNew ? null : () => {
+      const n = db.records.filter(r => r.clientId === cl.id).length, m = db.procedures.filter(p => p.clientId === cl.id).length, k = db.items.filter(i => i.clientId === cl.id).length;
+      if(!confirm(`‘${cl.name}’을(를) 삭제하면 이 업체의 기록 ${n}건, 전용 절차 ${m}건, 품목 ${k}개도 함께 삭제됩니다. 계속할까요?`)) return false;
+      db.clients = db.clients.filter(x => x.id !== cl.id);
+      db.records = db.records.filter(r => r.clientId !== cl.id);
+      db.procedures = db.procedures.filter(p => p.clientId !== cl.id);
+      db.items = db.items.filter(i => i.clientId !== cl.id);
+      route = {name:'home', id:null}; toast('업체를 삭제했습니다.');
+    },
+    onOpen(f){ if(isNew) f.elements.namedItem('name').focus(); }
+  });
+}
+
+function openDataMenu(){
+  const mail = db.settings.mail || {};
+  openDialog({
+    title: '데이터',
+    saveLabel: '설정 저장',
+    body: `<label>업무 유형 (한 줄에 하나, 순서대로 표시)<textarea name="types" rows="7">${esc(db.settings.taskTypes.join('\n'))}</textarea></label>
+      <div class="dlg-section">
+        <h4>Gmail 연동</h4>
+        <p class="hint">Apps Script 웹 앱 주소와 토큰을 넣으면 ‘메일 초안’에서 라벨 붙은 메일을 가져옵니다. 이 값도 암호화되어 저장됩니다.</p>
+        <label>웹 앱 주소<input name="mailEndpoint" value="${esc(mail.endpoint)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
+        <label>토큰<input type="password" name="mailToken" value="${esc(mail.token)}" autocomplete="off"></label>
+      </div>
+      <div class="dlg-section">
+        <h4>비밀번호 변경</h4>
+        <p class="hint">바꾼 뒤에는 암호화 파일을 새로 받아 저장소에 올려야 다른 PC에서 새 비밀번호로 열립니다.</p>
+        <div class="row2"><input type="password" name="npw" placeholder="새 비밀번호 (비우면 유지)" autocomplete="new-password"><input type="password" name="npw2" placeholder="새 비밀번호 확인" autocomplete="new-password"></div>
+      </div>
+      <div class="dlg-section">
+        <h4>백업</h4>
+        <p class="hint">평문 JSON은 암호화되지 않습니다. 저장소에 올리지 말고 개인 Drive 보관용으로만 쓰세요.</p>
+        <div class="btn-row"><button type="button" class="ghost" data-act="plain">평문 JSON 받기</button><label class="btn">JSON 가져오기<input type="file" data-act="import" accept=".json,application/json" hidden></label></div>
+      </div>`,
+    onSave(fd){
+      const types = lines(fd.get('types'));
+      if(!types.length){toast('업무 유형을 하나 이상 남겨 두세요.'); return false;}
+      const ep = fd.get('mailEndpoint').trim();
+      if(ep && !/^https:\/\/script\.google(usercontent)?\.com\//.test(ep)){toast('웹 앱 주소는 https://script.google.com/ 으로 시작해야 합니다.'); return false;}
+      db.settings.taskTypes = [...new Set(types)];
+      if(ep !== db.settings.mail.endpoint) mailCache = null;
+      db.settings.mail = {endpoint: ep, token: fd.get('mailToken').trim()};
+      const np = fd.get('npw'), np2 = fd.get('npw2');
+      if(np){
+        if(np.length < 10){toast('비밀번호는 10자 이상이어야 합니다.'); return false;}
+        if(np !== np2){toast('두 비밀번호가 다릅니다.'); return false;}
+        (async () => {
+          salt = crypto.getRandomValues(new Uint8Array(16)); iterUsed = ITER;
+          key = await deriveKey(np, salt, ITER);
+          $('#dlg').close(); commit();
+          toast('비밀번호를 바꿨습니다. 암호화 파일을 새로 받아 저장소에 올리세요.');
+        })();
+        return false;
+      }
+      toast('설정을 저장했습니다.');
+    },
+    onOpen(f){
+      f.querySelector('[data-act="plain"]').onclick = () => download(`ledger-backup-${today()}.json`, JSON.stringify(db, null, 2));
+      f.querySelector('[data-act="import"]').onchange = async e => {
+        const file = e.target.files[0]; if(!file) return;
+        try{
+          const obj = JSON.parse(await file.text());
+          if(obj.ct){toast('암호화 파일은 잠근 뒤 첫 화면의 ‘암호화 파일 직접 열기’로 여세요.'); return;}
+          if(!Array.isArray(obj.clients) || !Array.isArray(obj.records)){toast('업무 대장 백업 파일이 아닙니다.'); return;}
+          if(!confirm(`현재 데이터를 이 파일 내용(업체 ${obj.clients.length}곳, 기록 ${obj.records.length}건)으로 바꿉니다. 계속할까요?`)) return;
+          db = migrate(obj); $('#dlg').close(); route = {name:'home', id:null}; commit(); toast('백업 파일을 불러왔습니다.');
+        }catch{toast('파일을 읽지 못했습니다. JSON 형식인지 확인하세요.');}
+      };
+    }
+  });
+}
+
+/* ---------- events ---------- */
+const CLICK_SEL = '[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+document.addEventListener('click', e => {
+  const t = e.target.closest(CLICK_SEL);
+  if(!t || !db || t.closest('dialog')) return;
+  if(t.classList.contains('rec-sum')){t.classList.toggle('open'); return;}
+  const d = t.dataset;
+  const curClient = route.name === 'client' ? route.id : '';
+  const curType = typeFilter !== '전체' ? typeFilter : '';
+  const findRec = id => db.records.find(r => r.id === id);
+  if('go' in d){$('#q').value = ''; go(d.go, d.id);}
+  else if('newRec' in d) openRecord(null, {clientId: 'client' in d ? d.client : curClient, type: curType, status: d.status || '완료'});
+  else if('editRec' in d) openRecord(findRec(d.editRec));
+  else if('complete' in d) openRecord(findRec(d.complete), {complete:true});
+  else if('reflect' in d) openReflect(findRec(d.reflect));
+  else if('newProc' in d) openProc(null, {clientId: 'client' in d ? d.client : curClient, type: curType});
+  else if('editProc' in d) openProc(db.procedures.find(p => p.id === d.editProc));
+  else if('startProc' in d){const p = db.procedures.find(x => x.id === d.startProc); openRecord(null, {clientId: p.clientId || curClient, type: p.type, status:'진행중', procId: p.id});}
+  else if('newClient' in d) openClient(null);
+  else if('editClient' in d) openClient(db.clients.find(c => c.id === d.editClient));
+  else if('newItem' in d) openItem(null, d.client || curClient);
+  else if('editItem' in d) openItem(db.items.find(i => i.id === d.editItem));
+  else if('chip' in d){typeFilter = d.chip; renderView();}
+  else if('month' in d){rptMonth = d.month; renderView();}
+  else if('csv' in d) exportCsv(d.csv);
+  else if('mailLoad' in d) loadMail();
+  else if('mailMake' in d){const m = (mailCache || []).find(x => x.id === d.mailMake); if(m) openRecord(null, {mail:m, status:'완료'});}
+  else if('mailIgnore' in d){const m = (mailCache || []).find(x => x.id === d.mailIgnore); seeMail(d.mailIgnore); if(m) markMailDone(m); commit(); toast('목록에서 뺐습니다.');}
+  else if('openData' in d) openDataMenu();
+});
+document.addEventListener('change', e => {
+  const el = e.target;
+  if(!db || el.closest('dialog')) return;
+  if(el.matches('[data-ck]')){
+    const [rid, kind, i] = el.dataset.ck.split('|');
+    const r = db.records.find(x => x.id === rid); if(!r) return;
+    const x = (kind === 'c' ? r.checklist : r.docs)[Number(i)]; if(!x) return;
+    x.done = el.checked; x.doneAt = el.checked ? today() : null; r.updatedAt = nowIso();
+    openCk.add(rid); commit();
+  } else if(el.matches('[data-dl]')){
+    const [rid, did] = el.dataset.dl.split('|');
+    const r = db.records.find(x => x.id === rid); const dl = r && r.deadlines.find(x => x.id === did); if(!dl) return;
+    dl.done = true; dl.doneAt = today(); commit(); toast(`‘${dl.kind}’을(를) 처리 완료로 표시했습니다.`);
+  } else if(el.id === 'sType'){sOpt.type = el.value; renderView();}
+  else if(el.id === 'sSpecial'){sOpt.special = el.checked; renderView();}
+  else if(el.id === 'rptMonth' && el.value){rptMonth = el.value; renderView();}
+});
+document.addEventListener('toggle', e => {
+  const el = e.target;
+  if(el.matches && el.matches('details[data-ck-rec]')){const id = el.dataset.ckRec; el.open ? openCk.add(id) : openCk.delete(id);}
+}, true);
+let searchTimer;
+$('#q').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const v = $('#q').value.trim();
+    if(v) route = {name:'search', id:null};
+    else if(route.name === 'search') route = {name:'home', id:null};
+    renderSidebar(); renderView();
+  }, 150);
+});
+document.addEventListener('keydown', e => {
+  if(e.key === '/' && db && !$('#dlg').open && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){e.preventDefault(); $('#q').focus();}
+});
+$('#btnExport').onclick = exportEnc;
+$('#btnData').onclick = openDataMenu;
+$('#btnLock').onclick = () => location.reload();
+$('#btnUnlock').onclick = unlock;
+$('#pw').addEventListener('keydown', e => {if(e.key === 'Enter') unlock();});
+$('#btnCreate').onclick = createNew;
+$('#pw2').addEventListener('keydown', e => {if(e.key === 'Enter') createNew();});
+$('#gateToNew').onclick = () => showGate('new');
+$('#gateToUnlock').onclick = () => showGate('unlock');
+$('#gateFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; if(!file) return;
+  try{
+    const obj = JSON.parse(await file.text());
+    if(!obj.ct){showGate('unlock'); $('#gateMsg').textContent = '암호화 파일(data.enc.json)이 아닙니다.'; return;}
+    remoteBlob = obj; showGate('unlock');
+    $('#gateMsg').textContent = `${file.name}을(를) 불러왔습니다. 비밀번호를 입력하세요.`;
+  }catch{showGate('unlock'); $('#gateMsg').textContent = '파일을 읽지 못했습니다.';}
+});
+
+boot();
+</script>
+</body>
+</html>
