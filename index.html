@@ -294,7 +294,6 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
       <div class="row2"><label>관리자 아이디 (영문·숫자)<input id="nid" autocomplete="username"></label><label>이름<input id="nname"></label></div>
       <label>새 비밀번호 (10자 이상)<input type="password" id="pw1" autocomplete="new-password"></label>
       <label>비밀번호 확인<input type="password" id="pw2" autocomplete="new-password"></label>
-      <label class="check"><input type="checkbox" id="withSample" checked> 예시 데이터 넣기 (나중에 지울 수 있음)</label>
       <button id="btnCreate" class="primary">새 대장 만들기</button>
       <p id="gateMsg2" class="msg" role="status"></p>
     </div>
@@ -309,7 +308,7 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 <div id="app" hidden>
   <header class="top">
     <button class="brand" data-go="home" aria-label="BSGC Workspace 홈"><img class="logo-light" src="logo.png" alt="BSGC Blue Stripe Global Consulting"><img class="logo-dark" src="logo-dark.png" alt="BSGC Blue Stripe Global Consulting"><span>Workspace</span></button>
-    <div class="search"><input id="q" type="search" placeholder="업체, 신고번호, 품목, HS 코드, 특이사항 검색 ( / 키)" aria-label="검색"></div>
+    <div class="search"><input id="q" type="search" placeholder="업체, B/L 번호, 신고번호, 품목, HS 코드, 특이사항 검색 ( / 키)" aria-label="검색"></div>
     <div class="top-actions">
       <span id="who" class="who"></span>
       <span id="saveState" class="save-state" role="status"></span>
@@ -326,10 +325,10 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
       <button class="side-link" data-go="report">월간 리포트</button>
       <button class="side-link" data-go="common">공통 절차</button>
       <button class="side-link" data-letter>사유서 작성</button>
+      <button class="side-link" data-go="inbox"><span>자동 수집</span><span class="cnt" id="cntInbox"></span></button>
       <button class="side-link" data-go="clientlist">거래업체 리스트</button>
       <button class="side-link" data-go="contacts">연락처</button>
       <button class="side-link" data-go="fee">수수료 계산</button>
-      <button class="side-link" data-go="bl">B/L 조회</button>
       <button class="side-link" data-go="accounts">계정 관리</button>
       <div class="side-head"><span>업체</span><button class="mini" data-new-client>추가</button></div>
       <div id="clientList"></div>
@@ -637,13 +636,28 @@ async function createNew(){
   msg.textContent = '만드는 중…';
   dekRaw = crypto.getRandomValues(new Uint8Array(32)); dataKey = await importDek(dekRaw);
   accounts = [await wrapFor(id, name, 'admin', a)]; me = {id, name, role:'admin'};
-  db = newDb($('#withSample').checked); remoteUpdatedAt = null; remoteBlob = null;
+  db = newDb(false); remoteUpdatedAt = null; remoteBlob = null;
   try{localStorage.setItem(LS_KEY + '-uid', id);}catch{}
   await persistLocal();
   enterApp();
   toast('새 Workspace를 만들었습니다. ‘암호화 파일 받기’로 받은 파일을 Drive 유틸 폴더에 저장하세요.');
 }
-function enterApp(){$('#gate').hidden = true; $('#app').hidden = false; render();}
+function removeSamples(){
+  const ids = new Set(db.clients.filter(c => /\(예시\)/.test(c.name)).map(c => c.id));
+  if(!ids.size) return 0;
+  db.clients = db.clients.filter(c => !ids.has(c.id));
+  db.records = db.records.filter(r => !ids.has(r.clientId));
+  db.procedures = db.procedures.filter(x => !ids.has(x.clientId));
+  db.items = db.items.filter(i => !ids.has(i.clientId));
+  return ids.size;
+}
+function enterApp(){
+  $('#gate').hidden = true; $('#app').hidden = false;
+  const n = removeSamples();
+  if(n){ db.meta.updatedAt = nowIso(); persistLocal(); setTimeout(() => toast(`예시 업체 ${n}곳과 관련 기록을 지웠습니다.`), 600); }
+  render();
+  if((db.settings.mail || {}).endpoint) setTimeout(() => runCollect(false), 1200);
+}
 
 /* ---------- save state ---------- */
 function commit(){db.meta.updatedAt = nowIso(); render(); persistLocal();}
@@ -670,6 +684,7 @@ function renderSidebar(){
   $('#cntActive').textContent = active || '';
   const pendingMail = mailCache ? mailCache.filter(m => !db.mailSeen.includes(m.id)).length : 0;
   $('#cntMail').textContent = pendingMail || '';
+  $('#cntInbox').textContent = (db.collectPending || []).length || '';
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
   if(!list.length){$('#clientList').innerHTML = '<p class="hint side-empty">업체를 추가하세요</p>'; return;}
@@ -686,7 +701,7 @@ function renderSidebar(){
 function renderView(){
   hlRe = null;
   const v = $('#view');
-  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, contacts:viewContacts, clientlist:viewClientList, fee:viewFee, bl:viewBl, accounts:viewAccounts};
+  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
   if(route.name === 'client' && db.clients.some(c => c.id === route.id)) v.innerHTML = viewClient();
   else if(views[route.name]) v.innerHTML = views[route.name]();
   else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
@@ -719,7 +734,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}</div>
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
       ${ckHtml}
@@ -979,6 +994,101 @@ async function bizImport(){
   });
 }
 
+/* ---------- 자동 수집 (수입·수출 폴더 신규 업로드 + 메일 매칭) ---------- */
+function collectApi(params){
+  const cfg = db.settings.mail || {};
+  if(!cfg.endpoint || !cfg.token) return Promise.reject(new Error('Apps Script 주소와 토큰이 없습니다'));
+  const u = new URL(cfg.endpoint); u.searchParams.set('token', cfg.token);
+  Object.entries(params).forEach(([k,v]) => u.searchParams.set(k, v));
+  return fetch(u.href).then(r => r.json()).then(j => { if(!j.ok) throw new Error(j.error || '응답 오류'); return j; });
+}
+function matchClientText(text){
+  const t = normName(text);
+  let best = null;
+  db.clients.forEach(c => {
+    const keys = [normName(c.name), c.keyword ? c.keyword.toLowerCase() : ''].filter(k => k && k.length >= 2);
+    if(keys.some(k => t.includes(k)) && (!best || normName(c.name).length > normName(best.name).length)) best = c;
+  });
+  return best;
+}
+function caseFromItems(c, group){
+  const f = group[0], specials = [...new Set(group.flatMap(x => x.special || []))];
+  const mail = group.find(x => x.mail) ? group.find(x => x.mail).mail : null;
+  const links = [...new Set([...group.map(x => x.link), mail && mail.link].filter(u => safeUrl(u)))];
+  return {
+    id:uid(), clientId:c.id, type: f.kind === '수출' ? '수출신고' : '수입통관', status:'완료',
+    startDate: f.created, date: group.map(x => x.created).sort().slice(-1)[0],
+    bl: f.bl || '', refNo: f.declNo || '', fee:null, itemId:'',
+    title: `[${f.kind}] ${f.bl || f.declNo || f.name.replace(/\.[^.]+$/, '')}`,
+    summary: (mail ? `메일: ${mail.subject} (${mail.date})\n${mail.snippet || ''}\n` : '') + '자료: ' + group.map(x => x.name).join(', '),
+    special: specials.length > 0,
+    specialNote: specials.length ? `자동 수집에서 특이 절차로 보이는 자료가 확인됨: ${specials.join(', ')}. 내용을 확인해 무엇이 달랐는지 보완하세요.` : '',
+    tags: ['자동수집', ...specials], links, checklist:[], docs:[], deadlines:[], reflected:[],
+    createdAt: nowIso(), updatedAt: nowIso(), createdBy: 'auto'
+  };
+}
+function applyCollected(items){
+  db.collectSeen = db.collectSeen || []; db.collectPending = db.collectPending || [];
+  const seen = new Set(db.collectSeen);
+  const fresh = items.filter(x => !seen.has(x.id));
+  if(!fresh.length) return null;
+  const groups = {};
+  let pend = 0;
+  fresh.forEach(x => {
+    const c = matchClientText(`${x.name} ${x.path} ${x.mail ? x.mail.subject : ''}`);
+    if(!c){ db.collectPending.push(x); pend++; return; }
+    const k = c.id + '|' + x.kind + '|' + (x.bl || x.declNo || x.name);
+    (groups[k] = groups[k] || {c, list:[]}).list.push(x);
+  });
+  let made = 0, sp = 0, upd = 0;
+  Object.values(groups).forEach(({c, list}) => {
+    const f = list[0];
+    const ex = db.records.find(r => r.clientId === c.id && ((f.bl && r.bl === f.bl) || (f.declNo && r.refNo === f.declNo)));
+    if(ex){
+      const nr = caseFromItems(c, list);
+      ex.links = [...new Set([...(ex.links || []), ...nr.links])];
+      if(nr.special && !ex.special){ ex.special = true; ex.specialNote = (ex.specialNote ? ex.specialNote + '\n' : '') + nr.specialNote; }
+      ex.updatedAt = nowIso(); upd++;
+    } else { const r = caseFromItems(c, list); db.records.push(r); made++; if(r.special) sp++; }
+  });
+  fresh.forEach(x => db.collectSeen.push(x.id));
+  if(db.collectSeen.length > 5000) db.collectSeen = db.collectSeen.slice(-5000);
+  return {made, sp, upd, pend};
+}
+async function runCollect(manual){
+  try{
+    if(manual){ toast('수입·수출 폴더를 확인하는 중입니다…'); await collectApi({collect:1}); }
+    const j = await collectApi({inbox:1});
+    const r = applyCollected(j.items || []);
+    if(r){ commit(); toast(`자동 수집: 새 케이스 ${r.made}건(특이 ${r.sp}건), 기존 기록 보완 ${r.upd}건, 미분류 ${r.pend}건`); }
+    else if(manual) toast('새로 올라온 자료가 없습니다.');
+  }catch(e){ if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
+}
+function viewInbox(){
+  const pend = db.collectPending || [];
+  return `<header class="client-head"><div><h2>자동 수집</h2><p class="client-meta">매일 아침 8시 수입·수출 폴더 신규 자료를 확인해 업체 기록으로 넣습니다. 업체를 알아보지 못한 자료만 여기 남습니다.</p></div>
+      <div class="client-act"><button class="primary" data-collect-now>지금 확인</button></div></header>
+    ${pend.length ? `<div class="table-wrap" style="margin-top:1rem"><table class="grid"><thead><tr><th>자료</th><th>폴더</th><th>올린 날</th><th>메일</th><th>업체 지정</th></tr></thead><tbody>
+      ${pend.map((x,i) => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}${(x.special || []).length ? ` <span class="stamp sm">특이</span>` : ''}</td><td>${esc(x.kind)} / ${esc(x.path)}</td><td>${esc(x.created)}</td><td>${x.mail ? esc(x.mail.subject) : ''}</td>
+        <td><div class="btn-row"><select data-pend-client="${i}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), '')}</select><button class="mini strong" data-pend-apply="${i}">반영</button><button class="mini" data-pend-drop="${i}">무시</button></div></td></tr>`).join('')}
+    </tbody></table></div>` : '<p class="empty">미분류 자료가 없습니다.</p>'}
+    <p class="hint">업체를 자동으로 알아보려면 파일명이나 폴더명에 업체명이 들어가야 합니다. 업체 정보의 검색어(약칭)도 함께 씁니다.</p>`;
+}
+function applyPending(i, cid){
+  const x = db.collectPending[i], c = db.clients.find(y => y.id === cid);
+  if(!x || !c){toast('업체를 고르세요.'); return;}
+  const ex = db.records.find(r => r.clientId === c.id && ((x.bl && r.bl === x.bl) || (x.declNo && r.refNo === x.declNo)));
+  if(ex){ ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; }
+  else db.records.push(caseFromItems(c, [x]));
+  db.collectPending.splice(i, 1); commit(); toast(`${c.name} 기록으로 넣었습니다.`);
+}
+async function blInline(q){
+  const el = $('#blInline'); if(!el) return;
+  el.innerHTML = '<p class="hint">UNI-PASS 조회 중…</p>';
+  try{ const j = await collectApi({bl:q.toUpperCase(), blType:'M', year:new Date().getFullYear()}); el.innerHTML = blResultHTML(j); }
+  catch(e){ el.innerHTML = `<p class="msg">${esc(e.message)}</p>`; }
+}
+
 /* ---------- 연락처 ---------- */
 function contactRows(){
   const q = ($('#contactQ') ? $('#contactQ').value : '').trim().toLowerCase();
@@ -1192,13 +1302,14 @@ function viewSearch(){
   const q = $('#q').value.trim();
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   hlRe = new RegExp('(' + terms.map(t => esc(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
-  const has = s => terms.every(t => s.includes(t));
+  const sq = x => x.replace(/[\s\-\/.]/g, '');
+  const has = s => { const s2 = sq(s); return terms.every(t => s.includes(t) || s2.includes(sq(t))); };
   const tOk = x => !sOpt.type || x.type === sOpt.type;
   const narrowed = sOpt.special || sOpt.type;
   const cl = narrowed ? [] : sortedClients().filter(c => has(hay(c.name, c.bizNo, c.industry, c.contact, c.notes, c.keyword)));
   const its = narrowed ? [] : db.items.filter(i => has(hay(i.name, i.hs, (i.hs||'').replace(/[.\-\s]/g,''), i.tariff, i.reqs, i.agency, i.notes, clientName(i.clientId))));
   const pr = sOpt.special ? [] : db.procedures.filter(p => tOk(p) && has(hay(p.title, p.type, p.steps, p.docs, p.cautions, clientName(p.clientId))));
-  const rc = db.records.filter(r => tOk(r) && (!sOpt.special || r.special) && has(hay(r.title, r.type, r.status, r.refNo, r.summary, r.specialNote, r.tags, r.checklist, causesOf(r), clientName(r.clientId), (db.items.find(i => i.id === r.itemId)||{}).name))).sort(byDateDesc);
+  const rc = db.records.filter(r => tOk(r) && (!sOpt.special || r.special) && has(hay(r.title, r.type, r.status, r.refNo, r.bl, r.summary, r.specialNote, r.tags, r.checklist, causesOf(r), clientName(r.clientId), (db.items.find(i => i.id === r.itemId)||{}).name))).sort(byDateDesc);
   const total = cl.length + its.length + pr.length + rc.length;
   return `<h2>‘${esc(q)}’ 검색 결과</h2>
     <div class="filters">
@@ -1206,6 +1317,7 @@ function viewSearch(){
       <label class="check"><input type="checkbox" id="sSpecial"${sOpt.special ? ' checked' : ''}> 특이 처리만</label>
       <span class="hint">업체 ${cl.length}곳, 품목 ${its.length}개, 절차 ${pr.length}건, 기록 ${rc.length}건</span>
     </div>
+    ${/^[A-Za-z0-9\-]{8,}$/.test(q) ? `<div class="setup"><div class="btn-row"><span>‘${esc(q)}’를 B/L 번호로 UNI-PASS 화물진행정보에서 찾아볼까요?</span><button class="mini strong" data-bl-q="${esc(q)}">UNI-PASS 조회</button></div><div id="blInline"></div></div>` : ''}
     ${total ? '' : '<p class="empty">찾는 내용이 없습니다. 단어를 줄이거나 다른 표현으로 검색해 보세요. 여러 단어는 모두 포함된 결과만 보여 줍니다.</p>'}
     ${cl.length ? `<section class="result-block"><div class="sec-head"><h3>업체</h3></div><div class="chips">${cl.map(c => `<button class="chip" data-go="client" data-id="${esc(c.id)}">${hl(c.name)}</button>`).join('')}</div></section>` : ''}
     ${its.length ? `<section class="result-block"><div class="sec-head"><h3>품목·요건</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>업체</th><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th></tr></thead><tbody>
@@ -1387,7 +1499,10 @@ function openRecord(r, preset = {}){
         <label>완료일<input type="date" name="date" value="${esc(rec.date)}"></label>
       </div>
       <div class="row2">
-        <label>참조번호<input name="refNo" value="${esc(rec.refNo)}" placeholder="신고번호, B/L 번호 등"></label>
+        <label>B/L 번호<input name="bl" value="${esc(rec.bl || '')}" placeholder="예: HDMU1234567"></label>
+        <label>신고번호<input name="refNo" value="${esc(rec.refNo)}" placeholder="수입·수출 신고번호"></label>
+      </div>
+      <div class="row2">
         <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
       </div>
       <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
@@ -1440,7 +1555,7 @@ function openRecord(r, preset = {}){
       Object.assign(rec, {
         clientId: fd.get('clientId'), type: fd.get('type'), status, itemId: fd.get('itemId') || '',
         startDate: fd.get('startDate') || fd.get('date') || today(), date: fd.get('date'),
-        refNo: fd.get('refNo').trim(), fee: feeNum || null, title: fd.get('title').trim(), summary,
+        refNo: fd.get('refNo').trim(), bl: String(fd.get('bl') || '').trim().toUpperCase(), fee: feeNum || null, title: fd.get('title').trim(), summary,
         special: fd.get('special') === 'on', specialNote: fd.get('specialNote').trim(), causes: fd.getAll('cause'),
         checklist, docs: keep(rec.docs || [], lines(fd.get('docs'))), deadlines: dls,
         tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, updatedAt: t
@@ -1539,8 +1654,10 @@ function renderLetterBody(text){
   flush(); return out.join('');
 }
 function printLetter(v){
-  const w = window.open('', '_blank');
-  if(!w){toast('팝업이 막혀 인쇄 창을 열지 못했습니다. 브라우저에서 이 사이트의 팝업을 허용하세요.'); return false;}
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+  document.body.appendChild(fr);
+  const w = fr.contentWindow; w.document.open();
   w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(v.title)}</title><style>
     @page{size:A4;margin:25mm 22mm}
     body{font-family:"Batang","바탕","Noto Serif KR","Nanum Myeongjo",serif;color:#000;font-size:12pt;line-height:1.9;margin:0}
@@ -1557,9 +1674,9 @@ function printLetter(v){
     <div class="body">${renderLetterBody(v.body)}</div>
     <p class="date">${esc(v.date.replace(/-/g,'.'))}</p>
     <div class="sign"><p>${esc(v.company)}</p><p>대표 ${esc(v.rep)}&nbsp;&nbsp;&nbsp;(인)</p></div>
-    <script>window.onload = () => window.print();<\/script>
   </body></html>`);
   w.document.close();
+  setTimeout(() => { try{ w.focus(); w.print(); }catch(e){ toast('인쇄하지 못했습니다: ' + e.message); } setTimeout(() => fr.remove(), 60000); }, 400);
   return true;
 }
 function openLetter(clientId){
@@ -1636,7 +1753,6 @@ function openLetter(clientId){
       const t = fd.get('ltype'), L = LETTER_TYPES[t], c = db.clients.find(x => x.id === fd.get('clientId'));
       const body = fd.get('body').trim(), rep = fd.get('rep').trim(), to = fd.get('to').trim();
       if(!body){toast('문안이 비어 있습니다.'); return false;}
-      if(!rep){toast('대표자 이름을 넣어 주세요.'); return false;}
       const pick = fd.get('reasonPick'), reason = pick === '__own' ? fd.get('reasonOwn').trim() : pick;
       if(!printLetter({title:L.title, to, body, date:fd.get('ldate') || today(), company:c.name, rep})) return false;
       c.rep = rep;
@@ -1936,7 +2052,7 @@ function mergeImport(obj){
     if(ex){
       cMap[c.id] = ex.id;
       if(c.notes && !(ex.notes || '').includes(c.notes.split('\n')[0])) ex.notes = (ex.notes ? ex.notes + '\n\n' : '') + c.notes;
-      ['bizNo','industry','contact','rep','keyword'].forEach(k => { if(!ex[k] && c[k]) ex[k] = c[k]; });
+      ['bizNo','industry','contact','rep','keyword','address','openDate'].forEach(k => { if(!ex[k] && c[k]) ex[k] = c[k]; });
       if(c.relation){
         const r = ex.relation || {}, nr = c.relation;
         ex.relation = {
@@ -1983,7 +2099,7 @@ function mergeImport(obj){
 }
 
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -1992,6 +2108,10 @@ document.addEventListener('click', e => {
   const curClient = route.name === 'client' ? route.id : '';
   const curType = typeFilter !== '전체' ? typeFilter : '';
   const findRec = id => db.records.find(r => r.id === id);
+  if('collectNow' in d){runCollect(true); return;}
+  if('pendApply' in d){applyPending(Number(d.pendApply), $(`[data-pend-client="${d.pendApply}"]`).value); return;}
+  if('pendDrop' in d){db.collectPending.splice(Number(d.pendDrop), 1); commit(); return;}
+  if('blQ' in d){blInline(d.blQ); return;}
   if('bizImport' in d){bizImport(); return;}
   if('scan' in d){scanContacts(d.scan); return;}
   if('ccDel' in d){const [cid, em] = d.ccDel.split('|'); const c = db.clients.find(x => x.id === cid); if(c){c.contacts = (c.contacts || []).filter(p => p.email !== em); commit();} return;}
