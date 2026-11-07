@@ -71,6 +71,8 @@ function openRecord(r, preset = {}){
       <label class="check"><input type="checkbox" name="special"${rec.special ? ' checked' : ''}> 일반 절차와 다르게 처리함</label>
       <div class="special-fields"><label>특이 처리 내용<textarea name="specialNote" rows="4" placeholder="무엇이 달랐는지 / 어떻게 해결했는지 / 다음에 적용할 점">${esc(rec.specialNote)}</textarea></label></div>
       <div class="dlg-section">
+        <div class="row2"><label>요건승인번호 (있으면 UNI-PASS로 승인 확인)<input name="reqApreNo" value="${esc(rec.reqApreNo || '')}"></label><label>정정 제출번호<input name="mdfyNo" value="${esc((rec.mdfy || {}).dcshSbmtNo || '')}" placeholder="정정 신청 후 처리상태 자동 확인"></label></div>
+        <div class="row2"><label>정정 신청 차수<input name="mdfyDg" inputmode="numeric" value="${esc((rec.mdfy || {}).dgcnt || '')}"></label><label>정정 신청일자<input type="date" name="mdfyDt" value="${esc((rec.mdfy || {}).date || '')}"></label></div>
         <h4>정정·보완 원인</h4>
         <p class="hint">정정이나 세관 보완 요구가 있었던 건만 고르세요. 업체별 신고 전 점검표에 쓰입니다.</p>
         <div class="cause-grid">${CAUSES.map(k => `<label class="check"><input type="checkbox" name="cause" value="${esc(k)}"${causesOf(rec).includes(k) ? ' checked' : ''}> ${esc(k)}</label>`).join('')}</div>
@@ -119,7 +121,9 @@ function openRecord(r, preset = {}){
         refNo: fd.get('refNo').trim(), bl: String(fd.get('bl') || '').trim().toUpperCase(), fee: feeNum || null, title: fd.get('title').trim(), summary,
         special: fd.get('special') === 'on', specialNote: fd.get('specialNote').trim(), causes: fd.getAll('cause'),
         checklist, docs: keep(rec.docs || [], lines(fd.get('docs'))), deadlines: dls,
-        tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t
+        tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t,
+        reqApreNo: String(fd.get('reqApreNo') || '').trim(),
+        mdfy: fd.get('mdfyNo') ? {dcshSbmtNo: String(fd.get('mdfyNo')).trim(), dgcnt: String(fd.get('mdfyDg') || '').trim(), date: fd.get('mdfyDt') || ''} : null
       });
       rec.updatedBy = me ? me.id : '';
       if(isNew){
@@ -437,6 +441,7 @@ function openClient(c){
       <div class="row2">
         <label>담당자<input name="contact" value="${esc(cl.contact)}" placeholder="부서, 직함 정도만"></label>
         <label>대표자 (사유서용)<input name="rep" value="${esc(cl.rep || '')}"></label>
+        <label>정산 방식<select name="settleMode">${opts([['each', '건별 정산서 (정산서 메일로 완료)'], ['monthly', '월 정산 (통관완료만으로 완료)']], cl.settleMode || 'each')}</select></label>
       </div>
       <div class="row2">
         <label>메일·Drive 검색어<input name="keyword" value="${esc(cl.keyword)}" placeholder="@abc.co.kr, 약칭 (쉼표로 구분)"></label>
@@ -454,7 +459,7 @@ function openClient(c){
       </div>
       <label>메모<textarea name="notes" rows="4" placeholder="거래 특성, 합의 사항, 자주 생기는 이슈">${esc(cl.notes)}</textarea></label>`,
     onSave(fd){
-      Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), rep: fd.get('rep').trim(), keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
+      Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), rep: fd.get('rep').trim(), settleMode: fd.get('settleMode') || 'each', keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
       cl.relation = {since: fd.get('since') || '', last: fd.get('last') || '', basis: fd.get('basis').trim()};
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim();
       if(isNew){cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');}

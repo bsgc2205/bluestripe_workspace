@@ -282,7 +282,7 @@ function enterApp(){
   if(n){ commit(); setTimeout(() => toast(`예시 업체 ${n}곳과 관련 기록을 지웠습니다.`), 600); }
   render();
   if(ensureCaseNos(db)) commit();
-  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); setTimeout(() => refreshUnipass(), 6000); }
+  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); setTimeout(() => refreshCustoms(false), 6000); }
 }
 
 /* ---------- save state ---------- */

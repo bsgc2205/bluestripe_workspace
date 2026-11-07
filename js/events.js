@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -50,6 +50,8 @@ document.addEventListener('click', e => {
   else if('sug' in d){const [rid, key] = d.sug.split('|'); const r = findRec(rid); if(r) applySuggestion(r, d.sug.slice(rid.length + 1));}
   else if('sugOff' in d){const rid = d.sugOff.split('|')[0], r = findRec(rid); if(r){ r.sugOff = [...new Set([...(r.sugOff || []), d.sugOff.slice(rid.length + 1)])].slice(-50); commit(); }}
   else if('mine' in d){mineOnly = !mineOnly; renderView();}
+  else if('stage' in d){const [rid, k] = d.stage.split('|'), r = findRec(rid); if(r){ setStage(r, k, today(), '직접 표시'); if(k === 'customs') (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true); const done = autoComplete(r); commit(); toast(done ? '통관·정산이 모두 확인되어 완료 처리했습니다.' : (k === 'customs' ? '통관완료로 표시했습니다.' : '정산완료로 표시했습니다.')); }}
+  else if('undoAuto' in d){const r = findRec(d.undoAuto); if(r){ undoAuto(r); commit(); toast('진행 중으로 되돌렸습니다. 이 기록은 다시 자동 완료하지 않습니다.'); }}
   else if('openData' in d) openDataMenu();
   else if('letter' in d) openLetter('client' in d ? d.client : curClient);
 });

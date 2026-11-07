@@ -211,25 +211,25 @@ function viewMail(){
     <div class="setup"><p>한비로 customs@bsgc.co.kr로 들어온 메일을 업무 기록과 연결합니다. 사무실 PC의 메일 수집기와 Apps Script 연동이 필요합니다.</p>
     <p class="hint">설치 순서는 README의 ‘customs@ 메일 수집’을 보세요.</p>
     <button class="primary" data-open-data>데이터 메뉴 열기</button></div>`;
-  const ths = mailThreadsList();
+  const ths = mailThreadsList().map(t => ({...t, f:threadFlags(t)})).sort((a, b) => (b.f.request - a.f.request) || (b.f.ageH >= OVERDUE_H) - (a.f.ageH >= OVERDUE_H) || (a.last.date < b.last.date ? 1 : -1));
   return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 customs@ 메일 중 아직 기록과 연결하지 않은 대화 ${ths.length}건입니다. 제목에 케이스 번호([2026-I-001])가 있거나, 이미 기록에 붙인 대화의 회신이거나, B/L·신고번호로 기록이 하나로 정해지면 자동으로 붙습니다.</p></div>
       <div class="client-act"><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
     ${mailErr ? `<p class="msg">${esc(mailErr)}</p>` : ''}
     <div class="narrow">
     ${mailCache === null ? '<p class="empty">‘새로 불러오기’를 누르면 메일 색인에서 가져옵니다.</p>'
-      : ths.length ? ths.map(t => { const m = t.last, c = matchClient(t.ms);
+      : ths.length ? ths.map(t => { const m = t.last, c = t.f.client, over = t.f.ageH >= OVERDUE_H;
         const refs = [...new Set(t.ms.flatMap(x => [x.bl && `B/L ${x.bl}`, x.declNo && `신고 ${x.declNo}`].filter(Boolean)))];
         const files = [...new Set(t.ms.flatMap(x => x.attachments || []))];
         const people = [...new Set(t.ms.map(x => x.fwdFrom ? `전달: ${x.fwdFrom}` : (x.fromName || x.from)))];
         const first = t.ms[0];
-        return `<article class="rec">
+        return `<article class="rec${over ? ' overdue' : ''}">
         <div class="rec-date">${esc(String(m.date).slice(0, 10))}<small>${t.ms.length > 1 ? `${t.ms.length}통 · ${esc(String(first.date).slice(5, 10))}~` : esc(String(m.date).slice(11, 16))}</small></div>
         <div class="rec-body"><h4>${esc(m.subject || '(제목 없음)')}</h4>
-          <div class="rec-meta"><span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>` : '<span class="tag type">업체 미지정</span>'}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+          <div class="rec-meta">${t.f.request ? '<span class="tag new">새 의뢰 후보</span>' : ''}${over ? `<span class="tag warn">${Math.floor(t.f.ageH / 24) ? Math.floor(t.f.ageH / 24) + '일' : Math.floor(t.f.ageH) + '시간'} 미연결</span>` : ''}<span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>` : '<span class="tag type">업체 미지정</span>'}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
           ${m.snippet ? `<p class="rec-sum">${esc(m.snippet)}</p>` : ''}
           ${files.length ? `<div class="hint">첨부 ${files.length}개: ${esc(files.slice(0, 6).join(', '))}${files.length > 6 ? ' …' : ''}</div>` : ''}
         </div>
-        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">기록 만들기</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
+        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
       </article>`; }).join('')
       : '<p class="empty">새로 연결할 메일이 없습니다.</p>'}
     </div>`;
@@ -248,8 +248,9 @@ async function loadMail(manual = true){
   try{
     const j = await collectApi({mails:1, days:60});
     mailCache = j.items || [];
-    const n = autoAttachMails();
-    if(n){ pruneThreads(); commit(); toast(`customs@ 메일 ${n}통을 기존 기록에 자동으로 붙였습니다.`); }
+    const n = autoAttachMails(), ev = evalStages();
+    if(n || ev.n || ev.done){ pruneThreads(); commit(); }
+    if(n || ev.done) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`].filter(Boolean).join(' · '));
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(manual) toast(mailErr);

@@ -5,8 +5,8 @@ function renderSidebar(){
   document.querySelectorAll('.side-link').forEach(b => b.classList.toggle('on', b.dataset.go === route.name));
   const active = db.records.filter(r => r.status !== '완료').length;
   $('#cntActive').textContent = active || '';
-  const pendingMail = mailCache ? mailCache.filter(m => !db.mailSeen.includes(m.id)).length : 0;  // customs@ 메일 중 아직 처리하지 않은 것
-  $('#cntMail').textContent = pendingMail || '';
+  const ma = mailAlerts();  // customs@ 메일 중 아직 기록과 연결하지 않은 대화
+  $('#cntMail').textContent = ma.total || ''; $('#cntMail').classList.toggle('warn', ma.overdue > 0); $('#cntMail').title = ma.overdue ? `${OVERDUE_H}시간 넘게 연결 안 된 대화 ${ma.overdue}건` : '';
   $('#cntInbox').textContent = (db.collectPending || []).length || '';
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
@@ -57,7 +57,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${active && r.unipass && r.unipass.last ? `<span class="ref" title="UNI-PASS ${esc(fmtDttm(r.unipass.lastAt))}">${esc(r.unipass.last)}</span>` : ''}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}</div>
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
       ${active && !o.compact ? suggestHTML(r) : ''}
@@ -68,6 +68,7 @@ function recordHTML(r, o = {}){
     <div class="rec-act">
       <button class="mini" data-edit-rec="${esc(r.id)}">수정</button>
       ${active ? `<button class="mini strong" data-complete="${esc(r.id)}">완료 처리</button>` : ''}
+      ${stageActsHTML(r)}
       ${r.special ? `<button class="mini" data-reflect="${esc(r.id)}">절차에 반영</button>` : ''}
     </div>
   </article>`;
@@ -101,10 +102,13 @@ function viewHome(){
   const over = dls.filter(x => daysLeft(x.d.due) < 0).length, soon = dls.filter(x => { const n = daysLeft(x.d.due); return n >= 0 && n <= 7; }).length;
   const month = today().slice(0,7);
   const m = done.filter(r => (r.date || '').startsWith(month)).length;
-  const stale = staleRecords(), sugN = db.records.filter(r => r.status !== '완료' && suggestions(r).length).length;
+  const stale = staleRecords(), sugN = db.records.filter(r => r.status !== '완료' && suggestions(r).length).length, ma = mailAlerts();
+  const autoDone = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).sort((a, b) => (b.autoDone.at || '').localeCompare(a.autoDone.at || ''));
   return `<section class="home-intro">
     <h2>${today()}</h2>
     <p>진행 중인 업무가 ${active.length}건이고, 7일 안에 돌아오는 기한이 ${soon}건${over ? `, 이미 지난 기한이 ${over}건` : ''} 있습니다. 이번 달에는 ${m}건을 완료했습니다.</p>
+    ${ma.overdue || ma.requests ? `<p class="attn alert">${ma.overdue ? `<strong>메일 누락 주의: ${OVERDUE_H}시간 넘게 기록과 연결되지 않은 customs@ 대화 ${ma.overdue}건</strong>` : ''}${ma.overdue && ma.requests ? ' · ' : ''}${ma.requests ? `<strong>새 의뢰 후보 ${ma.requests}건</strong>` : ''} <button class="mini strong" data-go="mail">customs@ 메일 열기</button></p>` : ''}
+    ${autoDone.length ? `<details class="attn"><summary><strong>최근 7일 자동 완료 ${autoDone.length}건</strong> (통관·정산 확인) — 눌러서 확인</summary><ul>${autoDone.map(r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(clientName(r.clientId))} · ${esc(r.autoDone.reason)}</span> <button class="mini" data-undo-auto="${esc(r.id)}">되돌리기</button></li>`).join('')}</ul></details>` : ''}
     ${stale.length || sugN ? `<p class="attn">${stale.length ? `<strong>확인 필요 ${stale.length}건</strong> (진행 중인데 ${STALE_DAYS}영업일 넘게 메일·자료·기록 변화 없음)` : ''}${stale.length && sugN ? ' · ' : ''}${sugN ? `<strong>제안 ${sugN}건</strong> (메일·UNI-PASS 기준 단계 변경)` : ''} <button class="mini" data-go="active">진행 중 업무에서 보기</button></p>` : ''}
     <div class="quick"><button class="primary" data-new-rec data-status="진행중">업무 시작</button><button class="ghost" data-new-rec data-status="완료">완료 기록 남기기</button><button class="ghost" data-new-proc>처리 절차 추가</button><button class="ghost" data-new-client>업체 추가</button></div>
   </section>
@@ -129,7 +133,7 @@ function viewHome(){
 function viewActive(){
   const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id);
   const stale = staleRecords().filter(x => mine(x.r));
-  const act = db.records.filter(r => r.status === '진행중' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
+  const act = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
   const hold = db.records.filter(r => r.status === '보류' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
   const dls = openDeadlines();
   return `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
