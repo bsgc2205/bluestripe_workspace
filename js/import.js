@@ -49,7 +49,7 @@ function openDataMenu(){
     body: `<label>업무 유형 (한 줄에 하나, 순서대로 표시)<textarea name="types" rows="7">${esc(db.settings.taskTypes.join('\n'))}</textarea></label>
       <div class="dlg-section">
         <h4>Apps Script 연동 (Drive 자동 저장·메일·자동 수집)</h4>
-        <p class="hint">웹 앱 주소와 토큰을 넣으면 변경 내용이 Drive의 data.enc.json에 자동으로 저장되고, 다른 계정이 저장한 내용도 합쳐서 보여 줍니다. ‘메일 초안’, 자동 수집, B/L 조회도 같은 주소를 씁니다. 이 값은 암호화되어 저장되고, 다음 로그인 때 최신 파일을 먼저 받기 위해 이 PC 브라우저에도 남습니다.</p>
+        <p class="hint">웹 앱 주소와 토큰을 넣으면 변경 내용이 Drive의 data.enc.json에 자동으로 저장되고, 다른 계정이 저장한 내용도 합쳐서 보여 줍니다. ‘customs@ 메일’, 자동 수집, B/L 조회도 같은 주소를 씁니다. 이 값은 암호화되어 저장되고, 다음 로그인 때 최신 파일을 먼저 받기 위해 이 PC 브라우저에도 남습니다.</p>
         <label>웹 앱 주소<input name="mailEndpoint" value="${esc(mail.endpoint)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
         <label>토큰<input type="password" name="mailToken" value="${esc(mail.token)}" autocomplete="off"></label>
       </div>

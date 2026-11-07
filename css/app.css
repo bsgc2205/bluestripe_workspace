@@ -263,3 +263,7 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 }
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 @media print{.top,.side,.mini,.client-act,.quick,.rec-act{display:none!important}.layout{display:block}}
+.rec-mails{margin-top:.5rem;font-size:.85rem}
+.rec-mails summary{cursor:pointer;color:var(--accent)}
+.rec-mails ul{margin:.35rem 0 0;padding-left:1.1rem}
+.rec-mails li{margin:.2rem 0}

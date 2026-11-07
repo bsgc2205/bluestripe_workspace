@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -42,9 +42,10 @@ document.addEventListener('click', e => {
   else if('chip' in d){typeFilter = d.chip; renderView();}
   else if('month' in d){rptMonth = d.month; renderView();}
   else if('csv' in d) exportCsv(d.csv);
-  else if('mailLoad' in d) loadMail();
+  else if('mailLoad' in d) loadMail(true);
   else if('mailMake' in d){const m = (mailCache || []).find(x => x.id === d.mailMake); if(m) openRecord(null, {mail:m, status:'완료'});}
-  else if('mailIgnore' in d){const m = (mailCache || []).find(x => x.id === d.mailIgnore); seeMail(d.mailIgnore); if(m) markMailDone(m); commit(); toast('목록에서 뺐습니다.');}
+  else if('mailAttach' in d){const m = (mailCache || []).find(x => x.id === d.mailAttach); if(m) openAttachMail(m);}
+  else if('mailIgnore' in d){seeMail(d.mailIgnore); commit(); toast('목록에서 뺐습니다.');}
   else if('openData' in d) openDataMenu();
   else if('letter' in d) openLetter('client' in d ? d.client : curClient);
 });

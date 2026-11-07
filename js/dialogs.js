@@ -36,7 +36,8 @@ function openRecord(r, preset = {}){
     tags:[], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[]};
   if(isNew && preset.mail){
     const m = preset.mail, c = matchClient(m);
-    Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:m.date || today(), date:m.date || today(), summary:m.summary || m.snippet || '', refNo:findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:safeUrl(m.link) ? [m.link] : []});
+    Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:String(m.date || today()).slice(0, 10), date:String(m.date || today()).slice(0, 10), summary:m.snippet || '', bl:m.bl || '', refNo:m.declNo || findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:[]});
+    attachMail(rec, m);
   }
   if(isNew && preset.prefill) Object.assign(rec, preset.prefill);
   if(!db.clients.some(c => c.id === rec.clientId)) rec.clientId = first;
@@ -94,7 +95,7 @@ function openRecord(r, preset = {}){
       </div>
       <div class="dlg-section">
         <label>태그<input name="tags" value="${esc((rec.tags || []).join(', '))}" placeholder="쉼표로 구분: 검역, 정정신고"></label>
-        <label>관련 링크<textarea name="links" rows="2" placeholder="Gmail 메일 주소, Drive 폴더 주소를 한 줄에 하나씩">${esc((rec.links || []).join('\n'))}</textarea></label>
+        <label>관련 링크<textarea name="links" rows="2" placeholder="Drive 폴더·파일 주소를 한 줄에 하나씩">${esc((rec.links || []).join('\n'))}</textarea></label>
       </div>
       <aside class="related" aria-label="참고 자료"></aside>`,
     onSave(fd){
@@ -120,7 +121,7 @@ function openRecord(r, preset = {}){
       rec.updatedBy = me ? me.id : '';
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
-        if(preset.mail){seeMail(preset.mail.id); markMailDone(preset.mail);}
+        if(preset.mail) seeMail(preset.mail.id);
         toast(status === '진행중' ? '업무를 시작했습니다.' : '기록을 저장했습니다.');
       } else toast(preset.complete ? '완료 처리했습니다.' : '기록을 수정했습니다.');
     },
@@ -431,7 +432,7 @@ function openClient(c){
       <div class="row2">
         <label>메일·Drive 검색어<input name="keyword" value="${esc(cl.keyword)}" placeholder="@abc.co.kr, 약칭 (쉼표로 구분)"></label>
       </div>
-      <p class="hint">검색어에 업체 메일 도메인을 넣으면 메일 초안이 이 업체로 자동 연결됩니다.</p>
+      <p class="hint">검색어에 업체 메일 도메인을 넣으면 customs@ 메일과 자동 수집 자료가 이 업체로 정확히 연결됩니다.</p>
       <div class="row2">
         <label>거래 시작 (월)<input type="month" name="since" value="${esc((cl.relation||{}).since || '')}"></label>
         <label>최근 업무 (월)<input type="month" name="last" value="${esc((cl.relation||{}).last || '')}"></label>

@@ -1,7 +1,6 @@
 'use strict';
 const ITER = 310000;
 const LS_KEY = 'bsgc-ledger-v1';
-const GMAIL_ACCOUNT = 0; // Gmail 계정이 여러 개면 숫자를 바꾸세요 (mail/u/0, u/1 ...)
 const DEFAULT_TYPES = ['수입통관','수출신고','요건확인·검역','화학물질','품목분류','관세환급','외환신고','AEO','FTA원산지','기타'];
 const STATUSES = ['진행중','보류','완료'];
 // 법정 기한 계산 규칙 (일반 규정 기준 참고값)
@@ -207,7 +206,6 @@ async function boot(){
     $('#gateMsg').textContent = '이 화면에서는 암호화를 쓸 수 없습니다. https 주소(GitHub Pages)나 최신 브라우저로 여세요.';
     return;
   }
-  try{const r = await fetch('data.enc.json', {cache:'no-store'}); if(r.ok){const j = await r.json(); if(j && j.ct) remoteBlob = j;}}catch{}
   try{const s = localStorage.getItem(LS_KEY); if(s) localBlob = JSON.parse(s);}catch{}
   const sc = storedSync();
   if(sc){
@@ -272,7 +270,7 @@ async function createNew(){
 function enterApp(){
   $('#gate').hidden = true; $('#app').hidden = false;
   render();
-  if((db.settings.mail || {}).endpoint) setTimeout(() => runCollect(false), 1200);
+  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); }
 }
 
 /* ---------- save state ---------- */

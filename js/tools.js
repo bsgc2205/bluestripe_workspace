@@ -144,7 +144,7 @@ function viewBl(){
   const yr = new Date().getFullYear();
   return `<header class="client-head"><div><h2>B/L 조회</h2><p class="client-meta">관세청 UNI-PASS 화물통관진행정보를 Apps Script를 거쳐 조회합니다.</p></div>
       <div class="client-act"><a class="btn" href="https://unipass.customs.go.kr/csp/index.do" target="_blank" rel="noopener noreferrer">UNI-PASS 열기</a></div></header>
-    ${!cfg.endpoint ? '<div class="setup"><p>Gmail 연동과 같은 Apps Script를 씁니다. 데이터 메뉴에 웹 앱 주소와 토큰을 넣고, Apps Script에서 <code>saveUnipassKey</code>로 UNI-PASS 인증키를 저장하세요. 자세한 순서는 README의 ‘B/L 조회’를 보세요.</p></div>' : ''}
+    ${!cfg.endpoint ? '<div class="setup"><p>Drive 자동 저장과 같은 Apps Script를 씁니다. 데이터 메뉴에 웹 앱 주소와 토큰을 넣고, Apps Script에서 <code>saveUnipassKey</code>로 UNI-PASS 인증키를 저장하세요. 자세한 순서는 README의 ‘B/L 조회’를 보세요.</p></div>' : ''}
     <div class="bl-form">
       <label>B/L 번호<input id="blNo" placeholder="예: HDMU1234567" style="min-width:16rem"></label>
       <label>구분<select id="blType"><option value="M">Master B/L</option><option value="H">House B/L</option></select></label>

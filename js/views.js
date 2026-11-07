@@ -5,7 +5,7 @@ function renderSidebar(){
   document.querySelectorAll('.side-link').forEach(b => b.classList.toggle('on', b.dataset.go === route.name));
   const active = db.records.filter(r => r.status !== '완료').length;
   $('#cntActive').textContent = active || '';
-  const pendingMail = mailCache ? mailCache.filter(m => !db.mailSeen.includes(m.id)).length : 0;
+  const pendingMail = mailCache ? mailCache.filter(m => !db.mailSeen.includes(m.id)).length : 0;  // customs@ 메일 중 아직 처리하지 않은 것
   $('#cntMail').textContent = pendingMail || '';
   $('#cntInbox').textContent = (db.collectPending || []).length || '';
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
@@ -61,7 +61,7 @@ function recordHTML(r, o = {}){
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
       ${ckHtml}
-      ${o.compact ? '' : tags + linkHtml}
+      ${o.compact ? '' : tags + linkHtml + mailsHTML(r)}
     </div>
     <div class="rec-act">
       <button class="mini" data-edit-rec="${esc(r.id)}">수정</button>
@@ -153,7 +153,6 @@ function viewClient(){
   const fr = recs.filter(f);
   const spCount = fr.filter(r => r.special).length, actCount = fr.filter(r => r.status !== '완료').length;
   const kw = primaryKw(c);
-  const gmail = `https://mail.google.com/mail/u/${GMAIL_ACCOUNT}/#search/` + encodeURIComponent(kw);
   const drive = 'https://drive.google.com/drive/search?q=' + encodeURIComponent(kw);
   const meta = [c.bizNo, c.industry, c.contact].filter(Boolean).map(esc).join(' / ');
   const rel = relationOf(c);
@@ -161,7 +160,7 @@ function viewClient(){
       <div><h2>${esc(c.name)}</h2>${meta ? `<p class="client-meta">${meta}</p>` : ''}
         <div class="rel" title="${esc(rel.basis)}">${rel.longTerm ? '<span class="badge-long">1년 이상 거래</span>' : '<span class="badge-other">1년 미만·확인 필요</span>'}<span>${esc(relationText(rel))}</span></div></div>
       <div class="client-act">
-        <a class="btn" href="${esc(gmail)}" target="_blank" rel="noopener noreferrer">Gmail에서 찾기</a>
+        
         <a class="btn" href="${esc(drive)}" target="_blank" rel="noopener noreferrer">Drive에서 찾기</a>
         ${safeUrl(c.bizDoc) ? `<a class="btn" href="${esc(c.bizDoc)}" target="_blank" rel="noopener noreferrer">사업자등록증</a>` : ''}
         <button class="ghost" data-letter data-client="${esc(c.id)}">사유서 작성</button>
