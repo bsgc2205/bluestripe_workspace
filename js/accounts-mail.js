@@ -67,7 +67,7 @@ function viewSearch(){
   const cl = narrowed ? [] : sortedClients().filter(c => has(hay(c.name, c.bizNo, c.industry, c.contact, c.notes, c.keyword)));
   const its = narrowed ? [] : db.items.filter(i => has(hay(i.name, i.hs, (i.hs||'').replace(/[.\-\s]/g,''), i.tariff, i.reqs, i.agency, i.notes, clientName(i.clientId))));
   const pr = sOpt.special ? [] : db.procedures.filter(p => tOk(p) && has(hay(p.title, p.type, p.steps, p.docs, p.cautions, clientName(p.clientId))));
-  const rc = db.records.filter(r => tOk(r) && (!sOpt.special || r.special) && has(hay(r.title, r.type, r.status, r.refNo, r.bl, r.summary, (r.mails || []).map(x => x.subject + ' ' + x.from + ' ' + (x.files || []).join(' ')).join(' '), r.specialNote, r.tags, r.checklist, causesOf(r), clientName(r.clientId), (db.items.find(i => i.id === r.itemId)||{}).name))).sort(byDateDesc);
+  const rc = db.records.filter(r => tOk(r) && (!sOpt.special || r.special) && has(hay(r.caseNo, r.title, r.type, r.status, r.refNo, r.bl, r.summary, (r.files || []).map(f => f.name).join(' '), (r.mails || []).map(x => x.subject + ' ' + x.from + ' ' + (x.files || []).join(' ')).join(' '), r.specialNote, r.tags, r.checklist, causesOf(r), clientName(r.clientId), (db.items.find(i => i.id === r.itemId)||{}).name))).sort(byDateDesc);
   const kcs = narrowed ? [] : db.kc.filter(k => has(hay(k.a, k.m, k.no, k.n)));
   const total = cl.length + its.length + pr.length + rc.length + kcs.length;
   return `<h2>‘${esc(q)}’ 검색 결과</h2>
@@ -147,12 +147,23 @@ function exportCsv(mon){
 }
 
 /* ---------- customs@ 메일 (한비로 → 사무실 PC 수집기 → Apps Script 'BSGC 메일 색인' 시트) ----------
-   B/L·신고번호로 기존 기록이 하나로 정해지면 자동으로 그 기록에 붙이고, 나머지는 이 화면에서 기록을 만들거나 붙이거나 무시한다. */
+   같은 대화(제목에서 RE:/FW:와 숫자 없는 [머리말]을 뺀 것)는 한 줄로 묶는다.
+   자동 연결 순서: 제목의 케이스 번호 → 이미 기록에 붙인 대화 → B/L·신고번호로 기록이 하나로 정해질 때. 나머지는 화면에서 고른다. */
 function mailText(m){return [m.fwdFrom, m.from, m.fromName, m.to, m.cc, m.subject, m.snippet, (m.attachments || []).join(' ')].filter(Boolean).join(' ');}
-function matchClient(m){ return findClient(mailText(m)); }
+function matchClient(m){ return findClient(Array.isArray(m) ? m.map(mailText).join(' ') : mailText(m)); }
 function findRefNo(text){const m = String(text||'').match(/\b\d{5}-\d{2}-\d{6,7}[A-Z]?\b/); return m ? m[0] : '';}
 const refKey = s => String(s || '').toUpperCase().replace(/[-\s]/g, '');
+function threadKey(subject){
+  let t = String(subject || '').toLowerCase();
+  t = t.replace(/\[[^\]\d]*\]/g, ' ');                                   // [정산서], [BSGC-TROPI] 같은 숫자 없는 머리말
+  t = t.replace(/(^|\s|\]|:)(re|fw|fwd|답장|회신|전달|r)\s*(\[\d+\])?\s*[:：]/g, ' ');
+  return t.replace(/[\s:：\-_/|,.]+/g, ' ').trim().slice(0, 120);
+}
 function mailRecord(m){
+  const cm = CASE_RE.exec(m.caseNo || m.subject || '');
+  if(cm){ const r = db.records.find(x => x.caseNo === cm[0]); if(r) return r; }
+  const th = (db.mailThreads || {})[threadKey(m.subject)];
+  if(th){ const r = db.records.find(x => x.id === th); if(r) return r; }
   const keys = [m.bl, m.declNo].map(refKey).filter(k => k.length >= 6);
   if(!keys.length) return null;
   const hits = db.records.filter(r => keys.includes(refKey(r.bl)) || keys.includes(refKey(r.refNo)));
@@ -162,73 +173,105 @@ function mailRecord(m){
 }
 function attachMail(r, m){
   r.mails = r.mails || [];
+  db.mailThreads = db.mailThreads || {};
+  const k = threadKey(m.subject);
+  if(k.length >= 4) db.mailThreads[k] = r.id;
   if(r.mails.some(x => x.id === m.id)) return false;
   r.mails.push({id:m.id, date:m.date || '', from:m.fwdFrom || (m.fromName ? `${m.fromName} <${m.from}>` : m.from), subject:m.subject || '', files:(m.attachments || []).slice(0, 10)});
   r.mails.sort((a, b) => a.date < b.date ? -1 : 1);
+  if(!r.bl && m.bl) r.bl = m.bl;
+  if(!r.refNo && m.declNo) r.refNo = m.declNo;
   r.updatedAt = nowIso();
   return true;
+}
+function pruneThreads(){
+  const ids = new Set(db.records.map(r => r.id)), t = db.mailThreads || {};
+  const keys = Object.keys(t).filter(k => ids.has(t[k]));
+  db.mailThreads = Object.fromEntries(keys.slice(-3000).map(k => [k, t[k]]));
 }
 function mailsHTML(r){
   const ms = r.mails || [];
   if(!ms.length) return '';
   return `<details class="rec-mails"><summary>customs@ 메일 ${ms.length}통</summary><ul>${ms.map(x => `<li><span class="rec-date">${esc(String(x.date).replace('T', ' '))}</span> ${hl(x.subject)} <span class="hint">${esc(x.from)}</span>${(x.files || []).length ? `<div class="hint">첨부: ${esc(x.files.join(', '))}</div>` : ''}</li>`).join('')}</ul></details>`;
 }
+function mailThreadsList(){
+  const groups = new Map();
+  (mailCache || []).filter(m => !db.mailSeen.includes(m.id)).forEach(m => {
+    const k = threadKey(m.subject) || m.id;
+    if(!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(m);
+  });
+  return [...groups.entries()].map(([key, ms]) => { ms.sort((a, b) => a.date < b.date ? -1 : 1); return {key, ms, last:ms[ms.length - 1]}; })
+    .sort((a, b) => a.last.date < b.last.date ? 1 : -1);
+}
+function findThread(key){ return mailThreadsList().find(t => t.key === key); }
 function viewMail(){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token) return `<h2>customs@ 메일</h2>
     <div class="setup"><p>한비로 customs@bsgc.co.kr로 들어온 메일을 업무 기록과 연결합니다. 사무실 PC의 메일 수집기와 Apps Script 연동이 필요합니다.</p>
     <p class="hint">설치 순서는 README의 ‘customs@ 메일 수집’을 보세요.</p>
     <button class="primary" data-open-data>데이터 메뉴 열기</button></div>`;
-  const list = (mailCache || []).filter(m => !db.mailSeen.includes(m.id));
-  return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 동안 customs@로 들어온 메일 가운데 아직 기록과 연결하지 않은 것입니다. B/L·신고번호로 기록이 정해지는 메일은 자동으로 그 기록에 붙습니다.</p></div>
+  const ths = mailThreadsList();
+  return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 customs@ 메일 중 아직 기록과 연결하지 않은 대화 ${ths.length}건입니다. 제목에 케이스 번호([2026-I-001])가 있거나, 이미 기록에 붙인 대화의 회신이거나, B/L·신고번호로 기록이 하나로 정해지면 자동으로 붙습니다.</p></div>
       <div class="client-act"><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
     ${mailErr ? `<p class="msg">${esc(mailErr)}</p>` : ''}
     <div class="narrow">
     ${mailCache === null ? '<p class="empty">‘새로 불러오기’를 누르면 메일 색인에서 가져옵니다.</p>'
-      : list.length ? list.map(m => { const c = matchClient(m); const refs = [m.bl && `B/L ${m.bl}`, m.declNo && `신고 ${m.declNo}`, m.caseNo && m.caseNo].filter(Boolean); return `<article class="rec">
-        <div class="rec-date">${esc(String(m.date).slice(0, 10))}<small>${esc(String(m.date).slice(11, 16))}</small></div>
+      : ths.length ? ths.map(t => { const m = t.last, c = matchClient(t.ms);
+        const refs = [...new Set(t.ms.flatMap(x => [x.bl && `B/L ${x.bl}`, x.declNo && `신고 ${x.declNo}`].filter(Boolean)))];
+        const files = [...new Set(t.ms.flatMap(x => x.attachments || []))];
+        const people = [...new Set(t.ms.map(x => x.fwdFrom ? `전달: ${x.fwdFrom}` : (x.fromName || x.from)))];
+        const first = t.ms[0];
+        return `<article class="rec">
+        <div class="rec-date">${esc(String(m.date).slice(0, 10))}<small>${t.ms.length > 1 ? `${t.ms.length}통 · ${esc(String(first.date).slice(5, 10))}~` : esc(String(m.date).slice(11, 16))}</small></div>
         <div class="rec-body"><h4>${esc(m.subject || '(제목 없음)')}</h4>
-          <div class="rec-meta"><span>${esc(m.fwdFrom ? `전달: ${m.fwdFrom}` : (m.fromName ? `${m.fromName} <${m.from}>` : m.from))}</span>${c ? `<span class="tag">${esc(c.name)}</span>` : '<span class="tag type">업체 미지정</span>'}${refs.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+          <div class="rec-meta"><span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>` : '<span class="tag type">업체 미지정</span>'}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
           ${m.snippet ? `<p class="rec-sum">${esc(m.snippet)}</p>` : ''}
-          ${(m.attachments || []).length ? `<div class="hint">첨부: ${esc(m.attachments.join(', '))}</div>` : ''}
+          ${files.length ? `<div class="hint">첨부 ${files.length}개: ${esc(files.slice(0, 6).join(', '))}${files.length > 6 ? ' …' : ''}</div>` : ''}
         </div>
-        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(m.id)}">기록 만들기</button><button class="mini" data-mail-attach="${esc(m.id)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(m.id)}">무시</button></div>
+        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">기록 만들기</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
       </article>`; }).join('')
       : '<p class="empty">새로 연결할 메일이 없습니다.</p>'}
     </div>`;
+}
+function autoAttachMails(){
+  let n = 0;
+  (mailCache || []).filter(m => !db.mailSeen.includes(m.id)).sort((a, b) => a.date < b.date ? -1 : 1).forEach(m => {
+    const r = mailRecord(m);
+    if(r && attachMail(r, m)){ seeMail(m.id); n++; }
+    else if(r) seeMail(m.id);
+  });
+  return n;
 }
 async function loadMail(manual = true){
   mailLoading = true; mailErr = ''; if(route.name === 'mail') renderView();
   try{
     const j = await collectApi({mails:1, days:60});
     mailCache = j.items || [];
-    let n = 0;
-    mailCache.filter(m => !db.mailSeen.includes(m.id)).forEach(m => { const r = mailRecord(m); if(r && attachMail(r, m)){ seeMail(m.id); n++; } });
-    if(n){ commit(); toast(`customs@ 메일 ${n}통을 B/L·신고번호가 같은 기록에 붙였습니다.`); }
+    const n = autoAttachMails();
+    if(n){ pruneThreads(); commit(); toast(`customs@ 메일 ${n}통을 기존 기록에 자동으로 붙였습니다.`); }
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(manual) toast(mailErr);
   }
   mailLoading = false; renderSidebar(); if(route.name === 'mail') renderView();
 }
-function openAttachMail(m){
-  const c = matchClient(m);
+function openAttachMail(t){
+  const c = matchClient(t.ms);
   const recs = db.records.slice().sort((a, b) => (a.status === '완료') - (b.status === '완료') || (c ? (b.clientId === c.id) - (a.clientId === c.id) : 0) || byDateDesc(a, b)).slice(0, 80);
   if(!recs.length){ toast('붙일 기록이 없습니다. ‘기록 만들기’를 쓰세요.'); return; }
   openDialog({
     title: '기록에 메일 붙이기',
     saveLabel: '붙이기',
-    body: `<p class="hint">${esc(m.subject || '')}</p>
-      <label>기록<select name="rid">${opts(recs.map(r => [r.id, `${r.status === '완료' ? '' : '[진행중] '}${clientName(r.clientId)} · ${recDate(r)} · ${r.title}`]), recs[0].id)}</select></label>`,
+    body: `<p class="hint">${esc(t.last.subject || '')} (${t.ms.length}통). 붙이면 이 대화의 이후 회신도 같은 기록에 자동으로 붙습니다.</p>
+      <label>기록<select name="rid">${opts(recs.map(r => [r.id, `${r.status === '완료' ? '' : '[진행중] '}${r.caseNo ? r.caseNo + ' · ' : ''}${clientName(r.clientId)} · ${recDate(r)} · ${r.title}`]), recs[0].id)}</select></label>`,
     onSave(fd){
       const r = db.records.find(x => x.id === fd.get('rid'));
       if(!r) return false;
-      attachMail(r, m); seeMail(m.id);
-      if(!r.bl && m.bl) r.bl = m.bl;
-      if(!r.refNo && m.declNo) r.refNo = m.declNo;
-      toast('기록에 메일을 붙였습니다.');
+      t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
+      toast(`기록에 메일 ${t.ms.length}통을 붙였습니다.`);
     }
   });
 }
 function markMailDone(){}
-function seeMail(id){db.mailSeen.push(id); if(db.mailSeen.length > 5000) db.mailSeen = db.mailSeen.slice(-5000);}
+function seeMail(id){ if(!db.mailSeen.includes(id)) db.mailSeen.push(id); if(db.mailSeen.length > 5000) db.mailSeen = db.mailSeen.slice(-5000); }

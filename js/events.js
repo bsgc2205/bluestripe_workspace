@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -43,9 +43,13 @@ document.addEventListener('click', e => {
   else if('month' in d){rptMonth = d.month; renderView();}
   else if('csv' in d) exportCsv(d.csv);
   else if('mailLoad' in d) loadMail(true);
-  else if('mailMake' in d){const m = (mailCache || []).find(x => x.id === d.mailMake); if(m) openRecord(null, {mail:m, status:'완료'});}
-  else if('mailAttach' in d){const m = (mailCache || []).find(x => x.id === d.mailAttach); if(m) openAttachMail(m);}
-  else if('mailIgnore' in d){seeMail(d.mailIgnore); commit(); toast('목록에서 뺐습니다.');}
+  else if('mailMake' in d){const t = findThread(d.mailMake); if(t) openRecord(null, {thread:t, status:'진행중'});}
+  else if('mailAttach' in d){const t = findThread(d.mailAttach); if(t) openAttachMail(t);}
+  else if('mailIgnore' in d){const t = findThread(d.mailIgnore); if(t) t.ms.forEach(m => seeMail(m.id)); commit(); toast('목록에서 뺐습니다.');}
+  else if('copyCase' in d){const s = `[${d.copyCase}]`; (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject()).then(() => toast(`${s} 복사함. 메일 제목에 붙여 넣으면 이 기록에 자동 연결됩니다.`), () => toast(s));}
+  else if('sug' in d){const [rid, key] = d.sug.split('|'); const r = findRec(rid); if(r) applySuggestion(r, d.sug.slice(rid.length + 1));}
+  else if('sugOff' in d){const rid = d.sugOff.split('|')[0], r = findRec(rid); if(r){ r.sugOff = [...new Set([...(r.sugOff || []), d.sugOff.slice(rid.length + 1)])].slice(-50); commit(); }}
+  else if('mine' in d){mineOnly = !mineOnly; renderView();}
   else if('openData' in d) openDataMenu();
   else if('letter' in d) openLetter('client' in d ? d.client : curClient);
 });

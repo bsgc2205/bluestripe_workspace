@@ -34,16 +34,18 @@ function openRecord(r, preset = {}){
   const rec = r || {id:uid(), clientId:preset.clientId || first, type:preset.type || db.settings.taskTypes[0], status,
     startDate:today(), date:status === '완료' ? today() : '', refNo:'', title:'', summary:'', special:false, specialNote:'',
     tags:[], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[]};
+  if(isNew && preset.thread){ preset.mail = preset.thread.ms[preset.thread.ms.length - 1]; }
   if(isNew && preset.mail){
-    const m = preset.mail, c = matchClient(m);
-    Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:String(m.date || today()).slice(0, 10), date:String(m.date || today()).slice(0, 10), summary:m.snippet || '', bl:m.bl || '', refNo:m.declNo || findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:[]});
-    attachMail(rec, m);
+    const m = preset.mail, c = matchClient(preset.thread ? preset.thread.ms : m);
+    Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:String((preset.thread ? preset.thread.ms[0] : m).date || today()).slice(0, 10), date:status === '완료' ? String(m.date || today()).slice(0, 10) : '', summary:m.snippet || '', bl:m.bl || '', refNo:m.declNo || findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:[]});
+    (preset.thread ? preset.thread.ms : [m]).forEach(x => attachMail(rec, x));
+    rec.title = String(m.subject || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim() || rec.title;
   }
   if(isNew && preset.prefill) Object.assign(rec, preset.prefill);
   if(!db.clients.some(c => c.id === rec.clientId)) rec.clientId = first;
   const dls = (rec.deadlines || []).map(d => ({...d}));
   openDialog({
-    title: isNew ? (status === '진행중' ? '업무 시작' : '업무 기록 남기기') : '업무 기록 수정',
+    title: isNew ? (status === '진행중' ? '업무 시작' : '업무 기록 남기기') : `업무 기록 수정${rec.caseNo ? ' · ' + rec.caseNo : ''}`,
     body: `<div class="row2">
         <label>업체<select name="clientId">${opts(sortedClients().map(c => [c.id, c.name]), rec.clientId)}</select></label>
         <label>업무 유형<select name="type">${opts(typeList(rec.type), rec.type)}</select></label>
@@ -61,6 +63,7 @@ function openRecord(r, preset = {}){
         <label>신고번호<input name="refNo" value="${esc(rec.refNo)}" placeholder="수입·수출 신고번호"></label>
       </div>
       <div class="row2">
+        <label>담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], rec.assignee || (isNew && me ? me.id : ''))}</select></label>
         <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
       </div>
       <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
@@ -116,12 +119,12 @@ function openRecord(r, preset = {}){
         refNo: fd.get('refNo').trim(), bl: String(fd.get('bl') || '').trim().toUpperCase(), fee: feeNum || null, title: fd.get('title').trim(), summary,
         special: fd.get('special') === 'on', specialNote: fd.get('specialNote').trim(), causes: fd.getAll('cause'),
         checklist, docs: keep(rec.docs || [], lines(fd.get('docs'))), deadlines: dls,
-        tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, updatedAt: t
+        tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t
       });
       rec.updatedBy = me ? me.id : '';
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
-        if(preset.mail) seeMail(preset.mail.id);
+        if(preset.thread) preset.thread.ms.forEach(x => seeMail(x.id)); else if(preset.mail) seeMail(preset.mail.id);
         toast(status === '진행중' ? '업무를 시작했습니다.' : '기록을 저장했습니다.');
       } else toast(preset.complete ? '완료 처리했습니다.' : '기록을 수정했습니다.');
     },
@@ -150,6 +153,8 @@ function openRecord(r, preset = {}){
         const p = db.procedures.find(x => x.id === id); if(!p) return;
         if(ask && (N('checklist').value.trim() || N('docs').value.trim()) && !confirm('체크리스트를 이 절차 내용으로 바꿀까요?')) return;
         N('checklist').value = (p.steps || []).join('\n'); N('docs').value = splitDocs(p.docs).join('\n');
+        if(p.assignee && accounts.some(a => a.id === p.assignee)) N('assignee').value = p.assignee;
+        if((p.dlKinds || []).length){ X('dlKind').value = p.dlKinds[0]; prev(); X('dlPrev').textContent = `이 절차의 기한: ${p.dlKinds.join(', ')} — 기준일이 정해지면 위에서 추가하세요.`; }
       };
       N('clientId').addEventListener('change', () => {fillItems(''); fillProcs(); upd();});
       N('type').addEventListener('change', () => {fillProcs(); upd();});
@@ -340,10 +345,14 @@ function openProc(p, preset = {}){
       <label>절차명<input name="title" required value="${esc(pr.title)}" placeholder="예: 수입 사료원료 통관"></label>
       <label>처리 단계 (한 줄에 한 단계)<textarea name="steps" rows="8" placeholder="선적서류 수령&#10;HS 분류 및 요건 확인&#10;…">${esc((pr.steps || []).join('\n'))}</textarea></label>
       <label>필요 서류 (쉼표나 줄바꿈으로 구분)<textarea name="docs" rows="3">${esc(pr.docs)}</textarea></label>
-      <label>주의사항<textarea name="cautions" rows="4" placeholder="이 업체·업무에서 자주 걸리는 부분">${esc(pr.cautions)}</textarea></label>`,
+      <label>주의사항<textarea name="cautions" rows="4" placeholder="이 업체·업무에서 자주 걸리는 부분">${esc(pr.cautions)}</textarea></label>
+      <div class="row2">
+        <label>기본 담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], pr.assignee || '')}</select></label>
+        <div><span class="lbl">챙길 기한</span><div class="cause-grid">${DL_RULES.filter(x => x.base).map(x => `<label class="check"><input type="checkbox" name="dlKinds" value="${esc(x.kind)}"${(pr.dlKinds || []).includes(x.kind) ? ' checked' : ''}> ${esc(x.kind)}</label>`).join('')}</div></div>
+      </div>`,
     onSave(fd){
       const t = nowIso();
-      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: lines(fd.get('steps')), docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), updatedAt: t});
+      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: lines(fd.get('steps')), docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), assignee: fd.get('assignee') || '', dlKinds: fd.getAll('dlKinds'), updatedAt: t});
       if(isNew){pr.createdAt = t; db.procedures.push(pr); toast('절차를 저장했습니다.');}
       else toast('절차를 수정했습니다.');
     },

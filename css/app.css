@@ -267,3 +267,19 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 .rec-mails summary{cursor:pointer;color:var(--accent)}
 .rec-mails ul{margin:.35rem 0 0;padding-left:1.1rem}
 .rec-mails li{margin:.2rem 0}
+.case-no{font:600 .72rem/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent);background:none;border:1px solid var(--line);border-radius:4px;padding:.1rem .35rem;margin-right:.4rem;cursor:pointer;vertical-align:middle}
+.case-no:hover{border-color:var(--accent)}
+.who-tag{font-size:.78rem;color:var(--muted)}
+.docs-row{display:flex;flex-wrap:wrap;gap:.3rem;margin:.45rem 0 .2rem}
+.docs-row .doc{font-size:.76rem;border-radius:999px;padding:.08rem .5rem;border:1px solid var(--line)}
+.docs-row .doc.ok{color:var(--accent)}
+.docs-row .doc.miss{color:var(--stamp);border-color:var(--stamp)}
+.suggest{margin:.5rem 0;padding:.45rem .6rem;border-left:3px solid var(--accent);background:var(--surface);font-size:.85rem}
+.suggest>div{margin:.15rem 0}
+.suggest .mini{margin-left:.3rem}
+.sg-label{font-weight:700;color:var(--accent);margin-right:.25rem}
+.attn{margin:.4rem 0 .8rem;font-size:.92rem}
+.stale{margin:0 0 1.2rem}
+.stale ul{margin:.3rem 0 0;padding-left:1.1rem}
+.stale li{margin:.2rem 0}
+.lbl{display:block;font-size:.85rem;margin-bottom:.25rem}

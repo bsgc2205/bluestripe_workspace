@@ -72,7 +72,7 @@ function openDataMenu(){
       if(ep !== db.settings.mail.endpoint) mailCache = null;
       const tk = fd.get('mailToken').trim(), syncChanged = ep !== (db.settings.mail.endpoint || '') || tk !== (db.settings.mail.token || '');
       db.settings.mail = {endpoint: ep, token: tk};
-      if(syncChanged){ try{ localStorage.removeItem(LS_KEY + '-base'); }catch{} sync.base = null; sync.baseAcc = null; sync.rev = 0; setTimeout(() => syncStart(), 50); }
+      if(syncChanged) setTimeout(() => syncStart(), 50);   // 주소만 바뀐 것이므로 마지막으로 맞춘 기준(base)은 그대로 두고 합친다
       const np = fd.get('npw'), np2 = fd.get('npw2');
       if(np){
         if(np.length < 10){toast('비밀번호는 10자 이상이어야 합니다.'); return false;}

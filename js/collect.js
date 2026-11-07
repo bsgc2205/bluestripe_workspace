@@ -21,6 +21,7 @@ function caseFromItems(c, group){
     special: specials.length > 0,
     specialNote: specials.length ? `자동 수집에서 특이 절차로 보이는 자료가 확인됨: ${specials.join(', ')}. 내용을 확인해 무엇이 달랐는지 보완하세요.` : '',
     tags: ['자동수집', ...specials], links, checklist:[], docs:[], deadlines:[], reflected:[],
+    files: group.map(x => ({id:x.id, name:x.name, link:x.link || '', date:x.created || ''})),
     createdAt: nowIso(), updatedAt: nowIso(), createdBy: 'auto'
   };
 }
@@ -46,6 +47,7 @@ function applyCollected(items){
     if(ex){
       const nr = caseFromItems(c, list);
       ex.links = [...new Set([...(ex.links || []), ...nr.links])];
+      addFiles(ex, list);
       if(nr.special && !ex.special){ ex.special = true; ex.specialNote = (ex.specialNote ? ex.specialNote + '\n' : '') + nr.specialNote; }
       ex.updatedAt = nowIso(); upd++;
     } else { const r = caseFromItems(c, list); db.records.push(r); made++; if(r.special) sp++; }
@@ -108,7 +110,7 @@ function applyPending(i, cid){
   const x = db.collectPending[i], c = db.clients.find(y => y.id === cid);
   if(!x || !c){toast('업체를 고르세요.'); return;}
   const ex = db.records.find(r => r.clientId === c.id && ((x.bl && r.bl === x.bl) || (x.declNo && r.refNo === x.declNo)));
-  if(ex){ ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; }
+  if(ex){ ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(ex, [x]); }
   else db.records.push(caseFromItems(c, [x]));
   db.collectPending.splice(i, 1); commit(); toast(`${c.name} 기록으로 넣었습니다.`);
 }

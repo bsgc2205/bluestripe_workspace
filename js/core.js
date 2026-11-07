@@ -267,14 +267,27 @@ async function createNew(){
   enterApp();
   toast('새 Workspace를 만들었습니다. ‘암호화 파일 받기’로 받은 파일을 Drive 유틸 폴더에 저장하세요.');
 }
+/* 예전 버전이 만들던 '(예시)' 업체와 그 기록·절차·품목은 언제 다시 섞여 들어와도 지운다 */
+function purgeSamples(d){
+  const ids = new Set(d.clients.filter(c => /\(예시\)/.test(c.name)).map(c => c.id));
+  if(!ids.size) return 0;
+  d.clients = d.clients.filter(c => !ids.has(c.id));
+  ['records','procedures','items'].forEach(k => { d[k] = (d[k] || []).filter(x => !ids.has(x.clientId)); });
+  d.records = d.records.filter(r => !/^예시-/.test(r.refNo || ''));
+  return ids.size;
+}
 function enterApp(){
   $('#gate').hidden = true; $('#app').hidden = false;
+  const n = purgeSamples(db);
+  if(n){ commit(); setTimeout(() => toast(`예시 업체 ${n}곳과 관련 기록을 지웠습니다.`), 600); }
   render();
-  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); }
+  if(ensureCaseNos(db)) commit();
+  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); setTimeout(() => refreshUnipass(), 6000); }
 }
 
 /* ---------- save state ---------- */
-function commit(){db.meta.updatedAt = nowIso(); render(); persistLocal(); scheduleSync();}
+function commit(){ensureCaseNos(db); db.meta.updatedAt = nowIso(); render(); persistLocal(); scheduleSync();}
+let mineOnly = false;
 function updateSaveState(){
   const el = $('#saveState'); let text, dirty = false;
   const bx = $('#btnExport');

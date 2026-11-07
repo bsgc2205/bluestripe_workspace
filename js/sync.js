@@ -99,6 +99,8 @@ function mergeAccounts(baseAcc, mine, theirs){
 }
 function tidyMerged(d){
   d = migrate(d);
+  purgeSamples(d);
+  dedupeCaseNos(d);
   const ids = new Set(d.clients.map(c => c.id));
   ['records','procedures','items'].forEach(k => { d[k] = d[k].filter(x => !x.clientId || ids.has(x.clientId)); });
   const seen = new Map();   // 두 PC가 같은 자동 수집 자료로 각각 만든 기록은 하나로
