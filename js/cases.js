@@ -96,12 +96,18 @@ function setStage(r, k, date, by){
 function settleMode(r){ const c = db.clients.find(x => x.id === r.clientId); return (c && c.settleMode) || 'each'; }
 function stageHTML(r){
   const st = stageOf(r), u = r.unipass || {}, out = [];
-  if(st.customs) out.push(`<span class="stg ok" title="${esc(st.customsBy || '')}">통관완료 ${esc(st.customs.slice(5))}</span>`);
+  const btn = (k, label) => `<button class="stg ok" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 잘못 표시했으면 눌러서 취소">${label} ${esc(st[k].slice(5))}</button>`;
+  if(st.customs) out.push(btn('customs', '통관완료'));
   else if(u.cleared && !u.paid && !u.released) out.push('<span class="stg">수리 · 납부 확인 전</span>');
   else if(u.accepted && !u.loaded) out.push(`<span class="stg">수리 · 선적 전${u.loadDue ? ' (적재기한 ' + esc(u.loadDue.slice(5)) + ')' : ''}</span>`);
-  if(st.settle) out.push(`<span class="stg ok" title="${esc(st.settleBy || '')}">정산완료 ${esc(st.settle.slice(5))}</span>`);
+  if(st.settle) out.push(btn('settle', '정산완료'));
   if(u.mdfy) out.push(`<span class="stg">정정: ${esc(u.mdfy)}</span>`);
   if(u.req) out.push(`<span class="stg">요건: ${esc(u.req)}</span>`);
+  if(u.reqRqst) out.push(`<span class="stg">요건신청: ${esc(u.reqRqst)}</span>`);
+  if(u.ldp) out.push(`<span class="stg${u.ldp === '검사대상' ? ' warn' : ''}">적재지검사: ${esc(u.ldp)}</span>`);
+  if(u.bond) out.push(`<span class="stg">담보해제: ${esc(u.bond)}</span>`);
+  if(u.condTxt) out.push(`<span class="stg${r.cond && r.cond.zero ? ' ok' : ''}">${esc(u.condTxt)}</span>`);
+  if(u.shedTxt && !u.released) out.push(`<span class="stg" title="${esc(u.shedNm || '')}">${esc(u.shedTxt)}</span>`);
   if(r.autoDone) out.push(`<span class="stg auto" title="${esc(r.autoDone.reason || '')}">자동 완료</span>`);
   return out.length ? `<span class="stages">${out.join('')}</span>` : '';
 }
@@ -114,12 +120,14 @@ function stageActsHTML(r){
 }
 function autoComplete(r, why){
   if(r.status === '완료' || r.autoDoneOff) return false;
+  if(r.cond && r.cond.kind && !r.cond.zero) return false;            // 재수출·재수입 잔량 관리 건은 잔량이 0이 될 때까지 진행 중
   const st = stageOf(r);
   if(!st.customs || !(st.settle || settleMode(r) === 'monthly')) return false;
   r.status = '완료';
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
   const reason = [`통관완료 ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
   r.autoDone = {at:nowIso(), reason};
+  proposeFromRecord(r);
   if(!String(r.summary || '').trim()){
     const ck = (r.checklist || []);
     r.summary = `[자동 완료] ${reason}` + (ck.length ? '\n처리 단계\n' + ck.map(x => `${x.done ? '✓' : '–'} ${x.text}${x.doneAt ? ` (${x.doneAt})` : ''}`).join('\n') : '');
@@ -136,6 +144,12 @@ function evalStages(){
     if(autoComplete(r)) done++;
   });
   return {n, done};
+}
+function unsetStage(r, k){
+  if(!r.stage) return;
+  delete r.stage[k]; delete r.stage[k + 'By'];
+  if(r.autoDone) undoAuto(r);
+  r.updatedAt = nowIso();
 }
 function undoAuto(r){
   r.status = '진행중'; r.date = ''; r.autoDoneOff = true;
@@ -158,6 +172,13 @@ function suggestions(r){
     const key = m ? `${h.key}:${m.id}` : '';
     if(m && h.when(r) && !off.has(key)) out.push({key, text:`${h.text}: “${m.subject}” (${String(m.date).slice(5, 10)})`, act:h.act, label:h.label, date:m.date});
   });
+  const u = r.unipass || {};
+  const k1 = 'up-req:' + (u.reqRqst || '');
+  if(u.reqRqstDone && (r.checklist || []).some(x => !x.done && /검역|검사|요건/.test(x.text)) && !off.has(k1)) out.push({key:k1, text:`UNI-PASS 요건신청 처리: ${u.reqRqst}`, act:'check', label:'해당 단계 체크'});
+  const k2 = 'up-zero:' + (u.condTxt || '');
+  if(r.cond && r.cond.zero && !off.has(k2)) out.push({key:k2, text:`UNI-PASS 잔량 0 — ${u.condTxt}`, act:'complete', label:'완료 처리'});
+  const k3 = 'up-ldp:' + (u.ldp || '');
+  if(u.ldp === '검사대상' && !r.special && !off.has(k3)) out.push({key:k3, text:'수출 적재지 검사대상으로 지정됐습니다', act:'special', label:'특이로 표시'});
   return out;
 }
 function fmtDttm(s){ s = String(s || ''); return s.length >= 12 ? `${s.slice(4, 6)}/${s.slice(6, 8)} ${s.slice(8, 10)}:${s.slice(10, 12)}` : s; }
@@ -172,8 +193,9 @@ function applySuggestion(r, key){
   if(!s) return;
   r.sugOff = [...new Set([...(r.sugOff || []), key])].slice(-50);
   if(s.act === 'special'){ r.special = true; openRecord(r); return; }
+  if(s.act === 'complete'){ openRecord(r, {complete:true}); return; }
   if(s.act === 'customs'){ setStage(r, 'customs', s.date, '메일 확인(직접)'); autoComplete(r); }
-  if(s.act === 'check'){ const i = (r.checklist || []).findIndex(x => !x.done && /검역|검사/.test(x.text)); if(i >= 0){ r.checklist[i].done = true; r.checklist[i].doneAt = today(); } }
+  if(s.act === 'check'){ const i = (r.checklist || []).findIndex(x => !x.done && /검역|검사|요건/.test(x.text)); if(i >= 0){ r.checklist[i].done = true; r.checklist[i].doneAt = today(); } }
   r.updatedAt = nowIso(); commit(); toast('반영했습니다.');
 }
 
@@ -198,6 +220,8 @@ async function checkImport(r, u){
       if(rel) u.releasedAt = fmtYmd(rel.prcsDttm);
       const clr = det.find(x => /수입신고수리/.test(x.cargTrcnRelaBsopTpcd || ''));
       if(clr) u.clearedAt = fmtYmd(clr.prcsDttm);
+      const inn = det.slice().reverse().find(x => x.shedSgn && /반입/.test(x.cargTrcnRelaBsopTpcd || ''));
+      if(inn){ u.shedSgn = inn.shedSgn; u.shedNm = inn.shedNm || ''; u.shedIn = fmtYmd(inn.rlbrDttm || inn.prcsDttm); }
     } else if(j && j.err) u.err = j.err;
   }
   if(!r.refNo && u.dclrNo) r.refNo = u.dclrNo;                         // 신고번호는 관세청 값이므로 바로 넣음
@@ -205,6 +229,23 @@ async function checkImport(r, u){
   if(decl && (u.cleared || !r.bl) && !u.paid){
     try{ const j = await uni('API049', {impDclrNo:decl}); if(pick(j, 'fpayYn') === 'Y'){ u.paid = true; u.paidAt = fmtYmd(pick(j, 'fpayDt')); } else if(pick(j, 'fpayYn')) u.paid = false; }
     catch(e){ u.err049 = e.message; }
+  }
+  if(u.shedSgn && u.shedIn && !u.released){                           // 장치기간 만료일을 기한에 자동 등록(반출되면 처리 표시)
+    if(!u.shedPeriod || u.shedPeriodSgn !== u.shedSgn){
+      try{ const j = await uni('API047', {snarSgn:u.shedSgn}); u.shedPeriod = pick(j, 'dvcePridval'); u.shedPeriodSgn = u.shedSgn; } catch(e){ u.err047 = e.message; }
+    }
+    const pm = /(\d+)\s*([DMY])/i.exec(u.shedPeriod || '');
+    if(pm){
+      const due = addPeriod(u.shedIn, Number(pm[1]), pm[2].toLowerCase());
+      u.shedTxt = `장치기간 ${u.shedPeriod} · ${due.slice(5)}까지`;
+      r.deadlines = r.deadlines || [];
+      if(!r.deadlines.some(x => x.kind === '장치기간 만료')) r.deadlines.push({id:uid(), kind:'장치기간 만료', base:u.shedIn, due, done:false, auto:true});
+    }
+  }
+  if(u.released) (r.deadlines || []).filter(x => x.kind === '장치기간 만료').forEach(x => x.done = true);
+  if(decl && /담보/.test([r.title, r.summary, (r.tags || []).join(' '), (r.causes || []).join(' ')].join(' '))){
+    try{ const j = await uni('API050', {impDclrNo:decl}); const nm = pick(j, 'mgPrcsStcdNm'); if(nm) u.bond = nm + (pick(j, 'mgAprvDt') ? ' ' + fmtYmd(pick(j, 'mgAprvDt')).slice(5) : ''); }
+    catch(e){ u.err050 = e.message; }
   }
   if(u.cleared && (u.paid || u.released)) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || today(), `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : ''}${u.released ? ', 반출신고' : ''}`);
 }
@@ -222,9 +263,40 @@ async function checkExport(r, u){
     if(!d){ d = {id:uid(), kind:'수출물품 적재기한', base:u.acceptedAt || null, due:u.loadDue, done:false, auto:true}; r.deadlines.push(d); }
     if(u.loaded) d.done = true;
   }
+  if(decl && u.accepted && !u.ldpDone){
+    try{ const j = await uni('API053', {expDclrNo:decl}); const t = pick(j, 'expInscTrgtYn'), c = pick(j, 'expInscCmplYn');
+      if(t) u.ldp = t === 'Y' ? (c === 'Y' ? '검사완료' : '검사대상') : '대상 아님'; u.ldpDone = t !== 'Y' || c === 'Y'; }
+    catch(e){ u.err053 = e.message; }
+  }
   if(u.loaded) setStage(r, 'customs', u.departAt || today(), 'UNI-PASS: 선적완료');
 }
 async function checkExtra(r, u){
+  if(r.reqRqstNo){
+    try{ const j = await uni('API025', {reqRqstNo:kDecl(r.reqRqstNo)}); const nm = pick(j, 'reqRqstPrcsSttsNm');
+      if(nm){ u.reqRqst = nm + (pick(j, 'reqIttRsltInfmNo') ? ' (통보 ' + pick(j, 'reqIttRsltInfmNo') + ')' : ''); u.reqRqstDone = /완료|통보|발급|합격|승인|수리/.test(nm); } }
+    catch(e){ u.err025 = e.message; }
+  }
+  const cd = r.cond || {}, decl = kDecl(r.refNo);
+  if(cd.kind === 'reimp' && decl && cd.ln){                            // 재수입조건부 수출: 잔량
+    try{ const j = await uni('API034', {expDclrNo:decl, expDclrLnNo:cd.ln, expDclrStszSrno:cd.stsz || '01'});
+      const rs = pick(j, 'rsqty');
+      if(rs !== ''){ u.condTxt = `재수입 잔량 ${Number(rs).toLocaleString('ko-KR')} ${pick(j, 'rsqtyUt')}`.trim() + (pick(j, 'ttwg') ? ` / ${Number(pick(j, 'ttwg')).toLocaleString('ko-KR')}` : ''); cd.zero = Number(rs) === 0; } }
+    catch(e){ u.err034 = e.message; }
+  }
+  if(cd.kind === 'reexp' && decl){                                     // 재수출면세 수입: 잔량과 이행기한
+    try{ const j = await uni('API042', {impDclrNo:decl});
+      const rows = (j.items || []).filter(x => x.qtyRsqty !== undefined || x.wghtRsqty !== undefined).filter(x => !cd.ln || String(x.lnNo || '').replace(/^0+/, '') === String(cd.ln).replace(/^0+/, ''));
+      if(rows.length){ const q = rows.reduce((a, x) => a + Number(x.qtyRsqty || 0), 0), w = rows.reduce((a, x) => a + Number(x.wghtRsqty || 0), 0);
+        u.condTxt = `재수출 잔량 ${q.toLocaleString('ko-KR')}${w ? ` (중량 ${w.toLocaleString('ko-KR')})` : ''}`; cd.zero = q === 0 && w === 0; } }
+    catch(e){ u.err042 = e.message; }
+    if(cd.ln){
+      try{ const j = await uni('API045', {impDclrNo:decl, lnNo:cd.ln}); const xs = (j.items || []).map(x => x.xtnsDt).concat(pick(j, 'xtnsDt')).filter(Boolean).sort();
+        if(xs.length){ const due = fmtYmd(xs[xs.length - 1]); r.deadlines = r.deadlines || []; const d = r.deadlines.find(x => x.kind === '재수출 이행기한');
+          if(d){ if(d.auto) d.due = due; } else r.deadlines.push({id:uid(), kind:'재수출 이행기한', base:null, due, done:false, auto:true}); } }
+      catch(e){ u.err045 = e.message; }
+    }
+    if(cd.zero) (r.deadlines || []).filter(x => x.kind === '재수출 이행기한').forEach(x => x.done = true);
+  }
   const md = r.mdfy || {};
   if(md.dcshSbmtNo && md.dgcnt && md.date){
     try{ const j = await uni('API052', {dcshSbmtNo:md.dcshSbmtNo, imexTpcd:caseCode(r.type) === 'E' ? 'E' : 'I', mdfyRqstDgcnt:md.dgcnt, mdfyRqstDt:md.date.replace(/-/g, '')}); u.mdfy = pick(j, 'mdfyRqstPrcsStcdNm') || u.mdfy || ''; }
@@ -239,16 +311,16 @@ async function refreshCustoms(force){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token) return;
   const cutoff = new Date(Date.now() - 12 * 3600e3).toISOString();
-  const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && ['I', 'E'].includes(caseCode(r.type)) && (r.bl || r.refNo || r.mdfy || r.reqApreNo)
+  const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && ['I', 'E'].includes(caseCode(r.type)) && (r.bl || r.refNo || r.mdfy || r.reqApreNo || r.reqRqstNo)
     && (force || !r.unipass || (r.unipass.at || '') < cutoff)).slice(0, 15);
   for(const r of list){
     const u = {...(r.unipass || {}), at:nowIso()};
     delete u.err;
-    const before = JSON.stringify(r.stage || {}) + (r.unipass || {}).last + (r.unipass || {}).mdfy;
+    const before = JSON.stringify(r.stage || {}) + [(r.unipass || {}).last, (r.unipass || {}).mdfy, (r.unipass || {}).reqRqst, (r.unipass || {}).condTxt, (r.unipass || {}).ldp].join('|');
     if(caseCode(r.type) === 'E') await checkExport(r, u); else await checkImport(r, u);
     await checkExtra(r, u);
     r.unipass = u;
-    if(before !== JSON.stringify(r.stage || {}) + u.last + u.mdfy) r.updatedAt = nowIso();
+    if(before !== JSON.stringify(r.stage || {}) + [u.last, u.mdfy, u.reqRqst, u.condTxt, u.ldp].join('|')) r.updatedAt = nowIso();
   }
   const ev = evalStages();
   if(list.length || ev.n || ev.done){ commit(); if(ev.done) toast(`통관·정산이 확인된 ${ev.done}건을 자동으로 완료했습니다.`); }
@@ -257,19 +329,59 @@ const refreshUnipass = refreshCustoms;
 
 /* ---------- 누락 방지: 오래된 미연결 대화, 새 의뢰 후보 ---------- */
 const OVERDUE_H = 24;
-const REQ_RE = /요청|의뢰|부탁|신청|진행\s*바랍|진행\s*부탁|검토\s*바랍|please|request|kindly/i;
+/* 새 의뢰 후보: 대화의 첫 메일이 외부(또는 대표 전달)이고 회신(RE:)이 아니며, 제목이나 본문 첫머리에 의뢰 표현이 있을 때.
+   본문은 '부탁드립니다' 같은 인사말에 걸리지 않도록 업무 단어와 붙은 경우만 본다. */
+const REQ_SUBJ = /요청|의뢰|부탁|신청|문의|request|inquiry/i;
+const REQ_BODY = /(신고|통관|면장|면허|수입|수출|검역|요건|진행|발급|확인)[^.\n]{0,15}(요청|부탁|의뢰|바랍니다)/;
+const IS_REPLY = /^\s*(\[[^\]]*\]\s*)*(re|답장|회신)\s*(\[\d+\])?\s*[:：]/i;
 function hoursSince(kst){ const t = new Date(String(kst).slice(0, 16) + ':00+09:00').getTime(); return isNaN(t) ? 0 : (Date.now() - t) / 3600e3; }
 function isOwn(addr){ return /@bsgc\.co\.kr\b/i.test(String(addr || '')); }
+/* 누락 경고 기준일: 이 날짜 이전에 끝난 대화는 '이전 메일'로 따로 두고 경고에 넣지 않는다(처음 연결할 때 쌓인 과거 메일 제외) */
+function mailWatchFrom(){
+  db.settings.mailWatchFrom = db.settings.mailWatchFrom || addPeriod(today(), -1, 'd');
+  return db.settings.mailWatchFrom;
+}
 function threadFlags(t){
   const first = t.ms[0];
-  const ext = t.ms.find(m => !isOwn(m.from) || m.fwdFrom);
-  const request = !!ext && REQ_RE.test(`${first.subject} ${(ext.snippet || '').slice(0, 300)}`);
-  return {ageH:hoursSince(first.date), request, client:matchClient(t.ms)};
+  const ext = !isOwn(first.from) || !!first.fwdFrom;
+  const request = ext && !IS_REPLY.test(first.subject || '') && (REQ_SUBJ.test(first.subject || '') || REQ_BODY.test((first.snippet || '').slice(0, 200)));
+  return {ageH:hoursSince(first.date), request, client:matchClient(t.ms), old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
 }
 function mailAlerts(){
-  const ths = mailCache ? mailThreadsList() : [];
-  const fl = ths.map(threadFlags);
-  return {total:ths.length, overdue:fl.filter(f => f.ageH >= OVERDUE_H).length, requests:fl.filter(f => f.request).length};
+  const fl = (mailCache ? mailThreadsList() : []).map(threadFlags), cur = fl.filter(f => !f.old);
+  return {total:cur.length, old:fl.length - cur.length, overdue:cur.filter(f => f.ageH >= OVERDUE_H).length, requests:cur.filter(f => f.request).length};
+}
+
+/* ---------- 홈 요약 (저장된 데이터만으로 계산, 추가 호출 없음) ---------- */
+let lastCollectRun = '';
+function weekStart(){ const d = new Date(today() + 'T00:00:00'), w = (d.getDay() + 6) % 7; d.setDate(d.getDate() - w); return d.toISOString().slice(0, 10); }
+function homeWidgetsHTML(){
+  const act = db.records.filter(r => r.status !== '완료' && r.status !== '보류');
+  const waitC = act.filter(r => !stageOf(r).customs).length, waitS = act.filter(r => stageOf(r).customs && !stageOf(r).settle && settleMode(r) === 'each').length;
+  const ws = weekStart(), doneW = db.records.filter(r => r.status === '완료' && (r.date || '') >= ws).length;
+  const auto7 = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).length;
+  const ma = mailAlerts(), dls = openDeadlines(), soon = dls.filter(x => { const n = daysLeft(x.d.due); return n >= 0 && n <= 7; }).length, over = dls.filter(x => daysLeft(x.d.due) < 0).length;
+  const tile = (go, n, label, sub, warn) => `<button class="tile${warn ? ' warn' : ''}" ${go}><span class="t-n">${n}</span><span class="t-l">${label}</span><span class="t-s">${sub}</span></button>`;
+  const tiles = [
+    tile('data-go="active"', act.length, '진행 중', `통관 대기 ${waitC} · 정산 대기 ${waitS}`),
+    tile('data-go="report"', doneW, '이번 주 완료', `자동 완료(7일) ${auto7}`),
+    tile('data-go="mail"', ma.total, '미연결 메일 대화', `24시간 경과 ${ma.overdue} · 새 의뢰 ${ma.requests}`, ma.overdue > 0),
+    tile('data-go="active"', soon + over, '7일 내 기한', over ? `지난 기한 ${over}` : '지난 기한 없음', over > 0)
+  ].join('');
+  // 시스템 상태: 이미 받아 둔 값으로만 표시
+  const lastMail = (mailCache || []).map(m => m.collectedAt || '').sort().slice(-1)[0] || '';
+  const mailAge = lastMail ? hoursSince(lastMail) : null;
+  const uniAt = db.records.map(r => (r.unipass || {}).at || '').sort().slice(-1)[0] || '';
+  const uniErr = db.records.map(r => r.unipass || {}).filter(u => u.at === uniAt).map(u => u.err).find(Boolean);
+  const t16 = s => s ? String(s).replace('T', ' ').slice(5, 16) : '';
+  const st = [
+    `메일 수집 ${lastMail ? t16(lastMail) : '기록 없음'}${mailAge !== null && mailAge > 2 ? ' <b class="bad">(2시간 넘게 새 수집 없음 — 사무실 PC 수집기 확인)</b>' : ''}`,
+    `UNI-PASS 확인 ${uniAt ? t16(new Date(uniAt).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'})) : '아직 없음'}${uniErr ? ` <b class="bad">(${esc(uniErr)})</b>` : ''}`,
+    `Drive 자료 수집 ${lastCollectRun ? t16(new Date(lastCollectRun).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'})) : '기록 없음'}`
+  ];
+  const people = accounts.length > 1 ? accounts.map(a => [a.name, act.filter(r => r.assignee === a.id).length]).filter(x => x[1]) : [];
+  return `<div class="tiles">${tiles}</div>
+    <p class="sys-state">${st.join(' · ')}${people.length ? ` · 담당별 진행 ${people.map(([n, c]) => `${esc(n)} ${c}`).join(', ')}` : ''}</p>`;
 }
 
 /* ---------- 무변동 알림 (C4) ---------- */

@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -50,7 +50,14 @@ document.addEventListener('click', e => {
   else if('sug' in d){const [rid, key] = d.sug.split('|'); const r = findRec(rid); if(r) applySuggestion(r, d.sug.slice(rid.length + 1));}
   else if('sugOff' in d){const rid = d.sugOff.split('|')[0], r = findRec(rid); if(r){ r.sugOff = [...new Set([...(r.sugOff || []), d.sugOff.slice(rid.length + 1)])].slice(-50); commit(); }}
   else if('mine' in d){mineOnly = !mineOnly; renderView();}
+  else if('ppApply' in d){const pp = (db.procProposals || []).find(x => x.id === d.ppApply); if(pp && applyProposal(pp, readPick(pp.id))){ commit(); toast('절차에 반영했습니다. 개정 이력에 남았습니다.'); } else toast('고른 항목이 없습니다.');}
+  else if('ppDrop' in d){const pp = (db.procProposals || []).find(x => x.id === d.ppDrop); if(pp){ pp.status = 'dropped'; commit(); }}
+  else if('manDraft' in d){const [cid, ty] = d.manDraft.split('|'), dr = draftFromRecords(cid, ty); if(!dr.steps.length){ toast('완료 기록에 공통으로 나온 단계가 없습니다. 절차를 직접 추가하세요.'); openProc(null, {clientId:cid, type:ty}); } else { db.procProposals = db.procProposals || []; db.procProposals.push({id:uid(), recId:'', caseNo:`완료 ${dr.n}건 기준`, clientId:cid, type:ty, procId:null, at:nowIso(), by:me ? me.id : '', status:'pending', add:dr.steps, skip:[], docs:[], caution:''}); commit(); toast('초안을 개정 제안에 올렸습니다. 확인 후 반영하세요.'); }}
+  else if('manReview' in d){const p = db.procedures.find(x => x.id === d.manReview); if(p){ p.reviewedAt = today(); p.history = [...(p.history || []), {at:nowIso(), by:me ? me.id : '', text:'근거 법령 검토'}].slice(-50); commit(); }}
+  else if('manPrint' in d){const p = db.procedures.find(x => x.id === d.manPrint); if(p) printManual(p);}
+  else if('mailOldClear' in d){const olds = mailThreadsList().filter(t => threadFlags(t).old); if(confirm(`기준일 이전 대화 ${olds.length}건을 모두 목록에서 뺄까요? 메일 색인에는 그대로 남습니다.`)){ olds.forEach(t => t.ms.forEach(m => seeMail(m.id))); commit(); toast(`${olds.length}건을 정리했습니다.`); }}
   else if('stage' in d){const [rid, k] = d.stage.split('|'), r = findRec(rid); if(r){ setStage(r, k, today(), '직접 표시'); if(k === 'customs') (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true); const done = autoComplete(r); commit(); toast(done ? '통관·정산이 모두 확인되어 완료 처리했습니다.' : (k === 'customs' ? '통관완료로 표시했습니다.' : '정산완료로 표시했습니다.')); }}
+  else if('unstage' in d){const [rid, k] = d.unstage.split('|'), r = findRec(rid); const nm = k === 'customs' ? '통관완료' : '정산완료'; if(r && confirm(`‘${r.title}’의 ${nm} 표시를 취소할까요?${r.autoDone ? ' 자동 완료도 함께 되돌립니다.' : ''}`)){ unsetStage(r, k); commit(); toast(`${nm} 표시를 취소했습니다.`); }}
   else if('undoAuto' in d){const r = findRec(d.undoAuto); if(r){ undoAuto(r); commit(); toast('진행 중으로 되돌렸습니다. 이 기록은 다시 자동 완료하지 않습니다.'); }}
   else if('openData' in d) openDataMenu();
   else if('letter' in d) openLetter('client' in d ? d.client : curClient);
@@ -58,6 +65,7 @@ document.addEventListener('click', e => {
 $('#view').addEventListener('input', e => {
   const el = e.target;
   if(el.id === 'contactQ'){ $('#contactTable').innerHTML = contactTable(); return; }
+  if(el.id === 'manQ'){ manualQ = el.value; clearTimeout(window._manT); window._manT = setTimeout(() => { renderView(); const q = $('#manQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'kcQ'){ $('#kcTable').innerHTML = kcTableHTML(kcRowsFor(el.dataset.kcClient, el.value), false); return; }
   if(el.dataset && el.dataset.fee && el.dataset.fee !== 'pid'){
     if(el.dataset.fee === 'amount'){ const n = num(el.value); el.value = n ? n.toLocaleString('ko-KR') : ''; }
@@ -66,6 +74,7 @@ $('#view').addEventListener('input', e => {
   }
 });
 document.addEventListener('change', e => {
+  if(e.target.id === 'mailWatch' && db){ if(e.target.value){ db.settings.mailWatchFrom = e.target.value; commit(); } return; }
   if(e.target.dataset && e.target.dataset.fee === 'pid' && db){ feeState.pid = e.target.value; $('[data-own]').hidden = e.target.value !== '__own'; $('#feeOut').innerHTML = feeOutHTML(); return; }
   const el = e.target;
   if(!db || el.closest('dialog')) return;

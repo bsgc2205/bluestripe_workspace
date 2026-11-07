@@ -44,6 +44,7 @@ function openRecord(r, preset = {}){
   if(isNew && preset.prefill) Object.assign(rec, preset.prefill);
   if(!db.clients.some(c => c.id === rec.clientId)) rec.clientId = first;
   const dls = (rec.deadlines || []).map(d => ({...d}));
+  let usedProc = rec.procId || '';
   openDialog({
     title: isNew ? (status === '진행중' ? '업무 시작' : '업무 기록 남기기') : `업무 기록 수정${rec.caseNo ? ' · ' + rec.caseNo : ''}`,
     body: `<div class="row2">
@@ -71,6 +72,9 @@ function openRecord(r, preset = {}){
       <label class="check"><input type="checkbox" name="special"${rec.special ? ' checked' : ''}> 일반 절차와 다르게 처리함</label>
       <div class="special-fields"><label>특이 처리 내용<textarea name="specialNote" rows="4" placeholder="무엇이 달랐는지 / 어떻게 해결했는지 / 다음에 적용할 점">${esc(rec.specialNote)}</textarea></label></div>
       <div class="dlg-section">
+        <h4>UNI-PASS 추적 번호 (있는 것만)</h4>
+        <div class="row2"><label>요건신청번호 (처리상태 확인)<input name="reqRqstNo" value="${esc(rec.reqRqstNo || '')}"></label><label>잔량 관리<select name="condKind">${opts([['', '해당 없음'], ['reimp', '재수입조건부 수출 (수출신고번호 기준)'], ['reexp', '재수출면세 수입 (수입신고번호 기준)']], (rec.cond || {}).kind || '')}</select></label></div>
+        <div class="row2"><label>잔량 관리 란번호<input name="condLn" inputmode="numeric" value="${esc((rec.cond || {}).ln || '')}" placeholder="예: 001"></label><label>규격번호 (재수입조건부만)<input name="condStsz" inputmode="numeric" value="${esc((rec.cond || {}).stsz || '')}" placeholder="예: 01"></label></div>
         <div class="row2"><label>요건승인번호 (있으면 UNI-PASS로 승인 확인)<input name="reqApreNo" value="${esc(rec.reqApreNo || '')}"></label><label>정정 제출번호<input name="mdfyNo" value="${esc((rec.mdfy || {}).dcshSbmtNo || '')}" placeholder="정정 신청 후 처리상태 자동 확인"></label></div>
         <div class="row2"><label>정정 신청 차수<input name="mdfyDg" inputmode="numeric" value="${esc((rec.mdfy || {}).dgcnt || '')}"></label><label>정정 신청일자<input type="date" name="mdfyDt" value="${esc((rec.mdfy || {}).date || '')}"></label></div>
         <h4>정정·보완 원인</h4>
@@ -104,7 +108,7 @@ function openRecord(r, preset = {}){
       </div>
       <aside class="related" aria-label="참고 자료"></aside>`,
     onSave(fd){
-      const t = nowIso(), status = fd.get('status');
+      const t = nowIso(), status = fd.get('status'), wasDone = rec.status === '완료' && !isNew;
       if(status === '완료' && !fd.get('date')){toast('완료 상태는 완료일이 필요합니다.'); return false;}
       const rawLinks = lines(fd.get('links'));
       const links = rawLinks.map(safeUrl).filter(Boolean);
@@ -123,9 +127,13 @@ function openRecord(r, preset = {}){
         checklist, docs: keep(rec.docs || [], lines(fd.get('docs'))), deadlines: dls,
         tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t,
         reqApreNo: String(fd.get('reqApreNo') || '').trim(),
+        reqRqstNo: String(fd.get('reqRqstNo') || '').trim(),
+        cond: fd.get('condKind') ? {...(rec.cond || {}), kind: fd.get('condKind'), ln: String(fd.get('condLn') || '').trim(), stsz: String(fd.get('condStsz') || '').trim()} : null,
         mdfy: fd.get('mdfyNo') ? {dcshSbmtNo: String(fd.get('mdfyNo')).trim(), dgcnt: String(fd.get('mdfyDg') || '').trim(), date: fd.get('mdfyDt') || ''} : null
       });
       rec.updatedBy = me ? me.id : '';
+      if(usedProc) rec.procId = usedProc;
+      if(status === '완료' && !wasDone){ const pp = proposeFromRecord(rec); if(pp) setTimeout(() => toast('절차와 다른 점이 있어 업무 매뉴얼에 개정 제안을 올렸습니다.'), 900); }
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
         if(preset.thread) preset.thread.ms.forEach(x => seeMail(x.id)); else if(preset.mail) seeMail(preset.mail.id);
@@ -155,6 +163,7 @@ function openRecord(r, preset = {}){
       const stat = () => {if(N('status').value === '완료' && !N('date').value) N('date').value = today();};
       const loadProc = (id, ask) => {
         const p = db.procedures.find(x => x.id === id); if(!p) return;
+        usedProc = p.id;
         if(ask && (N('checklist').value.trim() || N('docs').value.trim()) && !confirm('체크리스트를 이 절차 내용으로 바꿀까요?')) return;
         N('checklist').value = (p.steps || []).join('\n'); N('docs').value = splitDocs(p.docs).join('\n');
         if(p.assignee && accounts.some(a => a.id === p.assignee)) N('assignee').value = p.assignee;
@@ -350,13 +359,14 @@ function openProc(p, preset = {}){
       <label>처리 단계 (한 줄에 한 단계)<textarea name="steps" rows="8" placeholder="선적서류 수령&#10;HS 분류 및 요건 확인&#10;…">${esc((pr.steps || []).join('\n'))}</textarea></label>
       <label>필요 서류 (쉼표나 줄바꿈으로 구분)<textarea name="docs" rows="3">${esc(pr.docs)}</textarea></label>
       <label>주의사항<textarea name="cautions" rows="4" placeholder="이 업체·업무에서 자주 걸리는 부분">${esc(pr.cautions)}</textarea></label>
+      <div class="row2"><label>근거 법령 (한 줄에 하나: 법령명 제00조, 고시명)<textarea name="laws" rows="3" placeholder="관세법 제241조&#10;수입통관 사무처리에 관한 고시">${esc(pr.laws || '')}</textarea></label><label>최종 법령 검토일<input type="date" name="reviewedAt" value="${esc(pr.reviewedAt || '')}"></label></div>
       <div class="row2">
         <label>기본 담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], pr.assignee || '')}</select></label>
         <div><span class="lbl">챙길 기한</span><div class="cause-grid">${DL_RULES.filter(x => x.base).map(x => `<label class="check"><input type="checkbox" name="dlKinds" value="${esc(x.kind)}"${(pr.dlKinds || []).includes(x.kind) ? ' checked' : ''}> ${esc(x.kind)}</label>`).join('')}</div></div>
       </div>`,
     onSave(fd){
       const t = nowIso();
-      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: lines(fd.get('steps')), docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), assignee: fd.get('assignee') || '', dlKinds: fd.getAll('dlKinds'), updatedAt: t});
+      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: lines(fd.get('steps')), docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), laws: String(fd.get('laws') || '').trim(), reviewedAt: fd.get('reviewedAt') || pr.reviewedAt || '', assignee: fd.get('assignee') || '', dlKinds: fd.getAll('dlKinds'), updatedAt: t});
       if(isNew){pr.createdAt = t; db.procedures.push(pr); toast('절차를 저장했습니다.');}
       else toast('절차를 수정했습니다.');
     },

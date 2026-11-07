@@ -7,6 +7,7 @@ function renderSidebar(){
   $('#cntActive').textContent = active || '';
   const ma = mailAlerts();  // customs@ 메일 중 아직 기록과 연결하지 않은 대화
   $('#cntMail').textContent = ma.total || ''; $('#cntMail').classList.toggle('warn', ma.overdue > 0); $('#cntMail').title = ma.overdue ? `${OVERDUE_H}시간 넘게 연결 안 된 대화 ${ma.overdue}건` : '';
+  const ppN = (db.procProposals || []).filter(x => x.status === 'pending').length; if($('#cntManual')) $('#cntManual').textContent = ppN || '';
   $('#cntInbox').textContent = (db.collectPending || []).length || '';
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
@@ -24,7 +25,7 @@ function renderSidebar(){
 function renderView(){
   hlRe = null;
   const v = $('#view');
-  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
+  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, manual:viewManual, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
   if(route.name === 'client' && db.clients.some(c => c.id === route.id)) v.innerHTML = viewClient();
   else if(views[route.name]) v.innerHTML = views[route.name]();
   else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
@@ -107,6 +108,7 @@ function viewHome(){
   return `<section class="home-intro">
     <h2>${today()}</h2>
     <p>진행 중인 업무가 ${active.length}건이고, 7일 안에 돌아오는 기한이 ${soon}건${over ? `, 이미 지난 기한이 ${over}건` : ''} 있습니다. 이번 달에는 ${m}건을 완료했습니다.</p>
+    ${homeWidgetsHTML()}
     ${ma.overdue || ma.requests ? `<p class="attn alert">${ma.overdue ? `<strong>메일 누락 주의: ${OVERDUE_H}시간 넘게 기록과 연결되지 않은 customs@ 대화 ${ma.overdue}건</strong>` : ''}${ma.overdue && ma.requests ? ' · ' : ''}${ma.requests ? `<strong>새 의뢰 후보 ${ma.requests}건</strong>` : ''} <button class="mini strong" data-go="mail">customs@ 메일 열기</button></p>` : ''}
     ${autoDone.length ? `<details class="attn"><summary><strong>최근 7일 자동 완료 ${autoDone.length}건</strong> (통관·정산 확인) — 눌러서 확인</summary><ul>${autoDone.map(r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(clientName(r.clientId))} · ${esc(r.autoDone.reason)}</span> <button class="mini" data-undo-auto="${esc(r.id)}">되돌리기</button></li>`).join('')}</ul></details>` : ''}
     ${stale.length || sugN ? `<p class="attn">${stale.length ? `<strong>확인 필요 ${stale.length}건</strong> (진행 중인데 ${STALE_DAYS}영업일 넘게 메일·자료·기록 변화 없음)` : ''}${stale.length && sugN ? ' · ' : ''}${sugN ? `<strong>제안 ${sugN}건</strong> (메일·UNI-PASS 기준 단계 변경)` : ''} <button class="mini" data-go="active">진행 중 업무에서 보기</button></p>` : ''}

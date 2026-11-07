@@ -294,3 +294,34 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 .attn.alert{color:var(--stamp)}
 details.attn ul{margin:.35rem 0 0;padding-left:1.1rem}
 details.attn summary{cursor:pointer}
+button.stg{background:none;cursor:pointer;font:inherit;font-size:.74rem}
+button.stg:hover{text-decoration:line-through}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;margin:.6rem 0 .4rem;max-width:860px}
+.tile{display:flex;flex-direction:column;align-items:flex-start;gap:.1rem;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.6rem .75rem;cursor:pointer;font:inherit;color:inherit}
+.tile:hover{border-color:var(--accent)}
+.tile .t-n{font-size:1.45rem;font-weight:700;line-height:1.1}
+.tile .t-l{font-size:.85rem;font-weight:600}
+.tile .t-s{font-size:.75rem;color:var(--muted)}
+.tile.warn .t-n{color:var(--stamp)}
+.sys-state{font-size:.78rem;color:var(--muted);margin:.2rem 0 .6rem}
+.sys-state .bad{color:var(--stamp);font-weight:600}
+.old-mails{margin-top:1.2rem;font-size:.88rem}
+.old-mails summary{cursor:pointer;color:var(--muted)}
+.old-mails ul{padding-left:1.1rem}
+label.inline{display:inline-flex;align-items:center;gap:.35rem;font-size:.82rem;margin-right:.5rem}
+label.inline input{width:auto}
+.stg.warn{color:var(--stamp);border-color:var(--stamp)}
+.pps{margin:0 0 1.4rem}
+.pps>ul{padding-left:1.1rem}
+.pp{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:.6rem .8rem;margin:.5rem 0;background:var(--surface)}
+.pp-sec{margin:.35rem 0}
+.pp-sec .check{display:block;font-size:.88rem}
+.manual{border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin:0 0 1rem;background:var(--surface)}
+.manual header{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.manual header h4{margin:0}
+.manual .p-act{margin-left:auto}
+.man-stat{font-size:.85rem;color:var(--muted);margin:.3rem 0}
+.man-grid{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;font-size:.88rem;margin:.4rem 0}
+.manual .bad{color:var(--stamp)}
+.pre{white-space:pre-wrap}
+@media (max-width:700px){.man-grid{grid-template-columns:1fr}}

@@ -211,9 +211,10 @@ function viewMail(){
     <div class="setup"><p>한비로 customs@bsgc.co.kr로 들어온 메일을 업무 기록과 연결합니다. 사무실 PC의 메일 수집기와 Apps Script 연동이 필요합니다.</p>
     <p class="hint">설치 순서는 README의 ‘customs@ 메일 수집’을 보세요.</p>
     <button class="primary" data-open-data>데이터 메뉴 열기</button></div>`;
-  const ths = mailThreadsList().map(t => ({...t, f:threadFlags(t)})).sort((a, b) => (b.f.request - a.f.request) || (b.f.ageH >= OVERDUE_H) - (a.f.ageH >= OVERDUE_H) || (a.last.date < b.last.date ? 1 : -1));
+  const all = mailThreadsList().map(t => ({...t, f:threadFlags(t)})), olds = all.filter(t => t.f.old);
+  const ths = all.filter(t => !t.f.old).sort((a, b) => (b.f.request - a.f.request) || (b.f.ageH >= OVERDUE_H) - (a.f.ageH >= OVERDUE_H) || (a.last.date < b.last.date ? 1 : -1));
   return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 customs@ 메일 중 아직 기록과 연결하지 않은 대화 ${ths.length}건입니다. 제목에 케이스 번호([2026-I-001])가 있거나, 이미 기록에 붙인 대화의 회신이거나, B/L·신고번호로 기록이 하나로 정해지면 자동으로 붙습니다.</p></div>
-      <div class="client-act"><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
+      <div class="client-act"><label class="inline">누락 경고 기준일 <input type="date" id="mailWatch" value="${esc(mailWatchFrom())}"></label><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
     ${mailErr ? `<p class="msg">${esc(mailErr)}</p>` : ''}
     <div class="narrow">
     ${mailCache === null ? '<p class="empty">‘새로 불러오기’를 누르면 메일 색인에서 가져옵니다.</p>'
@@ -232,6 +233,7 @@ function viewMail(){
         <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
       </article>`; }).join('')
       : '<p class="empty">새로 연결할 메일이 없습니다.</p>'}
+    ${olds.length ? `<details class="old-mails"><summary>기준일(${esc(mailWatchFrom())}) 이전 대화 ${olds.length}건 — 경고에서 제외됨</summary><p class="hint">처음 연결할 때 쌓인 과거 메일입니다. 필요한 것만 위 기준일을 앞당겨 처리하거나, 한 번에 정리하세요.</p><button class="mini" data-mail-old-clear>이전 대화 ${olds.length}건 모두 정리(무시)</button><ul>${olds.slice(0, 50).map(t => `<li><span class="rec-date">${esc(String(t.last.date).slice(0, 10))}</span> ${esc(t.last.subject || '')} <span class="hint">${t.ms.length}통</span></li>`).join('')}${olds.length > 50 ? `<li class="hint">외 ${olds.length - 50}건</li>` : ''}</ul></details>` : ''}
     </div>`;
 }
 function autoAttachMails(){

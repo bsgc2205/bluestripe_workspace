@@ -60,6 +60,7 @@ async function runCollect(manual){
   try{
     if(manual){ toast('수입·수출 폴더와 BSGC-Backup 변동사항을 확인하는 중입니다…'); await collectApi({collect:1}); await collectApi({weekly:1}); }
     const j = await collectApi({inbox:1});
+    lastCollectRun = j.lastRun || lastCollectRun;
     const r = applyCollected(j.items || []);
     const s2 = applyStatus(j.status);
     if(r || s2){
