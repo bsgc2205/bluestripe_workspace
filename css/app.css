@@ -345,3 +345,16 @@ ul.sim{list-style:none;padding:0;margin:.3rem 0 0}
 .tag.req{background:transparent;border:1px solid var(--accent);color:var(--accent)}
 button.tag{border:0;cursor:pointer;font:inherit;font-size:.8rem}
 .chip b{margin-left:.3rem;font-variant-numeric:tabular-nums;font-weight:600}
+.kc-chip{font-size:.72rem;white-space:nowrap}
+.kc-chip.ok{color:var(--accent)}
+.kc-chip.warn{color:#b26b00}
+.kc-chip.bad{color:var(--stamp);font-weight:600}
+/* 공공데이터 연동 · 확인 알림 */
+.ext-row{display:flex;flex-wrap:wrap;gap:.25rem .5rem;align-items:center;margin:.25rem 0}
+.ext-row .kc-chip{border:1px solid var(--line);border-radius:4px;padding:0 .35rem}
+.ext-tr td{border-top:0;padding-top:0}
+.ext-detail{font-size:.82rem;margin:.2rem 0}
+.law-list{list-style:none;padding:0;margin:0}
+.law-list li{margin:.1rem 0}
+.law-list .kc-chip{border:1px solid var(--line);border-radius:4px;padding:0 .35rem;margin-left:.3rem}
+.inq.done{opacity:.7}

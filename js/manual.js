@@ -113,7 +113,7 @@ function manualHTML(p){
     ${(p.steps || []).length ? `<ol>${p.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : '<p class="hint">단계가 없습니다.</p>'}
     <div class="man-grid">
       <div><span class="lbl">필요 서류</span>${esc(p.docs || '-')}${s.docs.length ? `<div class="hint">실제로 받은 서류: ${esc(s.docs.slice(0, 6).join(', '))}</div>` : ''}</div>
-      <div><span class="lbl">근거 법령</span>${p.laws ? `<span class="pre">${esc(p.laws)}</span>` : '<span class="hint">미입력</span>'}<div class="hint${reviewOld ? ' bad' : ''}">최종 검토 ${esc(p.reviewedAt || '없음')} <button class="mini" data-man-review="${esc(p.id)}">오늘 검토함</button></div></div>
+      <div><span class="lbl">근거 법령</span>${p.laws ? lawLinesHTML(p) : '<span class="hint">미입력</span>'}<div class="hint${reviewOld ? ' bad' : ''}">최종 검토 ${esc(p.reviewedAt || '없음')} <button class="mini" data-man-review="${esc(p.id)}">오늘 검토함</button></div></div>
     </div>
     ${p.cautions ? `<div class="proc-caution"><strong>주의</strong><p class="pre">${esc(p.cautions)}</p></div>` : ''}
     ${s.sp.length ? `<details><summary>특이 사례 ${s.sp.length}건</summary><ul>${s.sp.slice(0, 10).map(r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(r.date || '')}${causesOf(r).length ? ' · ' + esc(causesOf(r).join(', ')) : ''}</span>${r.specialNote ? `<div class="hint">${esc(r.specialNote.slice(0, 140))}</div>` : ''}</li>`).join('')}</ul></details>` : ''}
@@ -130,7 +130,8 @@ function viewManual(){
   db.records.filter(r => r.status === '완료' && !procFor(r)).forEach(r => { const k = r.clientId + '|' + r.type; combos[k] = (combos[k] || 0) + 1; });
   const missing = Object.entries(combos).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 15);
   return `<header class="client-head"><div><h2>업무 매뉴얼</h2><p class="client-meta">절차마다 실제 처리 통계와 특이 사례, 근거 법령을 모았습니다. 업무를 완료하면 절차와 달랐던 점이 아래 '개정 제안'으로 쌓이고, 고른 항목만 반영됩니다.</p></div>
-      <div class="client-act"><input type="search" id="manQ" value="${esc(manualQ)}" placeholder="절차·업체·법령 검색"><button class="primary" data-new-proc>절차 추가</button></div></header>
+      <div class="client-act"><input type="search" id="manQ" value="${esc(manualQ)}" placeholder="절차·업체·법령 검색"><button class="ghost" data-law-check title="국가법령정보로 근거 법령의 공포·시행일을 확인 (7일마다 자동)">법령 시행일 확인</button><button class="primary" data-new-proc>절차 추가</button></div></header>
+    <p class="hint">법령 확인 ${esc(db.settings.lawCheckedAt ? db.settings.lawCheckedAt.slice(0, 10) : '아직 없음')} · 근거 법령은 한 줄에 ‘법령명 제00조’ 형식으로 적고, 고시는 정식 명칭으로 적어야 찾아집니다.</p>
     ${pend.length ? `<section class="pps"><div class="sec-head"><h3>개정 제안 ${pend.length}건</h3></div>${pend.slice().reverse().map(proposalHTML).join('')}</section>` : ''}
     ${missing.length ? `<section class="pps"><div class="sec-head"><h3>절차서가 없는 업무</h3></div><ul>${missing.map(([k, n]) => { const [cid, ty] = k.split('|'); return `<li>${esc(clientName(cid))} · ${esc(ty)} <span class="hint">완료 ${n}건</span> <button class="mini" data-man-draft="${esc(k)}">완료 기록으로 초안 만들기</button></li>`; }).join('')}</ul></section>` : ''}
     <div class="narrow">${ps.length ? ps.map(manualHTML).join('') : '<p class="empty">절차가 없습니다.</p>'}</div>`;

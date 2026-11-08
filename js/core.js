@@ -181,7 +181,7 @@ function migrate(d){
   d.meta = d.meta || {}; d.settings = d.settings || {};
   if(!Array.isArray(d.settings.taskTypes) || !d.settings.taskTypes.length) d.settings.taskTypes = [...DEFAULT_TYPES];
   d.settings.mail = d.settings.mail || {endpoint:'', token:''};
-  ['clients','procedures','records','items','mailSeen','contacts','inquiries'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
+  ['clients','procedures','records','items','mailSeen','contacts','inquiries','alerts'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
   if(!Array.isArray(d.settings.feeProfiles)) d.settings.feeProfiles = [];
   if(!Array.isArray(d.kc)) d.kc = [];
   d.kcMeta = d.kcMeta || {};
@@ -282,7 +282,7 @@ function enterApp(){
   if(n){ commit(); setTimeout(() => toast(`예시 업체 ${n}곳과 관련 기록을 지웠습니다.`), 600); }
   render();
   if(ensureCaseNos(db)) commit();
-  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); setTimeout(() => refreshCustoms(false), 6000); }
+  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); setTimeout(() => refreshCustoms(false), 6000); setTimeout(() => autoExtChecks(), 12000); }
 }
 
 /* ---------- save state ---------- */

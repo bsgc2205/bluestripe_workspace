@@ -263,10 +263,10 @@ function hsConflicts(){
 function viewItemDb(){
   const gs = itemGroups(), conf = hsConflicts();
   const terms = itemQ.trim().toLowerCase().split(/\s+/).filter(Boolean), sq = x => x.replace(/[\s\-\/.]/g, '');
-  const list = gs.filter(x => (!itemBadge || x.badges.includes(itemBadge)) && terms.every(t => { const h = hay(x.hs, fmtHs(x.hs), x.names, x.tariffs, x.reqs, x.agency, x.clients.map(clientName)); return h.includes(t) || sq(h).includes(sq(t)); }));
+  const list = gs.filter(x => (!itemBadge || x.badges.includes(itemBadge)) && terms.every(t => { const h = hay(x.hs, fmtHs(x.hs), x.names, x.tariffs, x.reqs, x.agency, x.clients.map(clientName), x.items.map(i => [i.cas, i.raw, i.maker, i.model].join(' '))); return h.includes(t) || sq(h).includes(sq(t)); }));
   const bc = {}; gs.forEach(x => x.badges.forEach(b => bc[b] = (bc[b] || 0) + 1));
-  return `<header class="client-head"><div><h2>품목 DB</h2><p class="client-meta">업체별 ‘품목·요건’에 정리한 내용을 HS 코드로 묶고, KC 인증 목록·세관 질의·업무 기록 건수를 함께 보여 줍니다. HS 해설·관세율·세관장확인 요건의 UNI-PASS 자동 확인(API018·030·029)은 보류 중입니다.</p></div>
-      <div class="client-act"><input type="search" id="itemQ" value="${esc(itemQ)}" placeholder="품목명·HS·요건·업체 검색"></div></header>
+  return `<header class="client-head"><div><h2>품목 DB</h2><p class="client-meta">업체별 ‘품목·요건’을 HS 코드로 묶고 KC·세관 질의·기록 건수를 함께 봅니다. ‘공공데이터 확인’은 HS 10단위로 세관장확인 요건·관세율, CAS 번호로 화학물질 분류, 식품 원재료명으로 원재료 정보를 조회하고, 바뀐 점은 ‘확인 알림’에 올립니다(30일마다 자동).</p></div>
+      <div class="client-act"><input type="search" id="itemQ" value="${esc(itemQ)}" placeholder="품목명·HS·요건·CAS·업체 검색"><button class="ghost" data-ext-all title="HS 10단위·CAS·식품 원재료가 있는 품목 중 30일 넘게 확인 안 한 것 (최대 30개)">공공데이터 확인</button>${me && me.role === 'admin' ? '<button class="ghost" data-api-ping>연결 점검</button>' : ''}</div></header>
     ${conf.length ? `<section class="pps" style="margin-top:1.25rem"><div class="sec-head"><h3>HS 확인 필요 ${conf.length}건 <span class="cnt">같은 품목명인데 업체마다 HS 6단위가 다름</span></h3></div><ul>${conf.slice(0, 20).map(a => `<li><strong>${esc(a[0].name)}</strong> ${a.map(i => `<span class="hint">${esc(clientName(i.clientId))} ${esc(i.hs)}</span> <button class="mini" data-edit-item="${esc(i.id)}">수정</button>`).join(' · ')}</li>`).join('')}</ul></section>` : ''}
     <div class="chips" role="group" aria-label="요건">${['', ...REQ_BADGES.map(b => b[0])].filter(b => !b || bc[b]).map(b => `<button class="chip${b === itemBadge ? ' on' : ''}" data-req-badge="${esc(b)}">${esc(b || '전체')}${b ? `<b>${bc[b]}</b>` : ''}</button>`).join('')}</div>
     ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>HS 코드</th><th>품목</th><th>업체</th><th>세율·FTA</th><th>수입요건</th><th class="num">기록·질의·KC</th></tr></thead><tbody>
@@ -274,7 +274,7 @@ function viewItemDb(){
         <td>${x.clients.map(c => `<button class="linkish" data-go="client" data-id="${esc(c)}">${esc(clientName(c))}</button>`).join('<br>')}</td>
         <td>${x.tariffs.map(esc).join('<br>')}</td>
         <td>${x.badges.map(b => `<span class="tag req">${esc(b)}</span> `).join('')}${x.reqs.length ? `<div class="pre hint">${esc(x.reqs.join('\n'))}</div>` : ''}${x.agency.length ? `<div class="hint">기관: ${esc(x.agency.join(', '))}</div>` : ''}</td>
-        <td class="num">${x.recs} · ${x.inq ? `<button class="linkish" data-inq-hs="${esc(x.hs.slice(0, 6))}">${x.inq}</button>` : 0} · ${x.kc}</td></tr>`).join('')}
+        <td class="num">${x.recs} · ${x.inq ? `<button class="linkish" data-inq-hs="${esc(x.hs.slice(0, 6))}">${x.inq}</button>` : 0} · ${x.kc}</td></tr>${x.items.some(i => i.ext || itemReqs(i).length) ? `<tr class="ext-tr"><td></td><td colspan="5">${x.items.map(i => `<div>${x.items.length > 1 ? `<span class="hint">${esc(clientName(i.clientId))}</span> ` : ''}${extItemHTML(i, true) || '<span class="hint">공공데이터 미확인</span>'}</div>`).join('')}<button class="mini" data-ext-items="${esc(x.items.map(i => i.id).join(','))}">이 품목 확인</button></td></tr>` : ''}`).join('')}
     </tbody></table></div>${list.length > 200 ? `<p class="hint">${list.length}개 중 200개만 보입니다. 검색어로 좁히세요.</p>` : ''}`
     : `<p class="empty">${gs.length ? '조건에 맞는 품목이 없습니다.' : '아직 정리한 품목이 없습니다. 업체 화면의 ‘품목·요건’에서 품목을 추가하면 여기에 모입니다.'}</p>`}`;
 }

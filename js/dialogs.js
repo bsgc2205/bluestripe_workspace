@@ -444,9 +444,15 @@ function openItem(it, clientId){
         <label>수입요건 (한 줄에 하나)<textarea name="reqs" rows="4">${esc(item.reqs)}</textarea></label>
         <label>요건 기관<textarea name="agency" rows="4">${esc(item.agency)}</textarea></label>
       </div>
+      <div class="row2"><label>CAS 번호 (화학제품, 한 줄에 하나·함량 같이 적어도 됨)<textarea name="cas" rows="3" placeholder="7440-36-0 99%">${esc(item.cas || '')}</textarea></label><label>식품 원재료명 (식품, 한 줄에 하나)<textarea name="raw" rows="3" placeholder="옥수수">${esc(item.raw || '')}</textarea></label></div>
+      <div class="row2"><label>제조사<input name="maker" value="${esc(item.maker || '')}"></label><label>제조국<input name="country" value="${esc(item.country || '')}"></label><label>모델명<input name="model" value="${esc(item.model || '')}"></label></div>
+      <p class="hint">HS 10단위·CAS·식품 원재료명을 넣어 두면 품목 DB의 ‘공공데이터 확인’으로 세관장확인 요건·관세율·화학물질 분류·원재료 정보를 조회합니다.</p>
+      ${item.ext ? `<div class="dlg-section"><h4>공공데이터 확인 결과</h4>${extItemHTML(item, true)}</div>` : ''}
       <label>메모<textarea name="notes" rows="2" placeholder="원산지, 제조사, 품목분류 근거 등">${esc(item.notes)}</textarea></label>`,
     onSave(fd){
-      Object.assign(item, {name: fd.get('name').trim(), hs: fd.get('hs').trim(), tariff: fd.get('tariff').trim(), reqs: fd.get('reqs').trim(), agency: fd.get('agency').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
+      const bad = lines(fd.get('cas')).flatMap(l => (l.match(/\b\d{2,7}-\d{2}-\d\b/g) || []).filter(c => !casValid(c)));
+      if(bad.length && !confirm(`CAS 번호 검증 숫자가 맞지 않습니다: ${bad.join(', ')}\n그대로 저장할까요? (틀린 번호는 조회하지 않습니다)`)) return false;
+      Object.assign(item, {name: fd.get('name').trim(), hs: fd.get('hs').trim(), tariff: fd.get('tariff').trim(), reqs: fd.get('reqs').trim(), agency: fd.get('agency').trim(), notes: fd.get('notes').trim(), cas: fd.get('cas').trim(), raw: fd.get('raw').trim(), maker: fd.get('maker').trim(), country: fd.get('country').trim(), model: fd.get('model').trim(), updatedAt: nowIso()});
       if(isNew){item.createdAt = nowIso(); db.items.push(item); toast('품목을 추가했습니다.');}
       else toast('품목을 수정했습니다.');
     },

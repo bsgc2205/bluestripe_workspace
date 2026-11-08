@@ -9,6 +9,7 @@ function renderSidebar(){
   $('#cntMail').textContent = ma.total || ''; $('#cntMail').classList.toggle('warn', ma.overdue > 0); $('#cntMail').title = ma.overdue ? `${OVERDUE_H}시간 넘게 연결 안 된 대화 ${ma.overdue}건` : '';
   const ppN = (db.procProposals || []).filter(x => x.status === 'pending').length; if($('#cntManual')) $('#cntManual').textContent = ppN || '';
   if($('#cntInq')) $('#cntInq').textContent = (db.inquiries || []).length || '';
+  if($('#cntAlert')){ const n = openAlerts().length; $('#cntAlert').textContent = n || ''; $('#cntAlert').classList.toggle('warn', n > 0); }
   $('#cntInbox').textContent = (db.collectPending || []).length || '';
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
@@ -26,7 +27,7 @@ function renderSidebar(){
 function renderView(){
   hlRe = null;
   const v = $('#view');
-  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, manual:viewManual, inquiries:viewInquiries, itemdb:viewItemDb, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
+  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, manual:viewManual, inquiries:viewInquiries, itemdb:viewItemDb, alerts:viewAlerts, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
   if(route.name === 'client' && db.clients.some(c => c.id === route.id)) v.innerHTML = viewClient();
   else if(views[route.name]) v.innerHTML = views[route.name]();
   else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
@@ -190,7 +191,7 @@ function viewClient(){
     <section class="items">
       <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개</span></h3><button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></div>
       ${items.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th><th>요건 기관</th><th></th></tr></thead><tbody>
-        ${items.map(i => `<tr><td><strong>${esc(i.name)}</strong>${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`).join('')}
+        ${items.map(i => `<tr><td><strong>${esc(i.name)}</strong>${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`).join('')}
       </tbody></table></div>` : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}
     </section>
     ${amendSection(c)}
