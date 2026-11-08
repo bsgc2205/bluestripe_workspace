@@ -62,10 +62,19 @@ function summarize(svc, res, p){
   if(!res || !res.ok) return {err:(res && res.error) || '응답 없음'};
   const rows = (res.items || []).slice(0, 20);
   if(svc === 'ccct'){
-    const list = rows.map(r => ({law:pickVals(r, /lwor|law|법령/i).filter(v => !/^\d+$/.test(v))[0] || '', org:pickVals(r, /apre|inst|org|기관/i).filter(v => !/^[A-Z0-9]+$/.test(v))[0] || '', from:fmtYmd(pickVals(r, /strt|일자|dt$/i)[0] || ''), raw:rowText(r)}));
-    return {n:list.length, list, sig:list.map(x => x.law + '/' + x.org).sort().join('|')};
+    const list = rows.map(r => ({law:r.dcerCfrmLworNm || pickVals(r, /lwor|law|법령/i).filter(v => !/^[A-Z0-9]+$/.test(v))[0] || '', org:r.reqApreIttNm || pickVals(r, /apre|inst|org|기관/i).filter(v => !/^[A-Z0-9]+$/.test(v))[0] || '',
+      doc:r.reqCfrmIstmNm || '', from:fmtYmd(r.aplyStrtDt || pickVals(r, /strt|일자|dt$/i)[0] || ''), raw:[r.dcerCfrmLworNm, r.reqApreIttNm, r.reqCfrmIstmNm, r.aplyStrtDt && '적용 ' + fmtYmd(r.aplyStrtDt)].filter(Boolean).join(' · ') || rowText(r)}));
+    return {v:2, n:list.length, list, sig:list.map(x => x.law + '/' + x.org).sort().join('|')};
   }
-  if(svc === 'trrt') return {rows:rows.slice(0, 8).map(r => rowText(r, 10)), sig:rows.map(r => rowText(r, 20)).join('|')};
+  if(svc === 'trrt'){                                                     // UNI-PASS 관세율 기본조회: trrtTpcd·trrtTpNm(세율구분), trrt(세율), aplyStrtDt~aplyEndDt(적용기간)
+    const td = today().replace(/-/g, ''), cur = rows.filter(r => !r.aplyEndDt || String(r.aplyEndDt) >= td).filter(r => !r.aplyStrtDt || String(r.aplyStrtDt) <= td);
+    const use = (cur.length ? cur : rows).map(r => ({cd:r.trrtTpcd || '', nm:r.trrtTpNm || r.trrtTpcd || '', rate:r.trrt != null && r.trrt !== '' ? r.trrt : '', unit:r.prutXamt ? `${r.prutXamt}${r.basePrc ? '/' + r.basePrc : ''}` : ''}))
+      .sort((a, b) => (a.cd === 'A' ? -1 : b.cd === 'A' ? 1 : 0) || a.nm.localeCompare(b.nm, 'ko'));
+    const fmt = x => `${x.nm}${x.cd && x.nm !== x.cd ? '(' + x.cd + ')' : ''} ${x.rate !== '' ? x.rate + '%' : ''}${x.unit ? ' ' + x.unit : ''}`.trim();
+    const base = use.find(x => x.cd === 'A') || use[0], nums = use.map(x => parseFloat(x.rate)).filter(n => !isNaN(n)), low = nums.length ? Math.min(...nums) : null;
+    const head = base ? `기본 ${base.rate !== '' ? base.rate + '%' : base.unit}${low !== null && base.rate !== '' && low < parseFloat(base.rate) ? ` · 최저 ${low}%` : ''} · 세율 ${use.length}종` : '없음';
+    return {v:2, rows:[head, ...use.slice(0, 30).map(fmt)], sig:use.map(fmt).sort().join('|')};
+  }
   if(svc === 'chem'){
     const subs = rows.filter(r => r._p === undefined);
     const name = subs.map(r => pickVals(r, /kor|명|nm$/i)[0]).filter(Boolean)[0] || '';
@@ -75,7 +84,7 @@ function summarize(svc, res, p){
   if(svc === 'food'){                                                    // 원재료명이 같은 줄을 우선, 대분류와 사용조건으로 판단
     const nm = x => String(x || '').replace(/\s+/g, '').toLowerCase(), q = nm(p.name);
     const ex = rows.filter(r => nm(r.RPRSNT_RAWMTRL_NM) === q || String(r.RAWMTRL_NCKNM || '').split(/[,，]/).some(x => nm(x) === q)), use = (ex.length ? ex : rows).slice(0, 5);
-    const cls = [...new Set(use.map(r => String(r.LCLAS_NM || '').trim()).filter(Boolean))], cnd = [...new Set(use.map(r => String(r.USE_CND_NM || '').trim()).filter(Boolean))];
+    const cls = [...new Set(use.map(r => String(r.LCLAS_NM || '').trim()).filter(Boolean))], cnd = [...new Set(use.flatMap(r => [r.USE_CND_NM, r.USE_CND_STDR_CN]).map(x => String(x || '').trim()).filter(Boolean))];
     const verdict = [...cls, ...cnd.map(c => c.slice(0, 40))].slice(0, 4);
     const limited = cnd.some(c => /제한|한함|불가|금지|사용할\s*수\s*없/.test(c)) || (cls.length > 0 && !cls.some(c => /식품원료/.test(c)));
     return {name:p.name, n:rows.length, exact:ex.length, verdict, limited, raw:use.slice(0, 3).map(r => rowText(r, 10)), sig:verdict.join('|') + '|' + (ex.length ? 1 : 0)};
@@ -87,11 +96,11 @@ function itemAlerts(it, prev, cur){
   const nm = `${it.name} (${clientName(it.clientId)}${it.hs ? ', HS ' + it.hs : ''})`;
   const p0 = prev || {};
   if(cur.ccct && !cur.ccct.err){
-    const was = p0.ccct && !p0.ccct.err ? p0.ccct.sig : null;
+    const was = p0.ccct && !p0.ccct.err && p0.ccct.v === 2 ? p0.ccct.sig : null;   // 표시 형식이 바뀐 예전 결과와는 비교하지 않음
     if(was !== null && was !== cur.ccct.sig) addAlert({key:`ccct|${it.id}|${cur.ccct.sig}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 요건 변경: ${nm}`, text:`이전: ${(p0.ccct.list || []).map(x => x.law + ' ' + x.org).join(', ') || '없음'}\n현재: ${cur.ccct.list.map(x => x.law + ' ' + x.org).join(', ') || '없음'}`});
-    else if(was === null && cur.ccct.n && !String(it.reqs || '').trim()) addAlert({key:`ccct|${it.id}|${cur.ccct.sig}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 대상인데 품목 요건이 비어 있음: ${nm}`, text:cur.ccct.list.map(x => `${x.law} · ${x.org}${x.from ? ' (' + x.from + '부터)' : ''}`).join('\n')});
+    else if(was === null && cur.ccct.n && !String(it.reqs || '').trim()) addAlert({key:`ccct|${it.id}|${cur.ccct.sig}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 대상인데 품목 요건이 비어 있음: ${nm}`, text:cur.ccct.list.map(x => `${x.law} · ${x.org}${x.doc ? ' · ' + x.doc : ''}${x.from ? ' (' + x.from + '부터)' : ''}`).join('\n')});
   }
-  if(cur.trrt && !cur.trrt.err && p0.trrt && !p0.trrt.err && p0.trrt.sig !== cur.trrt.sig) addAlert({key:`trrt|${it.id}|${cur.trrt.sig.slice(0, 200)}`, kind:'trrt', ttype:'item', tid:it.id, title:`관세율 변경: ${nm}`, text:`이전: ${(p0.trrt.rows || []).join(' / ')}\n현재: ${cur.trrt.rows.join(' / ')}`});
+  if(cur.trrt && !cur.trrt.err && p0.trrt && !p0.trrt.err && p0.trrt.v === 2 && p0.trrt.sig !== cur.trrt.sig) addAlert({key:`trrt|${it.id}|${cur.trrt.sig.slice(0, 200)}`, kind:'trrt', ttype:'item', tid:it.id, title:`관세율 변경: ${nm}`, text:`이전: ${(p0.trrt.rows || []).join(' / ')}\n현재: ${cur.trrt.rows.join(' / ')}`});
   (cur.chem || []).filter(c => !c.err && c.flags.length).forEach(c => {
     if(/화관법|유해화학|유독|제한|금지|허가|사고대비/.test(REQ_TEXT(it))) return;
     addAlert({key:`chem|${it.id}|${c.cas}|${c.sig}`, kind:'chem', ttype:'item', tid:it.id, title:`화학물질 분류 확인: ${nm} — CAS ${c.cas}${c.name ? ' ' + c.name : ''}`, text:`분류: ${c.flags.join(', ')}\n품목 요건에 화관법 관련 내용이 없습니다.`});
@@ -194,6 +203,16 @@ async function checkLaws(silent){
       if(li.effect && li.effect > today() && addAlert({key:`lawf|${p.id}|${lawKey(r.name)}|${li.effect}`, kind:'law', ttype:'proc', tid:p.id, title:`시행 예정 개정: ${p.title} — ${r.name}`, text:`${li.effect} 시행 예정. 진행 중인 건에 적용 시점을 확인하세요.`})) na++;
     });
   });
+  db.records.filter(r => r.status !== '완료' && r.lawSnap).forEach(r => {        // 진행 중 업무: 시작 시점 법령과 달라졌으면 알림
+    (r.lawSnap.laws || []).forEach(x => {
+      const li = db.lawInfo[lawKey(x.name)];
+      if(!li || li.err || li.miss) return;
+      if(!x.effect && !x.promul){ x.effect = li.effect || ''; x.promul = li.promul || ''; return; }   // 시작 때 정보가 없었으면 지금 값으로 채움
+      if((li.promul || '') === (x.promul || '') && (li.effect || '') === (x.effect || '')) return;
+      if(addAlert({key:`lawr|${r.id}|${lawKey(x.name)}|${li.promul}|${li.effect}`, kind:'law', ttype:'rec', tid:r.id, title:`진행 중 업무에 법령 개정: ${r.caseNo || ''} ${r.title} — ${x.name}`,
+        text:`업무 시작(${r.lawSnap.at}) 기준 공포 ${x.promul || '-'} · 시행 ${x.effect || '-'} → 현재 공포 ${li.promul || '-'} · 시행 ${li.effect || '-'}${li.effect > today() ? ' (시행 예정)' : ''}\n이 건에 어느 법령을 적용할지 확인하세요.`})) na++;
+    });
+  });
   db.settings.lawCheckedAt = nowIso(); lawBusy = false;
   if(errs === list.length && list.length) db.settings.extPause = today();
   commit();
@@ -263,4 +282,10 @@ function autoExtChecks(){
     const due = db.items.filter(it => itemReqs(it).length && old((it.ext || {}).at, 30)).slice(0, 15);
     if(due.length) await checkItemsExt(due, true);
   })().catch(() => {});
+}
+function snapLaws(rec){
+  const p = (rec.procId && db.procedures.find(x => x.id === rec.procId)) || procFor(rec);
+  if(!p) return;
+  const laws = lawRefs(p).map(x => { const li = (db.lawInfo || {})[lawKey(x.name)] || {}; return {name:x.name, effect:li.err || li.miss ? '' : (li.effect || ''), promul:li.err || li.miss ? '' : (li.promul || '')}; });
+  if(laws.length) rec.lawSnap = {at:today(), procId:p.id, laws};
 }

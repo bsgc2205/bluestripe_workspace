@@ -17,7 +17,7 @@ function renderSidebar(){
   const groups = {long:[], other:[]};
   list.forEach(c => groups[relationOf(c).longTerm ? 'long' : 'other'].push(c));
   const cur = route.name === 'client' ? route.id : null;
-  const li = c => `<li><button data-go="client" data-id="${esc(c.id)}" class="${cur === c.id ? 'on' : ''}"><span>${esc(c.name)}</span><span class="cnt">${counts[c.id]||0}</span></button></li>`;
+  const li = c => `<li><button data-go="client" data-id="${esc(c.id)}" class="${cur === c.id ? 'on' : ''}"><span>${esc(c.name)}${cautionBadge(c)}</span><span class="cnt">${counts[c.id]||0}</span></button></li>`;
   const folder = (key, name, arr) => {
     const open = folderOpen[key] || arr.some(c => c.id === cur);
     return `<details class="folder" data-folder="${key}"${open ? ' open' : ''}><summary><span class="f-name">${name}</span><span class="cnt">${arr.length}</span></summary><ul>${arr.map(li).join('') || '<li class="hint side-empty">없음</li>'}</ul></details>`;
@@ -175,7 +175,7 @@ function viewClient(){
   const rel = relationOf(c);
   return `<header class="client-head">
       <div><h2>${esc(c.name)}</h2>${meta ? `<p class="client-meta">${meta}</p>` : ''}
-        <div class="rel" title="${esc(rel.basis)}">${rel.longTerm ? '<span class="badge-long">1년 이상 거래</span>' : '<span class="badge-other">1년 미만·확인 필요</span>'}<span>${esc(relationText(rel))}</span></div></div>
+        <div class="rel" title="${esc(rel.basis)}">${rel.longTerm ? '<span class="badge-long">1년 이상 거래</span>' : '<span class="badge-other">1년 미만·확인 필요</span>'}<span>${esc(relationText(rel))}</span>${cautionBadge(c)}</div>${(() => { const x = clientCaution(c); return x.level === '보통' ? '' : `<p class="caution-why">주의 등급 ${esc(x.level)}: ${esc(x.reasons.join(' · '))}</p>`; })()}</div>
       <div class="client-act">
         
         <a class="btn" href="${esc(drive)}" target="_blank" rel="noopener noreferrer">Drive에서 찾기</a>
@@ -211,11 +211,49 @@ function viewClient(){
     </div>`;
 }
 
+/* ---------- 업체 주의 등급 (최근 12개월) ----------
+   주의: 불합격·요건 미비·원산지 불인정이 있거나, 정정·보완 비율 30% 이상(3건 이상 중) 등 점수 2 이상.
+   관심: 정정·보완 2건 이상(15%↑)·특이 30%↑·공공데이터 확인 알림·KC 확인 필요 중 하나. 업체 정보에서 직접 지정하면 그 값을 씀. */
+let cautCache = {stamp:'', byClient:new Map(), res:new Map()};
+function clientCaution(c){
+  const stamp = (db.meta.updatedAt || '') + '|' + db.records.length + '|' + ((db.alerts || []).filter(a => a.status === 'open').length);
+  if(cautCache.stamp !== stamp){                                       // 화면을 그릴 때마다 업체 수 × 기록 수를 다시 세지 않도록 한 번에 묶어 둠
+    const since = addPeriod(today(), -12, 'm'), by = new Map();
+    db.records.forEach(r => { if(recDate(r) >= since){ if(!by.has(r.clientId)) by.set(r.clientId, []); by.get(r.clientId).push(r); } });
+    cautCache = {stamp, byClient:by, res:new Map()};
+  }
+  if(cautCache.res.has(c.id) && !c.cautionLevel) return cautCache.res.get(c.id);
+  const out = clientCautionCalc(c, cautCache.byClient.get(c.id) || []);
+  cautCache.res.set(c.id, out);
+  return out;
+}
+function clientCautionCalc(c, recs){
+  const reasons = [];
+  const withCause = recs.filter(r => causesOf(r).length), hard = recs.filter(r => causesOf(r).some(k => CAUSE_HARD.includes(k))), sp = recs.filter(r => r.special);
+  const rate = recs.length ? withCause.length / recs.length : 0;
+  let score = 0;
+  if(hard.length){ score += 2; reasons.push(`불합격·요건 미비·원산지 불인정 ${hard.length}건`); }
+  if(recs.length >= 3 && rate >= 0.3){ score += 2; reasons.push(`정정·보완 ${Math.round(rate * 100)}% (${withCause.length}/${recs.length}건)`); }
+  else if(withCause.length >= 2 && rate >= 0.15){ score += 1; reasons.push(`정정·보완 ${withCause.length}건`); }
+  if(recs.length >= 3 && sp.length / recs.length >= 0.3){ score += 1; reasons.push(`특이 처리 ${sp.length}/${recs.length}건`); }
+  const itemIds = new Set(db.items.filter(i => i.clientId === c.id).map(i => i.id));
+  const al = typeof openAlerts === 'function' ? openAlerts().filter(a => a.ttype === 'item' && itemIds.has(a.tid)) : [];
+  if(al.length){ score += 1; reasons.push(`확인 알림 ${al.length}건`); }
+  const kcBad = (db.kc || []).filter(k => k.c === c.id && k.chk && (k.chk.st === 'none' || k.chk.st === 'model')).length;
+  if(kcBad){ score += 1; reasons.push(`KC 확인 필요 ${kcBad}건`); }
+  let level = score >= 2 ? '주의' : score === 1 ? '관심' : '보통';
+  if(c.cautionLevel){ level = c.cautionLevel; reasons.unshift('직접 지정' + (c.cautionNote ? ': ' + c.cautionNote : '')); }
+  return {level, reasons};
+}
+function cautionBadge(c){
+  const x = clientCaution(c);
+  return x.level === '보통' ? '' : `<span class="caution ${x.level === '주의' ? 'hi' : 'mid'}" title="${esc(x.reasons.join('\n'))}">${x.level}</span>`;
+}
 function amendSection(c){
   const cc = clientCauses(c.id);
   if(!cc.list.length) return '';
   return `<section class="amend">
-    <div class="sec-head"><h3>정정 주의 <span class="cnt">정정·보완 기록 ${cc.records}건 기준</span></h3></div>
+    <div class="sec-head"><h3>정정·보완 주의 <span class="cnt">정정·보완·불합격 기록 ${cc.records}건 기준</span></h3></div>
     <div class="chips">${cc.list.map(([k,n]) => `<span class="chip">${esc(k)}<b>${n}</b></span>`).join('')}</div>
     <h4 class="sub">신고 전 점검표</h4>
     <ol class="pre-check">${cc.list.map(([k]) => `<li>${esc(CAUSE_HINTS[k])}</li>`).join('')}</ol>
@@ -267,7 +305,7 @@ async function scanContacts(cid){
 function normName(s){return String(s || '').replace(/\(예시\)|주식회사|유한회사|\(주\)|\(유\)|㈜|\s/g, '').toLowerCase();}
 /* ---------- 업체 자동 인식 ----------
    1순위 담당자 메일 주소·메일 도메인 검색어, 2순위 검색어(약칭), 3순위 업체명.
-   한글 두 글자 이하나 영문 이름은 앞뒤가 다른 글자와 붙어 있으면 인정하지 않는다(예: '레이'는 '디스플레이', '트레이'에 걸리지 않음).
+   한글 두 글자 이하나 영문 이름은 앞뒤가 다른 글자와 붙어 있으면 인정하지 않는다(예: 두 글자 약칭이 더 긴 단어 안에 들어 있는 경우는 무시).
    같은 순위에서 길이가 같은 다른 업체가 함께 걸리면 추측하지 않고 미분류로 둔다. */
 const FREE_MAIL = ['gmail.com','naver.com','daum.net','hanmail.net','nate.com','kakao.com','outlook.com','hotmail.com','yahoo.com','yahoo.co.kr','icloud.com','live.com'];
 function kwList(c){return String(c.keyword || '').split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);}
@@ -310,7 +348,7 @@ function viewClientList(){
       <div class="client-act"><button class="primary" data-biz-import>사업자등록증 폴더 반영</button><button class="ghost" data-new-client>업체 추가</button></div></header>
     ${list.length ? `<div class="table-wrap" style="margin-top:1.25rem"><table class="grid"><thead><tr><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>업무담당자</th><th>관련업무</th></tr></thead><tbody>
       ${list.map(c => { const cc = (c.contacts || []).slice(0,2), ty = types(c), rw = (c.recentWork || []).slice(0,2); return `<tr>
-        <td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong></button>${c.bizNo ? `<div class="hint">${esc(c.bizNo)}</div>` : ''}</td>
+        <td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong></button>${cautionBadge(c)}${c.bizNo ? `<div class="hint">${esc(c.bizNo)}</div>` : ''}</td>
         <td>${esc(c.rep || '')}</td>
         <td class="pre">${esc(c.address || '')}</td>
         <td>${cc.length ? cc.map(p => `<div>${esc(p.name || '')} <span class="hint">${esc(p.email)}</span></div>`).join('') : esc(c.contact || '')}</td>

@@ -243,10 +243,17 @@ async function checkImport(r, u){
     }
   }
   if(u.released) (r.deadlines || []).filter(x => x.kind === '장치기간 만료').forEach(x => x.done = true);
+  r.deadlines = r.deadlines || [];
+  if(u.shedIn && !u.cleared && !u.dclrNo && !r.deadlines.some(x => x.kind === '수입신고 기한(반입 후)'))   // 반입 후 30일 (지정 보세구역 물품, 넘기면 가산세)
+    r.deadlines.push({id:uid(), kind:'수입신고 기한(반입 후)', base:u.shedIn, due:addPeriod(u.shedIn, 30, 'd'), done:false, auto:true});
+  if(u.cleared || u.dclrNo) r.deadlines.filter(x => x.kind === '수입신고 기한(반입 후)' && x.auto).forEach(x => x.done = true);
   if(decl && /담보/.test([r.title, r.summary, (r.tags || []).join(' '), (r.causes || []).join(' ')].join(' '))){
     try{ const j = await uni('API050', {impDclrNo:decl}); const nm = pick(j, 'mgPrcsStcdNm'); if(nm) u.bond = nm + (pick(j, 'mgAprvDt') ? ' ' + fmtYmd(pick(j, 'mgAprvDt')).slice(5) : ''); }
     catch(e){ u.err050 = e.message; }
   }
+  if(u.clearedAt && u.paid === false && !r.deadlines.some(x => x.kind === '관세 납부기한'))                 // 수리 후 미납이면 납부기한(수리일 + 15일), 납부 확인되면 처리 표시
+    r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:addPeriod(u.clearedAt, 15, 'd'), done:false, auto:true});
+  if(u.paid) r.deadlines.filter(x => x.kind === '관세 납부기한' && x.auto).forEach(x => x.done = true);
   if(u.cleared && (u.paid || u.released)) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || today(), `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : ''}${u.released ? ', 반출신고' : ''}`);
 }
 async function checkExport(r, u){

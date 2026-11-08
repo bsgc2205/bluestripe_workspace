@@ -21,9 +21,11 @@ function relatedHTML(t){
   const sims = similarRecords(t, 5), simIds = new Set(sims.map(x => x.r.id));
   const inqs = similarInquiries(t, sims, 3);
   const others = db.records.filter(r => r.id !== t.id && r.clientId !== t.clientId && r.type === t.type && r.special && r.status === '완료' && !simIds.has(r.id)).sort(byDateDesc).slice(0, 3);
-  if(!item && !procs.length && !open.length && !sims.length && !inqs.length && !others.length) return '<p class="hint">비슷한 과거 건과 절차가 아직 없습니다. 제목에 품목명을 넣으면 다른 업체의 같은 품목 건도 찾아 줍니다.</p>';
+  const cl = db.clients.find(c => c.id === t.clientId), cau = cl ? clientCaution(cl) : null;
+  const cauHtml = cau && cau.level !== '보통' ? `<p class="caution-why">${cautionBadge(cl)} 업체 주의 등급 — ${esc(cau.reasons.join(' · '))}</p>` : '';
+  if(!item && !procs.length && !open.length && !sims.length && !inqs.length && !others.length) return cauHtml + '<p class="hint">비슷한 과거 건과 절차가 아직 없습니다. 제목에 품목명을 넣으면 다른 업체의 같은 품목 건도 찾아 줍니다.</p>';
   const li = (r, extra = '') => `<li>${r.special ? '<span class="stamp sm">특이</span> ' : ''}<span class="rec-date">${esc(recDate(r))}</span>${esc(r.title)}${extra}${r.special && r.specialNote ? `<div class="hint" style="white-space:pre-wrap">${esc(r.specialNote)}</div>` : ''}</li>`;
-  return `${item ? `<h4>품목 요건: ${esc(item.name)}</h4><ul><li>${item.hs ? `HS ${esc(item.hs)}` : ''}${item.tariff ? `, ${esc(item.tariff)}` : ''}${item.reqs ? `<div class="hint" style="white-space:pre-wrap">${esc(item.reqs)}</div>` : ''}${item.agency ? `<div class="hint">기관: ${esc(item.agency)}</div>` : ''}</li></ul>` : ''}
+  return `${cauHtml}${item ? `<h4>품목 요건: ${esc(item.name)}</h4><ul><li>${item.hs ? `HS ${esc(item.hs)}` : ''}${item.tariff ? `, ${esc(item.tariff)}` : ''}${item.reqs ? `<div class="hint" style="white-space:pre-wrap">${esc(item.reqs)}</div>` : ''}${item.agency ? `<div class="hint">기관: ${esc(item.agency)}</div>` : ''}</li></ul>` : ''}
     ${open.length ? `<h4>진행 중인 같은 업체·유형 건 (중복 확인)</h4><ul>${open.map(r => li(r, ` <span class="hint">${esc(r.caseNo || '')} ${esc(r.status)}</span>`)).join('')}</ul>` : ''}
     ${procs.length ? `<h4>참고할 절차</h4><ul>${procs.map(p => `<li><strong>${esc(p.title)}</strong> <span class="hint">${p.clientId ? '업체 전용' : '공통'}</span>${(p.steps || []).length ? `<ol class="mini-ol">${p.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}${p.cautions ? `<div class="hint" style="white-space:pre-wrap">주의: ${esc(p.cautions)}</div>` : ''}</li>`).join('')}</ul>` : ''}
     ${sims.length ? `<h4>${esc(simSummary(sims))}</h4><ul class="sim" data-sims="${sims.length}">${sims.map(x => simItemHTML(x, {copy:'data-x-sim', inDialog:true})).join('')}</ul>` : ''}
@@ -78,6 +80,7 @@ function openRecord(r, preset = {}){
       <p class="hint sim-hint" data-x="simHint" hidden></p>
       <label>진행 요약<textarea name="summary" rows="4" placeholder="진행 순서, 제출 서류, 소요 기간 등. 완료 시 비워 두면 체크리스트로 자동 작성됩니다.">${esc(rec.summary)}</textarea></label>
       <label class="check"><input type="checkbox" name="special"${rec.special ? ' checked' : ''}> 일반 절차와 다르게 처리함</label>
+      ${rec.lawSnap ? `<p class="hint">업무 시작(${esc(rec.lawSnap.at)}) 시점 근거 법령: ${esc(rec.lawSnap.laws.map(x => x.name + (x.effect ? ' 시행 ' + x.effect : '')).join(', '))}</p>` : ''}
       <div class="special-fields"><label>특이 처리 내용<textarea name="specialNote" rows="4" placeholder="무엇이 달랐는지 / 어떻게 해결했는지 / 다음에 적용할 점">${esc(rec.specialNote)}</textarea></label></div>
       <div class="dlg-section">
         <h4>UNI-PASS 추적 번호 (있는 것만)</h4>
@@ -141,6 +144,7 @@ function openRecord(r, preset = {}){
       });
       rec.updatedBy = me ? me.id : '';
       if(usedProc) rec.procId = usedProc;
+      if(!rec.lawSnap && status !== '완료') snapLaws(rec);                // 업무 시작 시점의 근거 법령 시행일 기록 (사후 검증용)
       if(status === '완료' && !wasDone){ const pp = proposeFromRecord(rec); if(pp) setTimeout(() => toast('절차와 다른 점이 있어 업무 매뉴얼에 개정 제안을 올렸습니다.'), 900); }
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
@@ -301,7 +305,7 @@ function openLetter(clientId){
       <label data-x="itemWrap">정정할 기재사항<input name="item" value="선적일자"></label>
       <div data-x="expWrap">
         <p class="hint" style="margin:.6rem 0 .1rem">정정 항목</p>
-        <div class="cause-grid">${CAUSES.filter(k => k !== '증빙 보완').map(k => `<label class="check"><input type="checkbox" name="ecause" value="${esc(k)}"> ${esc(k)}</label>`).join('')}</div>
+        <div class="cause-grid">${CAUSES.filter(k => k !== '증빙 보완' && !CAUSE_HARD.includes(k)).map(k => `<label class="check"><input type="checkbox" name="ecause" value="${esc(k)}"> ${esc(k)}</label>`).join('')}</div>
         <label>정정 내용 (항목 | 정정 전 | 정정 후, 한 줄에 하나)<textarea name="rows" rows="3" placeholder="총중량 | 1,250 KG | 1,288 KG"></textarea></label>
         <label>첨부 서류<input name="attach"></label>
       </div>
@@ -496,11 +500,13 @@ function openClient(c){
         <label>개업일<input type="date" name="openDate" value="${esc(cl.openDate || '')}"></label>
         <label>사업장 주소<input name="address" value="${esc(cl.address || '')}"></label>
       </div>
+      <div class="row2"><label>주의 등급<select name="cautionLevel">${opts([['', '자동 (최근 12개월 기록 기준)'], ['주의', '주의 (직접 지정)'], ['관심', '관심 (직접 지정)'], ['보통', '보통 (직접 지정)']], cl.cautionLevel || '')}</select></label><label>주의 메모<input name="cautionNote" value="${esc(cl.cautionNote || '')}" placeholder="직접 지정한 이유"></label></div>
       <label>메모<textarea name="notes" rows="4" placeholder="거래 특성, 합의 사항, 자주 생기는 이슈">${esc(cl.notes)}</textarea></label>`,
     onSave(fd){
       Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), rep: fd.get('rep').trim(), settleMode: fd.get('settleMode') || 'each', keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
       cl.relation = {since: fd.get('since') || '', last: fd.get('last') || '', basis: fd.get('basis').trim()};
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim();
+      cl.cautionLevel = fd.get('cautionLevel') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
       if(isNew){cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');}
       else toast('업체 정보를 수정했습니다.');
       route = {name:'client', id:cl.id}; $('#q').value = '';

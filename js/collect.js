@@ -65,14 +65,14 @@ async function runCollect(manual){
     const s2 = applyStatus(j.status);
     if(r || s2){
       commit();
-      const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건, 미분류 ${r.pend}건`, s2 && `토스템 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
+      const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건, 미분류 ${r.pend}건`, s2 && `주간 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
       toast('자동 수집: ' + msg);
     } else if(manual) toast('새로 반영할 자료가 없습니다.');
   }catch(e){ if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
 }
 function viewInbox(){
   const pend = db.collectPending || [];
-  return `<header class="client-head"><div><h2>자동 수집</h2><p class="client-meta">매일 08시 수입·수출 폴더, 매주 월요일 15시 BSGC-Backup 전체 변동사항과 토스템 주간 진행현황을 확인해 업체 기록으로 넣습니다. 업체를 알아보지 못한 자료만 여기 남습니다.${db.settings.statusDate ? ` 진행현황 반영 기준일 ${esc(db.settings.statusDate)}.` : ''}</p></div>
+  return `<header class="client-head"><div><h2>자동 수집</h2><p class="client-meta">매일 08시 수입·수출 폴더, 매주 월요일 15시 BSGC-Backup 전체 변동사항과 업체 주간 진행현황을 확인해 업체 기록으로 넣습니다. 업체를 알아보지 못한 자료만 여기 남습니다.${db.settings.statusDate ? ` 진행현황 반영 기준일 ${esc(db.settings.statusDate)}.` : ''}</p></div>
       <div class="client-act"><button class="primary" data-collect-now>지금 확인</button></div></header>
     ${pend.length ? `<div class="table-wrap" style="margin-top:1rem"><table class="grid"><thead><tr><th>자료</th><th>폴더</th><th>올린 날</th><th>메일</th><th>업체 지정</th></tr></thead><tbody>
       ${pend.map((x,i) => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}${(x.special || []).length ? ` <span class="stamp sm">특이</span>` : ''}</td><td>${esc(x.kind)} / ${esc(x.path)}</td><td>${esc(x.created)}</td><td>${x.mail ? esc(x.mail.subject) : ''}</td>
