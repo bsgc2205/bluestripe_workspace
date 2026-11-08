@@ -2,8 +2,10 @@
 /* ---------- dialogs ---------- */
 function openDialog({title, body, onSave, onDelete, onOpen, saveLabel = '저장'}){
   const dlg = $('#dlg');
+  const delNote = onDelete && !isAdmin() ? '<span class="hint">삭제는 관리자만 할 수 있습니다</span>' : '';
+  if(!isAdmin()) onDelete = null;                                       // 업체·기록·절차·품목 등 삭제는 관리자 전용
   dlg.innerHTML = `<form class="dlg"><h3>${esc(title)}</h3><div class="dlg-body">${body}</div>
-    <footer>${onDelete ? '<button type="button" class="danger" data-act="del">삭제</button>' : ''}<span class="sp"></span>
+    <footer>${onDelete ? '<button type="button" class="danger" data-act="del">삭제</button>' : delNote}<span class="sp"></span>
     <button type="button" class="ghost" data-act="cancel">취소</button><button type="submit" class="primary">${esc(saveLabel)}</button></footer></form>`;
   const f = dlg.querySelector('form');
   f.addEventListener('submit', e => {e.preventDefault(); if(onSave(new FormData(f), f) === false) return; dlg.close(); commit();});
@@ -73,13 +75,14 @@ function openRecord(r, preset = {}){
         <label>신고번호<input name="refNo" value="${esc(rec.refNo)}" placeholder="수입·수출 신고번호"></label>
       </div>
       <div class="row2">
-        <label>담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], rec.assignee || (isNew && me ? me.id : ''))}</select></label>
+        <label>담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], rec.assignee || (isNew ? (clientAssignee(rec.clientId) || (me ? me.id : '')) : ''))}</select></label>
         <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
       </div>
       <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
       <p class="hint sim-hint" data-x="simHint" hidden></p>
       <label>진행 요약<textarea name="summary" rows="4" placeholder="진행 순서, 제출 서류, 소요 기간 등. 완료 시 비워 두면 체크리스트로 자동 작성됩니다.">${esc(rec.summary)}</textarea></label>
       <label class="check"><input type="checkbox" name="special"${rec.special ? ' checked' : ''}> 일반 절차와 다르게 처리함</label>
+      ${(rec.history || []).length ? `<details class="dlg-section hist"><summary class="hint">변경 이력 ${rec.history.length}건</summary><ul>${rec.history.slice().reverse().map(h => `<li><span class="hint">${esc(String(h.at).slice(0, 16).replace('T', ' '))} ${esc(accountName(h.by || '') || '자동')}</span> ${esc(h.text)}</li>`).join('')}</ul></details>` : ''}
       ${rec.lawSnap ? `<p class="hint">업무 시작(${esc(rec.lawSnap.at)}) 시점 근거 법령: ${esc(rec.lawSnap.laws.map(x => x.name + (x.effect ? ' 시행 ' + x.effect : '')).join(', '))}</p>` : ''}
       <div class="special-fields"><label>특이 처리 내용<textarea name="specialNote" rows="4" placeholder="무엇이 달랐는지 / 어떻게 해결했는지 / 다음에 적용할 점">${esc(rec.specialNote)}</textarea></label></div>
       <div class="dlg-section">
@@ -119,6 +122,7 @@ function openRecord(r, preset = {}){
       </div>
       <aside class="related" aria-label="참고 자료"></aside>`,
     onSave(fd){
+      const before = isNew ? null : histSnap(rec);
       const t = nowIso(), status = fd.get('status'), wasDone = rec.status === '완료' && !isNew;
       if(status === '완료' && !fd.get('date')){toast('완료 상태는 완료일이 필요합니다.'); return false;}
       const rawLinks = lines(fd.get('links'));
@@ -144,7 +148,8 @@ function openRecord(r, preset = {}){
       });
       rec.updatedBy = me ? me.id : '';
       if(usedProc) rec.procId = usedProc;
-      if(!rec.lawSnap && status !== '완료') snapLaws(rec);                // 업무 시작 시점의 근거 법령 시행일 기록 (사후 검증용)
+      if(!rec.lawSnap && status !== '완료') snapLaws(rec);
+      if(isNew) addHist(rec, '기록 생성' + (preset.thread || preset.mail ? ' (customs@ 메일에서)' : '')); else { const ch = histDiff(before, histSnap(rec)); if(ch) addHist(rec, ch); }                // 업무 시작 시점의 근거 법령 시행일 기록 (사후 검증용)
       if(status === '완료' && !wasDone){ const pp = proposeFromRecord(rec); if(pp) setTimeout(() => toast('절차와 다른 점이 있어 업무 매뉴얼에 개정 제안을 올렸습니다.'), 900); }
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
@@ -196,7 +201,9 @@ function openRecord(r, preset = {}){
         if(p.assignee && accounts.some(a => a.id === p.assignee)) N('assignee').value = p.assignee;
         if((p.dlKinds || []).length){ X('dlKind').value = p.dlKinds[0]; prev(); X('dlPrev').textContent = `이 절차의 기한: ${p.dlKinds.join(', ')} — 기준일이 정해지면 위에서 추가하세요.`; }
       };
-      N('clientId').addEventListener('change', () => {fillItems(''); fillProcs(); upd();});
+      let asgTouched = !isNew;
+      N('assignee').addEventListener('change', () => { asgTouched = true; });
+      N('clientId').addEventListener('change', () => {fillItems(''); fillProcs(); upd(); if(!asgTouched){ const a = clientAssignee(N('clientId').value); if(a) N('assignee').value = a; }});
       N('type').addEventListener('change', () => {fillProcs(); upd();});
       itemSel.addEventListener('change', upd);
       N('special').addEventListener('change', tog);
@@ -500,13 +507,14 @@ function openClient(c){
         <label>개업일<input type="date" name="openDate" value="${esc(cl.openDate || '')}"></label>
         <label>사업장 주소<input name="address" value="${esc(cl.address || '')}"></label>
       </div>
+      <div class="row2"><label>기본 담당자 (메일로 업무 시작할 때 자동 지정)<select name="defaultAssignee">${opts([['', '지정 안 함 (작성자)'], ...accounts.map(a => [a.id, a.name])], cl.defaultAssignee || '')}</select></label><span></span></div>
       <div class="row2"><label>주의 등급<select name="cautionLevel">${opts([['', '자동 (최근 12개월 기록 기준)'], ['주의', '주의 (직접 지정)'], ['관심', '관심 (직접 지정)'], ['보통', '보통 (직접 지정)']], cl.cautionLevel || '')}</select></label><label>주의 메모<input name="cautionNote" value="${esc(cl.cautionNote || '')}" placeholder="직접 지정한 이유"></label></div>
       <label>메모<textarea name="notes" rows="4" placeholder="거래 특성, 합의 사항, 자주 생기는 이슈">${esc(cl.notes)}</textarea></label>`,
     onSave(fd){
       Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), rep: fd.get('rep').trim(), settleMode: fd.get('settleMode') || 'each', keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
       cl.relation = {since: fd.get('since') || '', last: fd.get('last') || '', basis: fd.get('basis').trim()};
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim();
-      cl.cautionLevel = fd.get('cautionLevel') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
+      cl.cautionLevel = fd.get('cautionLevel') || ''; cl.defaultAssignee = fd.get('defaultAssignee') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
       if(isNew){cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');}
       else toast('업체 정보를 수정했습니다.');
       route = {name:'client', id:cl.id}; $('#q').value = '';
@@ -538,4 +546,18 @@ function openClient(c){
       };
     }
   });
+}
+
+/* ---------- 기록 변경 이력 ---------- */
+function clientAssignee(cid){ const c = db.clients.find(x => x.id === cid); return c && c.defaultAssignee && accounts.some(a => a.id === c.defaultAssignee) ? c.defaultAssignee : ''; }
+function addHist(r, text){ r.history = [...(r.history || []), {at:nowIso(), by:me ? me.id : '', text:String(text).slice(0, 300)}].slice(-40); }
+function histSnap(r){ return {status:r.status, assignee:r.assignee || '', clientId:r.clientId, type:r.type, title:r.title, refNo:r.refNo || '', bl:r.bl || '', startDate:r.startDate || '', date:r.date || '', special:!!r.special,
+  causes:(Array.isArray(r.causes) ? r.causes : []).join(','), steps:(r.checklist || []).length, docs:(r.docs || []).length, dls:(r.deadlines || []).length, fee:r.fee || 0, summary:r.summary || ''}; }
+function histDiff(a, b){
+  if(!a) return '';
+  const nm = {status:'상태', assignee:'담당', clientId:'업체', type:'유형', title:'제목', refNo:'신고번호', bl:'B/L', startDate:'접수일', date:'완료일', special:'특이', causes:'원인', steps:'단계 수', docs:'서류 수', dls:'기한 수', fee:'수수료'};
+  const val = (k, v) => (v === undefined || v === null) ? '없음' : k === 'assignee' ? (v ? assigneeName(v) : '없음') : k === 'clientId' ? clientName(v) : k === 'special' ? (v ? '예' : '아니오') : (v === '' ? '없음' : v);
+  const out = Object.keys(nm).filter(k => String(a[k] ?? '') !== String(b[k] ?? '')).map(k => `${nm[k]} ${val(k, a[k])} → ${val(k, b[k])}`);
+  if(a.summary !== b.summary) out.push('진행 요약 수정');
+  return out.join(', ');
 }

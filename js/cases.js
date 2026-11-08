@@ -90,6 +90,7 @@ function setStage(r, k, date, by){
   r.stage = r.stage || {};
   if(r.stage[k]) return false;
   r.stage[k] = String(date || today()).slice(0, 10); r.stage[k + 'By'] = by;
+  addHist(r, `${k === 'customs' ? '통관완료' : '정산완료'} ${r.stage[k]} (${by})`);
   r.updatedAt = nowIso();
   return true;
 }
@@ -127,6 +128,7 @@ function autoComplete(r, why){
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
   const reason = [`통관완료 ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
   r.autoDone = {at:nowIso(), reason};
+  addHist(r, '자동 완료: ' + reason);
   proposeFromRecord(r);
   if(!String(r.summary || '').trim()){
     const ck = (r.checklist || []);
@@ -148,11 +150,13 @@ function evalStages(){
 function unsetStage(r, k){
   if(!r.stage) return;
   delete r.stage[k]; delete r.stage[k + 'By'];
+  addHist(r, `${k === 'customs' ? '통관완료' : '정산완료'} 표시 취소`);
   if(r.autoDone) undoAuto(r);
   r.updatedAt = nowIso();
 }
 function undoAuto(r){
   r.status = '진행중'; r.date = ''; r.autoDoneOff = true;
+  addHist(r, '자동 완료 되돌림');
   if(String(r.summary || '').startsWith('[자동 완료]')) r.summary = '';
   delete r.autoDone; r.updatedAt = nowIso();
 }

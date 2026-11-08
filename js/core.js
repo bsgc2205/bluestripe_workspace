@@ -223,11 +223,20 @@ async function boot(){
   }
   showGate(remoteBlob || localBlob || serverBlob ? 'unlock' : 'new');
 }
+function isAdmin(){ return !!(me && me.role === 'admin'); }
+/* 로그인 화면: '새 대장 만들기'·'다른 대장 파일 열기'는 주소 끝에 #admin을 붙였을 때만 보임(직원이 실수로 별도 대장을 만들지 않도록) */
+function adminGate(){ return /admin/.test(location.hash || ''); }
 function showGate(mode){
+  if(mode === 'new' && !adminGate()){                                  // 처음 쓰는 PC: 서버 주소로 연결만 보여 줌
+    $('#gateUnlock').hidden = true; $('#gateNew').hidden = true; $('#gateSync').hidden = false;
+    $('#gateToNew').hidden = true; $('#gateToUnlock').hidden = true; $('#gateFileLink').hidden = true;
+    $('#gsMsg').textContent = '이 PC에서 처음 엽니다. 관리자에게 받은 웹 앱 주소와 토큰을 넣으세요.';
+    $('#gsEp').focus(); return;
+  }
   const u = mode === 'unlock';
   $('#gateUnlock').hidden = !u; $('#gateNew').hidden = u;
-  $('#gateToNew').hidden = !u; $('#gateToUnlock').hidden = u || !(remoteBlob || localBlob || serverBlob);
-  $('#gateFileLink').hidden = !u;
+  $('#gateToNew').hidden = !u || !adminGate(); $('#gateToUnlock').hidden = u || !(remoteBlob || localBlob || serverBlob);
+  $('#gateFileLink').hidden = !u || !adminGate();
   try{const lu = localStorage.getItem(LS_KEY + '-uid'); if(lu && !$('#uid').value) $('#uid').value = lu;}catch{}
   (u ? ($('#uid').value ? $('#pw') : $('#uid')) : $('#nid')).focus();
 }
@@ -299,7 +308,7 @@ let mineOnly = false;
 function updateSaveState(){
   const el = $('#saveState'); let text, dirty = false;
   const bx = $('#btnExport');
-  if(bx){ bx.textContent = sync.on ? '파일 백업' : '암호화 파일 받기'; bx.className = sync.on ? 'ghost' : 'primary'; }
+  if(bx){ bx.textContent = '암호화 파일 받기'; bx.className = 'primary'; bx.hidden = !!sync.on; }   // Drive 자동 저장 중이면 데이터 메뉴의 '백업'으로 충분
   if(sync.on || sync.state === 'mismatch'){
     const d = sync.at ? new Date(sync.at) : null, p2 = n => String(n).padStart(2, '0');
     const at = d && !isNaN(d) ? `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}` : '';

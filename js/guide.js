@@ -198,7 +198,7 @@ function viewInquiries(){
   return `<header class="client-head"><div><h2>세관 질의 DB</h2><p class="client-meta">세관에 문의하거나 세관이 요구한 내용과 답변, 근거를 모아 둡니다. 같은 HS·업체·키워드의 새 건을 진행할 때 유사 업무 가이드에 함께 뜹니다.</p></div>
       <div class="client-act"><input type="search" id="inqQ" value="${esc(inqQ)}" placeholder="질의·답변·세관·HS 검색"><button class="primary" data-inq-new>질의 기록</button></div></header>
     <div class="chips" role="group" aria-label="분류">${['', ...INQ_TOPICS].filter(t => !t || cnt[t]).map(t => `<button class="chip${t === inqTopic ? ' on' : ''}" data-inq-topic="${esc(t)}">${esc(t || '전체')}${t ? `<b>${cnt[t]}</b>` : ''}</button>`).join('')}</div>
-    <div class="narrow">${list.length ? list.map(inquiryHTML).join('') : `<p class="empty">${all.length ? '조건에 맞는 질의가 없습니다.' : '아직 기록한 세관 질의가 없습니다. 품목분류·요건·과세가격 등 세관과 주고받은 질의를 남겨 두면 다음 건에서 바로 찾을 수 있습니다. 진행 중 기록의 ‘질의 기록’ 버튼으로도 남길 수 있습니다.'}</p>`}</div>`;
+    <div class="card-grid">${list.length ? list.map(inquiryHTML).join('') : `<p class="empty">${all.length ? '조건에 맞는 질의가 없습니다.' : '아직 기록한 세관 질의가 없습니다. 품목분류·요건·과세가격 등 세관과 주고받은 질의를 남겨 두면 다음 건에서 바로 찾을 수 있습니다. 진행 중 기록의 ‘질의 기록’ 버튼으로도 남길 수 있습니다.'}</p>`}</div>`;
 }
 function openInquiry(q, preset = {}){
   const isNew = !q, rec = preset.rec || null;

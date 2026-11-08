@@ -46,7 +46,7 @@ function viewAlerts(){
   const card = a => `<article class="inq${a.status === 'open' ? '' : ' done'}"><div class="inq-head"><span class="tag type">${esc(EXT_NAMES[a.kind] || a.kind)}</span><strong>${esc(a.title)}</strong><span class="hint">${esc(a.at.slice(0, 10))}</span><span class="sp"></span>${alertTargetHTML(a)}${a.status === 'open' ? ` <button class="mini strong" data-alert-done="${esc(a.id)}">확인함</button>` : `<span class="hint">확인 ${esc(accountName(a.doneBy || ''))} ${esc((a.doneAt || '').slice(0, 10))}</span>`}</div>${a.text ? `<p class="pre hint" style="margin:.4rem 0 0">${esc(a.text)}</p>` : ''}</article>`;
   return `<header class="client-head"><div><h2>확인 알림</h2><p class="client-meta">공공데이터 확인에서 바뀐 점(법령 개정, 세관장확인 요건·관세율 변경, 화학물질 분류, 식품원재료 판정)을 모았습니다. 내용을 보고 품목 요건·절차를 고친 뒤 ‘확인함’을 누르세요.</p></div>
       <div class="client-act">${op.length ? `<button class="ghost" data-alert-all>모두 확인함</button>` : ''}</div></header>
-    <div class="narrow">${op.length ? op.map(card).join('') : '<p class="empty">확인할 알림이 없습니다.</p>'}
+    <div class="card-grid">${op.length ? op.map(card).join('') : '<p class="empty">확인할 알림이 없습니다.</p>'}</div><div>
     ${done.length ? `<details class="old-mails"><summary>확인한 알림 ${done.length}건</summary>${done.map(card).join('')}</details>` : ''}</div>`;
 }
 

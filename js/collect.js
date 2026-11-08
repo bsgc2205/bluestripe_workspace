@@ -22,6 +22,7 @@ function caseFromItems(c, group){
     specialNote: specials.length ? `자동 수집에서 특이 절차로 보이는 자료가 확인됨: ${specials.join(', ')}. 내용을 확인해 무엇이 달랐는지 보완하세요.` : '',
     tags: ['자동수집', ...specials], links, checklist:[], docs:[], deadlines:[], reflected:[],
     files: group.map(x => ({id:x.id, name:x.name, link:x.link || '', date:x.created || ''})),
+    assignee: clientAssignee(c.id), history: [{at:nowIso(), by:'', text:'자동 수집으로 생성'}],
     createdAt: nowIso(), updatedAt: nowIso(), createdBy: 'auto'
   };
 }

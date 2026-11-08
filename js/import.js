@@ -61,7 +61,7 @@ function openDataMenu(){
       <div class="dlg-section">
         <h4>백업</h4>
         <p class="hint">평문 JSON은 암호화되지 않습니다. 공유 폴더나 GitHub에 두지 말고 개인 폴더에만 보관하세요. ‘JSON 가져오기’에 백업 파일을 넣으면 대장 전체가 바뀌고, 병합용 파일을 넣으면 지금 대장에 추가됩니다.</p>
-        <div class="btn-row"><button type="button" class="ghost" data-act="plain">평문 JSON 받기</button><label class="btn">JSON 가져오기<input type="file" data-act="import" accept=".json,application/json" hidden></label></div>
+        <div class="btn-row"><button type="button" class="ghost" data-act="encbak">암호화 파일 받기</button><button type="button" class="ghost" data-act="plain">평문 JSON 받기</button><label class="btn">JSON 가져오기<input type="file" data-act="import" accept=".json,application/json" hidden></label></div>
       </div>`,
     onSave(fd){
       const types = lines(fd.get('types'));
@@ -88,6 +88,7 @@ function openDataMenu(){
       toast('설정을 저장했습니다.');
     },
     onOpen(f){
+      f.querySelector('[data-act="encbak"]').onclick = () => exportEnc();
       f.querySelector('[data-act="plain"]').onclick = () => download(`ledger-backup-${today()}.json`, JSON.stringify(db, null, 2));
       f.querySelector('[data-act="import"]').onchange = async e => {
         const file = e.target.files[0]; if(!file) return;
