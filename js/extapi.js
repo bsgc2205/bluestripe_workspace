@@ -211,8 +211,8 @@ function lawLinesHTML(p){
 
 /* ---------- 연결 점검·자동 확인 ---------- */
 /* 연결 점검 + 설정: 키와 주소는 Apps Script 스크립트 속성에 저장(재배포 불필요). 키 값은 화면에 다시 보여 주지 않음 */
-const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소'};
-const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', FOOD_SAFETY_API_KEY:'식품안전나라 인증키'};
+const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_UNI_PATH:'UNI-PASS 세관장확인 경로 (/ext/rest/ 뒤)', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소'};
+const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', UNIPASS_KEY_API029:'UNI-PASS 세관장확인 키 (API029)', FOOD_SAFETY_API_KEY:'식품안전나라 인증키'};
 async function openApiPing(){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token){ toast('먼저 Apps Script 연동을 설정하세요.'); return; }
@@ -233,9 +233,18 @@ async function openApiPing(){
     onOpen(f){
       const X = n => f.querySelector(`[data-x="${n}"]`);
       X('foodsync').onclick = async () => {
-        X('foodmsg').textContent = '받는 중… (수천 건이면 1~2분)';
-        try{ const r = await syncPost(cfg, {op:'foodsync'}); X('foodmsg').textContent = r.ok ? `${r.n.toLocaleString('ko-KR')}건 받음. 칸: ${(r.fields || []).join(', ')}` : '실패: ' + r.error; }
-        catch(e){ X('foodmsg').textContent = '실패: ' + e.message; }
+        const b = X('foodsync'); b.disabled = true;
+        let start = 1;
+        try{
+          for(let n = 0; n < 40; n++){                                     // 8천 건씩 나눠 받음 (한 번 요청이 화면 대기 시간을 넘지 않게)
+            X('foodmsg').textContent = `받는 중… ${start > 1 ? (start - 1).toLocaleString('ko-KR') + '건' : '시작'}`;
+            const r = await syncPost(cfg, {op:'foodsync', start});
+            if(!r.ok) throw new Error(r.error || '응답 오류');
+            if(r.done){ X('foodmsg').textContent = `${r.n.toLocaleString('ko-KR')}건 받음. 칸: ${(r.fields || []).join(', ')}`; break; }
+            start = r.next; X('foodmsg').textContent = `받는 중… ${r.got.toLocaleString('ko-KR')} / ${r.total.toLocaleString('ko-KR')}건`;
+          }
+        }catch(e){ X('foodmsg').textContent = '실패: ' + e.message + (start > 1 ? ' — 다시 누르면 처음부터 받습니다' : ''); }
+        b.disabled = false;
       };
       if(!admin) return;
       X('confsave').onclick = async () => {
