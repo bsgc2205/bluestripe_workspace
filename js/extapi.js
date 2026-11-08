@@ -226,8 +226,9 @@ async function openApiPing(){
     ${admin ? `<div class="dlg-section"><h4>설정 (관리자) — 저장하면 바로 적용, 재배포 필요 없음</h4>
       <div class="row2">${Object.keys(KEY_LABEL).map(k => `<label>${esc(KEY_LABEL[k])}<input type="password" autocomplete="off" data-key="${k}" placeholder="${st.keys[k] ? '저장됨 ' + esc(st.keys[k]) + ' — 바꿀 때만 입력' : '미저장'}"></label>`).join('')}</div>
       <div class="row2">${Object.keys(CONF_LABEL).map(k => `<label>${esc(CONF_LABEL[k])}<input data-conf="${k}" value="${esc(st.conf[k] || '')}"></label>`).join('')}</div>
+      <label style="max-width:260px">관리자 PIN (Apps Script 스크립트 속성 CONF_PIN)<input type="password" autocomplete="off" data-x="pin"></label>
       <div class="btn-row"><button type="button" class="primary" data-x="confsave">설정 저장 후 다시 점검</button><span class="hint" data-x="confmsg"></span></div>
-      <p class="hint">키는 Apps Script 스크립트 속성에만 저장되고 Workspace 데이터·GitHub에는 남지 않습니다. 주소를 비우고 저장하면 기본값으로 돌아갑니다.</p></div>` : ''}`,
+      <p class="hint">키는 Apps Script 스크립트 속성에만 저장되고 Workspace 데이터·GitHub에는 남지 않으며, 저장 후에는 끝 4자리만 보입니다. 주소는 공공데이터포털·UNI-PASS 주소만 받습니다. 주소를 비우고 저장하면 기본값으로 돌아갑니다.</p></div>` : ''}`,
     onSave(){ return true; },
     onOpen(f){
       const X = n => f.querySelector(`[data-x="${n}"]`);
@@ -242,9 +243,10 @@ async function openApiPing(){
         f.querySelectorAll('[data-key]').forEach(el => { if(el.value.trim()) set[el.dataset.key] = el.value.trim(); });
         f.querySelectorAll('[data-conf]').forEach(el => { if(el.value.trim() !== (st.conf[el.dataset.conf] || '')) set[el.dataset.conf] = el.value.trim(); });
         if(!Object.keys(set).length){ X('confmsg').textContent = '바뀐 값이 없습니다.'; return; }
+        if(!X('pin').value){ X('confmsg').textContent = '관리자 PIN을 넣으세요.'; return; }
         X('confmsg').textContent = '저장 중…';
         try{
-          const r = await syncPost(cfg, {op:'conf', set});
+          const r = await syncPost(cfg, {op:'conf', set, pin:X('pin').value});
           if(!r.ok) throw new Error(r.error || '응답 오류');
           if((r.bad || []).length){ X('confmsg').textContent = '형식이 맞지 않아 저장하지 않음: ' + r.bad.map(k => CONF_LABEL[k] || k).join(', '); return; }
           db.settings.extPause = ''; $('#dlg').close(); toast('설정을 저장했습니다. 다시 점검합니다.'); openApiPing();
