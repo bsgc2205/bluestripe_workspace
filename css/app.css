@@ -325,3 +325,23 @@ label.inline input{width:auto}
 .manual .bad{color:var(--stamp)}
 .pre{white-space:pre-wrap}
 @media (max-width:700px){.man-grid{grid-template-columns:1fr}}
+/* G3 유사 업무 가이드 · 세관 질의 DB · 품목 DB */
+.sim-box{margin:.5rem 0;font-size:.85rem;border-left:3px solid var(--line);padding:.3rem .6rem;background:var(--surface);border-radius:0 6px 6px 0}
+.sim-box>summary{cursor:pointer;color:var(--accent)}
+ul.sim{list-style:none;padding:0;margin:.3rem 0 0}
+.sim-it{padding:.4rem 0;border-top:1px dashed var(--line)}
+.sim-it:first-child{border-top:0}
+.sim-it .mini{margin-top:.25rem}
+.sim-sc{display:inline-block;min-width:1.9rem;text-align:center;font-size:.72rem;font-weight:700;border:1px solid var(--accent);color:var(--accent);border-radius:4px;margin-right:.35rem;font-variant-numeric:tabular-nums}
+.sim-note{font-size:.82rem;background:var(--stamp-bg);border-left:2px solid var(--stamp);padding:.2rem .5rem;margin:.2rem 0;white-space:pre-wrap}
+.sim-sub{font-size:.8rem;color:var(--muted);margin:.5rem 0 0}
+.sim-line{margin-top:.35rem;font-size:.83rem;display:flex;flex-wrap:wrap;gap:.25rem .8rem;align-items:baseline}
+.lbl-in{color:var(--muted);font-weight:600}
+.inq{border:1px solid var(--line);border-radius:8px;padding:.7rem .9rem;margin:0 0 .8rem;background:var(--surface)}
+.inq-head{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.inq-head .sp{flex:1}
+.inq-q,.inq-a{margin:.45rem 0 0;font-size:.92rem}
+.inq-q b,.inq-a b{color:var(--muted);font-size:.8rem;margin-right:.35rem}
+.tag.req{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+button.tag{border:0;cursor:pointer;font:inherit;font-size:.8rem}
+.chip b{margin-left:.3rem;font-variant-numeric:tabular-nums;font-weight:600}

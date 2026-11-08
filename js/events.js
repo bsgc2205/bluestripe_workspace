@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -9,6 +9,13 @@ document.addEventListener('click', e => {
   const curClient = route.name === 'client' ? route.id : '';
   const curType = typeFilter !== '전체' ? typeFilter : '';
   const findRec = id => db.records.find(r => r.id === id);
+  if('simCopy' in d){const [rid, sid] = d.simCopy.split('|'), r = findRec(rid), src = findRec(sid); if(r && src){ const n = copyFromRecord(r, src); openCk.add(rid); commit(); toast(n ? `${src.caseNo || src.title}의 단계·서류 ${n}개를 체크리스트에 더했습니다.` : '이미 모두 들어 있습니다.'); } return;}
+  if('inqNew' in d){openInquiry(null, {rec: d.inqNew ? findRec(d.inqNew) : null}); return;}
+  if('inqEdit' in d){const q = (db.inquiries || []).find(x => x.id === d.inqEdit); if(q) openInquiry(q); return;}
+  if('inqRec' in d){const r = findRec(d.inqRec); inqQ = ''; inqTopic = ''; $('#q').value = ''; go('inquiries'); if(r){ const qs = (db.inquiries || []).filter(x => x.recId === r.id); if(qs.length === 1) openInquiry(qs[0]); } return;}
+  if('inqTopic' in d){inqTopic = d.inqTopic; renderView(); return;}
+  if('inqHs' in d){inqQ = d.inqHs; inqTopic = ''; $('#q').value = ''; go('inquiries'); return;}
+  if('reqBadge' in d){itemBadge = d.reqBadge; renderView(); return;}
   if('collectNow' in d){runCollect(true); return;}
   if('pendApply' in d){applyPending(Number(d.pendApply), $(`[data-pend-client="${d.pendApply}"]`).value); return;}
   if('pendDrop' in d){db.collectPending.splice(Number(d.pendDrop), 1); commit(); return;}
@@ -50,6 +57,7 @@ document.addEventListener('click', e => {
   else if('sug' in d){const [rid, key] = d.sug.split('|'); const r = findRec(rid); if(r) applySuggestion(r, d.sug.slice(rid.length + 1));}
   else if('sugOff' in d){const rid = d.sugOff.split('|')[0], r = findRec(rid); if(r){ r.sugOff = [...new Set([...(r.sugOff || []), d.sugOff.slice(rid.length + 1)])].slice(-50); commit(); }}
   else if('mine' in d){mineOnly = !mineOnly; renderView();}
+  else if('kcCheck' in d){kcCheck(d.kcCheck);}
   else if('ppApply' in d){const pp = (db.procProposals || []).find(x => x.id === d.ppApply); if(pp && applyProposal(pp, readPick(pp.id))){ commit(); toast('절차에 반영했습니다. 개정 이력에 남았습니다.'); } else toast('고른 항목이 없습니다.');}
   else if('ppDrop' in d){const pp = (db.procProposals || []).find(x => x.id === d.ppDrop); if(pp){ pp.status = 'dropped'; commit(); }}
   else if('manDraft' in d){const [cid, ty] = d.manDraft.split('|'), dr = draftFromRecords(cid, ty); if(!dr.steps.length){ toast('완료 기록에 공통으로 나온 단계가 없습니다. 절차를 직접 추가하세요.'); openProc(null, {clientId:cid, type:ty}); } else { db.procProposals = db.procProposals || []; db.procProposals.push({id:uid(), recId:'', caseNo:`완료 ${dr.n}건 기준`, clientId:cid, type:ty, procId:null, at:nowIso(), by:me ? me.id : '', status:'pending', add:dr.steps, skip:[], docs:[], caution:''}); commit(); toast('초안을 개정 제안에 올렸습니다. 확인 후 반영하세요.'); }}
@@ -65,6 +73,7 @@ document.addEventListener('click', e => {
 $('#view').addEventListener('input', e => {
   const el = e.target;
   if(el.id === 'contactQ'){ $('#contactTable').innerHTML = contactTable(); return; }
+  if(el.id === 'inqQ' || el.id === 'itemQ'){ const id = el.id; if(id === 'inqQ') inqQ = el.value; else itemQ = el.value; clearTimeout(window._gq); window._gq = setTimeout(() => { renderView(); const q = $('#' + id); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'manQ'){ manualQ = el.value; clearTimeout(window._manT); window._manT = setTimeout(() => { renderView(); const q = $('#manQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'kcQ'){ $('#kcTable').innerHTML = kcTableHTML(kcRowsFor(el.dataset.kcClient, el.value), false); return; }
   if(el.dataset && el.dataset.fee && el.dataset.fee !== 'pid'){
@@ -95,6 +104,7 @@ document.addEventListener('change', e => {
 document.addEventListener('toggle', e => {
   const el = e.target;
   if(el.matches && el.matches('details[data-ck-rec]')){const id = el.dataset.ckRec; el.open ? openCk.add(id) : openCk.delete(id);}
+  if(el.matches && el.matches('details[data-sim-rec]')){const id = el.dataset.simRec; if(el.open){ simOpen.add(id); simOpen.delete('x' + id); } else { simOpen.delete(id); simOpen.add('x' + id); }}
   if(el.matches && el.matches('details[data-folder]')) folderOpen[el.dataset.folder] = el.open;
 }, true);
 let searchTimer;

@@ -181,7 +181,7 @@ function migrate(d){
   d.meta = d.meta || {}; d.settings = d.settings || {};
   if(!Array.isArray(d.settings.taskTypes) || !d.settings.taskTypes.length) d.settings.taskTypes = [...DEFAULT_TYPES];
   d.settings.mail = d.settings.mail || {endpoint:'', token:''};
-  ['clients','procedures','records','items','mailSeen','contacts'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
+  ['clients','procedures','records','items','mailSeen','contacts','inquiries'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
   if(!Array.isArray(d.settings.feeProfiles)) d.settings.feeProfiles = [];
   if(!Array.isArray(d.kc)) d.kc = [];
   d.kcMeta = d.kcMeta || {};
@@ -272,7 +272,7 @@ function purgeSamples(d){
   const ids = new Set(d.clients.filter(c => /\(예시\)/.test(c.name)).map(c => c.id));
   if(!ids.size) return 0;
   d.clients = d.clients.filter(c => !ids.has(c.id));
-  ['records','procedures','items'].forEach(k => { d[k] = (d[k] || []).filter(x => !ids.has(x.clientId)); });
+  ['records','procedures','items','inquiries'].forEach(k => { d[k] = (d[k] || []).filter(x => !ids.has(x.clientId)); });
   d.records = d.records.filter(r => !/^예시-/.test(r.refNo || ''));
   return ids.size;
 }

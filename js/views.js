@@ -8,6 +8,7 @@ function renderSidebar(){
   const ma = mailAlerts();  // customs@ 메일 중 아직 기록과 연결하지 않은 대화
   $('#cntMail').textContent = ma.total || ''; $('#cntMail').classList.toggle('warn', ma.overdue > 0); $('#cntMail').title = ma.overdue ? `${OVERDUE_H}시간 넘게 연결 안 된 대화 ${ma.overdue}건` : '';
   const ppN = (db.procProposals || []).filter(x => x.status === 'pending').length; if($('#cntManual')) $('#cntManual').textContent = ppN || '';
+  if($('#cntInq')) $('#cntInq').textContent = (db.inquiries || []).length || '';
   $('#cntInbox').textContent = (db.collectPending || []).length || '';
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
@@ -25,7 +26,7 @@ function renderSidebar(){
 function renderView(){
   hlRe = null;
   const v = $('#view');
-  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, manual:viewManual, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
+  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:viewCommon, manual:viewManual, inquiries:viewInquiries, itemdb:viewItemDb, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
   if(route.name === 'client' && db.clients.some(c => c.id === route.id)) v.innerHTML = viewClient();
   else if(views[route.name]) v.innerHTML = views[route.name]();
   else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
@@ -53,15 +54,16 @@ function recordHTML(r, o = {}){
   const dateCol = active
     ? `${esc(r.startDate || '')}<small>${r.status === '보류' ? '보류' : '접수'}</small>`
     : `${esc(r.date)}${r.startDate && r.startDate !== r.date ? `<small>접수 ${esc(r.startDate.slice(5))}</small>` : ''}`;
+  const inqN = (db.inquiries || []).filter(q => q.recId === r.id).length;
   const byLine = accounts.length > 1 && r.createdBy ? `<small>${esc(accountName(r.createdBy))}</small>` : '';
   return `<article class="rec">
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
-      ${active && !o.compact ? suggestHTML(r) : ''}
+      ${active && !o.compact ? suggestHTML(r) + guideHTML(r) : ''}
       ${o.compact ? '' : docsHTML(r)}
       ${ckHtml}
       ${o.compact ? '' : tags + linkHtml + filesHTML(r) + mailsHTML(r)}
@@ -70,6 +72,7 @@ function recordHTML(r, o = {}){
       <button class="mini" data-edit-rec="${esc(r.id)}">수정</button>
       ${active ? `<button class="mini strong" data-complete="${esc(r.id)}">완료 처리</button>` : ''}
       ${stageActsHTML(r)}
+      ${o.compact ? '' : `<button class="mini" data-inq-new="${esc(r.id)}" title="세관에 문의하거나 세관이 요구한 내용을 기록">질의 기록</button>`}
       ${r.special ? `<button class="mini" data-reflect="${esc(r.id)}">절차에 반영</button>` : ''}
     </div>
   </article>`;

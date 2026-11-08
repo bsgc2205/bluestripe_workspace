@@ -1,0 +1,280 @@
+'use strict';
+/* ---------- 유사 업무 가이드 (G3) ----------
+   새 기록 창·진행 중 기록·customs@ 대화에 '비슷한 과거 건'(완료 기록)을 3~5개 보여 준다.
+   점수: 같은 업체 30 · 같은 업무유형 20(메일에서 추정한 유형은 12) · 같은 품목 20, 아니면 같은 HS 6단위 15 / 4단위 8
+         · 제목·요약 키워드 겹침 최대 24 · 같은 선사(B/L 앞 4글자) 5 · 같은 정정 원인 개당 5(최대 15) · 특이 기록 3.
+   SIM_MIN점 이상이면서 유형·품목·HS·키워드 중 하나는 겹쳐야 보여 준다(업체만 같은 건은 제외).
+   세관 질의 DB(db.inquiries)도 HS·업체·키워드로 함께 찾아 보여 준다.
+   품목 DB는 업체별 품목·요건, KC 목록, 세관 질의를 HS 기준으로 모은 화면(UNI-PASS 018·030·029는 보류). */
+const SIM_MIN = 30;
+const SIM_STOP = new Set(('수입 수출 통관 신고 수입통관 수출통관 수입신고 수출신고 관련 관련하여 요청 의뢰 부탁 문의 신청 진행 건 건의 드립니다 바랍니다 입니다 합니다 '
+  + '요청드립니다 부탁드립니다 감사합니다 안녕하세요 확인 송부 전달 회신 답장 자료 서류 첨부 메일 업무 처리 완료 자동 단계 수리 납부 반출신고 수입신고수리 '
+  + '선적완료 정산완료 통관완료 정산서 필증 수출신고필증 수입신고필증 면장 건입니다 re fw fwd the and for of to in on with please dear regards kind '
+  + 'invoice packing list bl b/l co ltd inc corp bsgc customs uni pass 및 등 각 위 아래 해당 금일 오늘 내일 이번 다음 관세사 관세법인 주식회사').split(' '));
+const SIM_STOP2 = new Set(['수입', '수출', '통관', '신고', '요청', '진행', '관련', '확인', '부탁', '의뢰', '드립', '립니', '니다', '바랍', '랍니', '습니', '입니', '합니', '처리', '완료']);
+const CASE_RE_G = new RegExp(CASE_RE.source, 'g');
+function hsDigits(s){ const d = String(s || '').replace(/[^0-9]/g, ''); return d.length >= 4 ? d.slice(0, 10) : ''; }
+function fmtHs(d){ d = String(d || ''); return d.length > 4 ? d.slice(0, 4) + '.' + d.slice(4, 6) + (d.length > 6 ? '-' + d.slice(6) : '') : d; }
+function hsInText(text){ const m = /(?:hs|세번)\s*(?:code|코드|no\.?|번호)?\s*[:#]?\s*(\d{4}[.\-\s]?\d{2}(?:[.\-\s]?\d{2,4})?)/i.exec(String(text || '')); return m ? hsDigits(m[1]) : ''; }
+function carrierOf(bl){ const m = /^([A-Z]{4})\d/.exec(String(bl || '').toUpperCase()); return m ? m[1] : ''; }
+let simCache = {stamp:'', feats:new Map(), stop:new Set()};
+function simStop(){
+  const st = (db.meta.updatedAt || '') + '|' + db.records.length + '|' + db.clients.length + '|' + db.items.length;
+  if(simCache.stamp !== st){
+    const stop = new Set();   // 업체명·약칭은 '같은 업체' 점수로 따로 보므로 키워드에서 뺀다
+    db.clients.forEach(c => [nameKey(c.name), ...kwList(c).filter(k => !k.startsWith('@'))].forEach(w => String(w || '').split(/\s+/).forEach(x => { if(x) stop.add(x.toLowerCase()); })));
+    simCache = {stamp:st, feats:new Map(), stop};
+  }
+  return simCache.stop;
+}
+function simTokens(text){
+  const stop = simStop();
+  const t = String(text || '').toLowerCase().replace(CASE_RE_G, ' ').replace(/\b\d{5}-\d{2}-\d{6,7}[a-z]?\b/g, ' ').replace(/\b[a-z]{4}\d{6,}\b/g, ' ').replace(/\d{2,4}[-./]\d{1,2}[-./]\d{1,2}/g, ' ');
+  const words = t.split(/[^0-9a-z가-힣]+/).filter(w => w.length >= 2 && !/^\d+$/.test(w) && !SIM_STOP.has(w) && !stop.has(w));
+  const out = new Set(words);
+  words.forEach(w => { if(/^[가-힣]{3,}$/.test(w)) for(let i = 0; i < w.length - 1; i++){ const g = w.slice(i, i + 2); if(!SIM_STOP2.has(g) && !stop.has(g)) out.add('§' + g); } });
+  return out;
+}
+/* 자동 완료 요약·체크리스트 줄은 모든 기록에 비슷하게 들어가므로 키워드에서 뺀다 */
+function cleanSummary(s){ return lines(s).filter(l => !/^[✓–-]\s/.test(l) && l !== '처리 단계' && !l.startsWith('[자동 완료]')).join(' ').slice(0, 400); }
+function recFeat(r, cache = true){
+  if(cache && r.id && simCache.feats.has(r.id)) return simCache.feats.get(r.id);
+  simStop();
+  const item = r.itemId ? db.items.find(i => i.id === r.itemId) : null;
+  const text = [r.title, cleanSummary(r.summary), (r.tags || []).join(' '), item ? item.name : '', String(r.specialNote || '').slice(0, 200)].join(' ');
+  const f = {id:r.id, clientId:r.clientId || '', type:r.type || '', typeGuess:!!r.typeGuess, itemId:r.itemId || '', hs:hsDigits(item && item.hs) || hsInText(text),
+    carrier:carrierOf(r.bl), tokens:simTokens(text), causes:Array.isArray(r.causes) ? r.causes : causesOf(r)};
+  if(cache && r.id) simCache.feats.set(r.id, f);
+  return f;
+}
+function simScore(t, f, r){
+  let s = 0, core = false; const why = [];
+  if(t.clientId && f.clientId === t.clientId){ s += 30; why.push('같은 업체'); }
+  if(t.type && f.type === t.type){ s += t.typeGuess ? 12 : 20; why.push('같은 유형'); core = true; }
+  if(t.itemId && f.itemId === t.itemId){ s += 20; why.push('같은 품목'); core = true; }
+  else if(t.hs && f.hs){
+    if(t.hs.length >= 6 && f.hs.length >= 6 && t.hs.slice(0, 6) === f.hs.slice(0, 6)){ s += 15; why.push('HS ' + fmtHs(f.hs.slice(0, 6))); core = true; }
+    else if(t.hs.slice(0, 4) === f.hs.slice(0, 4)){ s += 8; why.push('HS ' + f.hs.slice(0, 4)); core = true; }
+  }
+  const sw = [], sb = [];
+  t.tokens.forEach(x => { if(f.tokens.has(x)) (x[0] === '§' ? sb : sw).push(x); });
+  const kw = Math.min(24, sw.length * 6 + sb.length * 1.5);
+  if(kw >= 3){
+    s += kw; if(kw >= 6) core = true;
+    const part = [...new Set(sb.map(g => [...t.tokens].find(w => w[0] !== '§' && w.includes(g.slice(1)) && !sw.includes(w))).filter(Boolean))];   // 겹친 두 글자를 원래 단어로 보여 줌
+    why.push('키워드 ' + [...sw.slice(0, 3), ...part.slice(0, sw.length ? 1 : 2).map(w => w + '(일부)')].join(', '));
+  }
+  if(t.carrier && f.carrier === t.carrier){ s += 5; why.push('같은 선사 ' + t.carrier); }
+  const cs = (t.causes || []).filter(c => f.causes.includes(c));
+  if(cs.length){ s += Math.min(15, cs.length * 5); why.push('같은 원인 ' + cs.join(', ')); core = true; }
+  if(r.special) s += 3;
+  return {s:Math.round(s), why, core};
+}
+/* target: 기록이나 기록 모양의 객체 {id, clientId, type, typeGuess, itemId, title, summary, bl, causes} */
+function similarRecords(target, n = 5){
+  const t = recFeat(target, false);
+  if(!t.clientId && !t.tokens.size && !t.hs) return [];
+  return db.records.filter(r => r.status === '완료' && r.id !== target.id)
+    .map(r => ({r, ...simScore(t, recFeat(r), r)}))
+    .filter(x => x.core && x.s >= SIM_MIN)
+    .sort((a, b) => b.s - a.s || byDateDesc(a.r, b.r)).slice(0, n);
+}
+function similarInquiries(target, sims = [], n = 3){
+  const t = recFeat(target, false), simIds = new Set(sims.map(x => x.r.id));
+  return (db.inquiries || []).map(q => {
+    let s = 0;
+    const h = hsDigits(q.hs);
+    if(t.hs && h){ if(t.hs.slice(0, 6) === h.slice(0, 6) && h.length >= 6) s += 20; else if(t.hs.slice(0, 4) === h.slice(0, 4)) s += 10; }
+    if(t.clientId && q.clientId === t.clientId) s += 10;
+    if(q.recId && (q.recId === target.id || simIds.has(q.recId))) s += 15;
+    const qt = simTokens([q.question, q.answer, q.topic, (q.tags || []).join(' ')].join(' '));
+    let k = 0; t.tokens.forEach(x => { if(qt.has(x)) k += x[0] === '§' ? 1.5 : 6; });
+    s += Math.min(24, k);
+    return {q, s};
+  }).filter(x => x.s >= 20).sort((a, b) => b.s - a.s).slice(0, n).map(x => x.q);
+}
+/* 메일 대화 → 기록 모양 */
+const TYPE_GUESS = [
+  ['FTA원산지', /원산지|(^|[^a-z])c\/?o([^a-z]|$)|fta|form\s?[ae]([^a-z]|$)|사후적용/i], ['관세환급', /환급/], ['수출신고', /수출|export|선적|적재|shipping/i],
+  ['화학물질', /화평법|화관법|화학물질|유해화학/], ['요건확인·검역', /검역|요건확인|식약처|수입식품|위생증명/], ['품목분류', /품목분류|사전심사|세번/],
+  ['외환신고', /외환|지급신고|송금/], ['AEO', /(^|[^a-z])aeo([^a-z]|$)/i], ['수입통관', /수입|import|도착|입항|arrival|b\/l/i]];
+function guessType(text, clientId){
+  const types = db.settings.taskTypes, hit = TYPE_GUESS.find(([ty, re]) => types.includes(ty) && re.test(String(text || '')));
+  if(hit) return hit[0];
+  const cnt = {}; db.records.filter(r => r.clientId === clientId).forEach(r => cnt[r.type] = (cnt[r.type] || 0) + 1);
+  return Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || '';
+}
+function guessItem(text, clientId){
+  const t = String(text || '').toLowerCase().replace(/\s+/g, '');
+  return db.items.filter(i => i.clientId === clientId && String(i.name || '').replace(/\s+/g, '').length >= 2 && t.includes(String(i.name).toLowerCase().replace(/\s+/g, '')))
+    .sort((a, b) => b.name.length - a.name.length)[0] || null;
+}
+function threadTarget(t){
+  const c = matchClient(t.ms), text = t.ms.map(m => (m.subject || '') + ' ' + String(m.snippet || '').slice(0, 200)).join(' ');
+  const it = c ? guessItem(text, c.id) : null, ty = guessType(text, c ? c.id : '');
+  return {id:'', clientId:c ? c.id : '', type:ty, typeGuess:true, itemId:it ? it.id : '', title:t.ms.map(m => m.subject || '').join(' '), summary:t.ms.map(m => String(m.snippet || '').slice(0, 200)).join('\n'), bl:(t.ms.find(m => m.bl) || {}).bl || '', causes:[]};
+}
+
+/* ---------- 화면 조각 ---------- */
+let simOpen = new Set();
+function simSummary(list){
+  const days = list.map(x => dayDiff(x.r.startDate, x.r.date)).filter(x => x !== null && x >= 0);
+  const sp = list.filter(x => x.r.special).length, cc = {}, who = {};
+  list.forEach(x => { causesOf(x.r).forEach(c => cc[c] = (cc[c] || 0) + 1); if(x.r.assignee) who[x.r.assignee] = (who[x.r.assignee] || 0) + 1; });
+  const top = o => Object.entries(o).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  return [`비슷한 과거 건 ${list.length}건`, days.length && `평균 소요 ${(days.reduce((a, b) => a + b, 0) / days.length).toFixed(1)}일`,
+    sp && `특이 ${sp}건`, top(cc).length && `정정 원인 ${top(cc).slice(0, 3).join(', ')}`, top(who).length && `주로 ${assigneeName(top(who)[0])} 담당`].filter(Boolean).join(' · ');
+}
+function simItemHTML(x, o = {}){
+  const r = x.r, p = procFor(r), d = dayDiff(r.startDate, r.date), dc = dayDiff(r.startDate, (r.stage || {}).customs);
+  const meta = [o.showClient === false ? '' : clientName(r.clientId), r.date && `완료 ${r.date}`, d !== null && d >= 0 && `소요 ${d}일${dc !== null && dc >= 0 && dc !== d ? ` (통관 ${dc}일)` : ''}`, r.assignee && `담당 ${assigneeName(r.assignee)}`].filter(Boolean).join(' · ');
+  const steps = (r.checklist || []).filter(s => !/^\[점검\]/.test(s.text));
+  const inq = (db.inquiries || []).filter(q => q.recId === r.id);
+  return `<li class="sim-it">
+    <div><span class="sim-sc" title="유사도 점수">${x.s}</span>${r.special ? '<span class="stamp sm">특이</span> ' : ''}${o.inDialog ? `<strong>${esc(r.caseNo ? r.caseNo + ' ' : '')}${esc(r.title)}</strong>` : `<button type="button" class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo ? r.caseNo + ' ' : '')}${esc(r.title)}</button>`}</div>
+    <div class="hint">${esc(meta)}</div>
+    <div class="hint">근거: ${esc(x.why.join(' · '))}</div>
+    ${p ? `<div class="hint">절차: ${esc(p.title)}${steps.length ? ` · 실제 단계 ${steps.length}개` : ''}</div>` : (steps.length ? `<div class="hint">실제 단계 ${steps.length}개: ${esc(steps.slice(0, 4).map(s => normStep(s.text)).join(' → '))}${steps.length > 4 ? ' …' : ''}</div>` : '')}
+    ${r.special && r.specialNote ? `<div class="sim-note">${esc(r.specialNote.length > 220 ? r.specialNote.slice(0, 220) + '…' : r.specialNote)}</div>` : ''}
+    ${inq.length ? `<div class="hint">세관 질의 ${inq.length}건: ${esc(inq.map(q => q.question).join(' / ').slice(0, 120))}</div>` : ''}
+    ${o.copy && (steps.length || (r.docs || []).length) ? `<button type="button" class="mini" ${o.copy}="${esc((o.copyPrefix || '') + r.id)}">이 건의 단계·서류 가져오기</button>` : ''}
+  </li>`;
+}
+function inqMiniHTML(q, inDialog){
+  return `<li class="sim-it"><div><span class="tag type">${esc(q.topic || '질의')}</span> <strong>${esc(q.office || '')}</strong> <span class="hint">${esc(q.date || '')}${q.hs ? ' · HS ' + esc(q.hs) : ''}</span> ${inDialog ? '' : `<button type="button" class="mini" data-inq-edit="${esc(q.id)}">보기</button>`}</div>
+    <div class="hint">질의: ${esc(String(q.question || '').slice(0, 140))}</div>${q.answer ? `<div class="hint">답변: ${esc(String(q.answer).slice(0, 160))}</div>` : ''}${q.basis ? `<div class="hint">근거: ${esc(String(q.basis).slice(0, 100))}</div>` : ''}</li>`;
+}
+/* 진행 중 기록 카드 안 '유사 업무 가이드' */
+function guideHTML(r){
+  const list = similarRecords(r, 5);
+  const inqs = similarInquiries(r, list, 3);
+  if(!list.length && !inqs.length) return '';
+  const open = simOpen.has(r.id) || (!(r.checklist || []).length && !simOpen.has('x' + r.id));
+  return `<details class="sim-box" data-sim-rec="${esc(r.id)}"${open ? ' open' : ''}><summary>${list.length ? esc(simSummary(list)) : '비슷한 과거 건 없음'}${inqs.length ? ` · 관련 세관 질의 ${inqs.length}건` : ''}</summary>
+    ${list.length ? `<ul class="sim">${list.map(x => simItemHTML(x, {copy:'data-sim-copy', copyPrefix:r.id + '|'})).join('')}</ul>` : ''}
+    ${inqs.length ? `<p class="sim-sub">관련 세관 질의</p><ul class="sim">${inqs.map(q => inqMiniHTML(q)).join('')}</ul>` : ''}
+  </details>`;
+}
+/* customs@ 대화 한 줄 요약 */
+function threadSimHTML(t){
+  const list = similarRecords(threadTarget(t), 3);
+  if(!list.length) return '';
+  return `<div class="sim-line"><span class="lbl-in">비슷한 과거 건</span>${list.map(x => { const d = dayDiff(x.r.startDate, x.r.date); return `<button class="linkish" data-edit-rec="${esc(x.r.id)}" title="${esc(x.why.join(' · '))}">${esc(x.r.caseNo || '')} ${esc(x.r.title.length > 28 ? x.r.title.slice(0, 28) + '…' : x.r.title)}${d !== null && d >= 0 ? ` (${d}일)` : ''}${x.r.special ? ' ·특이' : ''}</button>`; }).join('')}</div>`;
+}
+/* 다른 기록의 단계·서류를 합친다(없는 것만 뒤에 추가) */
+function mergeLines(cur, add){ const k = new Set(cur.map(stepKey)); return [...cur, ...add.filter(x => { const kk = stepKey(x); if(!kk || k.has(kk)) return false; k.add(kk); return true; })]; }
+function copyFromRecord(dst, src){
+  const steps = (src.checklist || []).filter(s => !/^\[점검\]/.test(s.text)).map(s => normStep(s.text)), docs = (src.docs || []).map(s => normStep(s.text));
+  const keep = (old, texts) => { const m = new Map(old.map(x => [x.text, x])); return texts.map(t => m.get(t) || {text:t, done:false}); };
+  const n0 = (dst.checklist || []).length + (dst.docs || []).length;
+  dst.checklist = keep(dst.checklist || [], mergeLines((dst.checklist || []).map(x => x.text), steps));
+  dst.docs = keep(dst.docs || [], mergeLines((dst.docs || []).map(x => x.text), docs));
+  if(!dst.procId && src.procId) dst.procId = src.procId;
+  dst.updatedAt = nowIso();
+  return dst.checklist.length + dst.docs.length - n0;
+}
+
+/* ---------- 세관 질의 DB ---------- */
+const INQ_TOPICS = ['품목분류', '세관장확인·요건', '과세가격', '감면·환급', '원산지·FTA', '통관절차', '검사·검역', '정정·보정', '기타'];
+let inqQ = '', inqTopic = '';
+function inquiryHTML(q){
+  const r = q.recId ? db.records.find(x => x.id === q.recId) : null;
+  return `<article class="inq">
+    <div class="inq-head"><span class="tag type">${esc(q.topic || '기타')}</span><strong>${hl(q.office || '세관 미기재')}</strong>${q.officer ? `<span class="hint">${hl(q.officer)}</span>` : ''}<span class="hint">${esc(q.date || '')}</span>${q.hs ? `<span class="ref">HS ${hl(q.hs)}</span>` : ''}${q.clientId ? `<button class="linkish" data-go="client" data-id="${esc(q.clientId)}">${esc(clientName(q.clientId))}</button>` : ''}<span class="sp"></span><button class="mini" data-inq-edit="${esc(q.id)}">수정</button></div>
+    <p class="inq-q pre"><b>질의</b> ${hl(q.question)}</p>
+    ${q.answer ? `<p class="inq-a pre"><b>답변</b> ${hl(q.answer)}</p>` : '<p class="hint">답변을 아직 적지 않았습니다.</p>'}
+    ${q.basis ? `<p class="hint pre">근거: ${hl(q.basis)}</p>` : ''}
+    ${(q.tags || []).length ? `<div class="tags">${q.tags.map(t => `<span class="tag">${hl(t)}</span>`).join('')}</div>` : ''}
+    ${r ? `<div class="hint">관련 기록: <button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo ? r.caseNo + ' ' : '')}${esc(r.title)}</button></div>` : ''}
+  </article>`;
+}
+function inqHay(q){ return hay(q.office, q.officer, q.topic, q.hs, hsDigits(q.hs), q.question, q.answer, q.basis, q.tags, clientName(q.clientId)); }
+function viewInquiries(){
+  const all = (db.inquiries || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const terms = inqQ.trim().toLowerCase().split(/\s+/).filter(Boolean), sq = x => x.replace(/[\s\-\/.]/g, '');
+  const list = all.filter(q => (!inqTopic || q.topic === inqTopic) && terms.every(t => { const h = inqHay(q); return h.includes(t) || sq(h).includes(sq(t)); }));
+  if(terms.length) hlRe = new RegExp('(' + terms.map(t => esc(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+  const cnt = {}; all.forEach(q => cnt[q.topic || '기타'] = (cnt[q.topic || '기타'] || 0) + 1);
+  return `<header class="client-head"><div><h2>세관 질의 DB</h2><p class="client-meta">세관에 문의하거나 세관이 요구한 내용과 답변, 근거를 모아 둡니다. 같은 HS·업체·키워드의 새 건을 진행할 때 유사 업무 가이드에 함께 뜹니다.</p></div>
+      <div class="client-act"><input type="search" id="inqQ" value="${esc(inqQ)}" placeholder="질의·답변·세관·HS 검색"><button class="primary" data-inq-new>질의 기록</button></div></header>
+    <div class="chips" role="group" aria-label="분류">${['', ...INQ_TOPICS].filter(t => !t || cnt[t]).map(t => `<button class="chip${t === inqTopic ? ' on' : ''}" data-inq-topic="${esc(t)}">${esc(t || '전체')}${t ? `<b>${cnt[t]}</b>` : ''}</button>`).join('')}</div>
+    <div class="narrow">${list.length ? list.map(inquiryHTML).join('') : `<p class="empty">${all.length ? '조건에 맞는 질의가 없습니다.' : '아직 기록한 세관 질의가 없습니다. 품목분류·요건·과세가격 등 세관과 주고받은 질의를 남겨 두면 다음 건에서 바로 찾을 수 있습니다. 진행 중 기록의 ‘질의 기록’ 버튼으로도 남길 수 있습니다.'}</p>`}</div>`;
+}
+function openInquiry(q, preset = {}){
+  const isNew = !q, rec = preset.rec || null;
+  const item = rec && rec.itemId ? db.items.find(i => i.id === rec.itemId) : null;
+  const x = q || {id:uid(), date:today(), office:'', officer:'', clientId:rec ? rec.clientId : '', recId:rec ? rec.id : '', hs:item ? item.hs : '', topic:rec && /품목분류/.test(rec.type) ? '품목분류' : '통관절차', question:'', answer:'', basis:'', tags:[]};
+  const recOpts = cid => [['', '연결 안 함'], ...db.records.slice().sort((a, b) => (cid ? (b.clientId === cid) - (a.clientId === cid) : 0) || byDateDesc(a, b)).slice(0, 120).map(r => [r.id, `${r.caseNo ? r.caseNo + ' · ' : ''}${clientName(r.clientId)} · ${r.title}`])];
+  const offices = [...new Set([...TO_LIST, ...(db.inquiries || []).map(v => v.office).filter(Boolean)])];
+  openDialog({
+    title: isNew ? '세관 질의 기록' : '세관 질의 수정',
+    body: `<div class="row2"><label>질의일<input type="date" name="date" value="${esc(x.date)}"></label><label>세관<input name="office" list="inqOffice" value="${esc(x.office)}" placeholder="예: 인천세관 수입과"><datalist id="inqOffice">${offices.map(o => `<option value="${esc(o)}">`).join('')}</datalist></label></div>
+      <div class="row2"><label>담당 부서·직원 (선택)<input name="officer" value="${esc(x.officer || '')}"></label><label>분류<select name="topic">${opts(INQ_TOPICS, x.topic)}</select></label></div>
+      <div class="row2"><label>업체<select name="clientId">${opts([['', '공통·미지정'], ...sortedClients().map(c => [c.id, c.name])], x.clientId || '')}</select></label><label>HS 코드<input name="hs" value="${esc(x.hs || '')}" placeholder="예: 1102.20-0000"></label></div>
+      <label>관련 기록<select name="recId">${opts(recOpts(x.clientId), x.recId || '')}</select></label>
+      <label>질의 내용<textarea name="question" rows="4" required placeholder="세관에 물은 것, 또는 세관이 요구·지적한 것">${esc(x.question)}</textarea></label>
+      <label>세관 답변·처리 결과<textarea name="answer" rows="4" placeholder="답변 요지, 결론, 추가 제출 서류">${esc(x.answer)}</textarea></label>
+      <label>근거 (법령·고시·질의회신·사전심사 번호)<textarea name="basis" rows="2">${esc(x.basis)}</textarea></label>
+      <label>태그<input name="tags" value="${esc((x.tags || []).join(', '))}" placeholder="쉼표로 구분"></label>`,
+    onSave(fd){
+      const question = String(fd.get('question') || '').trim();
+      if(!question){ toast('질의 내용을 입력하세요.'); return false; }
+      Object.assign(x, {date:fd.get('date') || today(), office:fd.get('office').trim(), officer:fd.get('officer').trim(), topic:fd.get('topic'), clientId:fd.get('clientId') || '', hs:fd.get('hs').trim(),
+        recId:fd.get('recId') || '', question, answer:fd.get('answer').trim(), basis:fd.get('basis').trim(), tags:fd.get('tags').split(',').map(v => v.trim()).filter(Boolean), updatedAt:nowIso(), updatedBy:me ? me.id : ''});
+      db.inquiries = db.inquiries || [];
+      if(isNew){ x.createdAt = nowIso(); x.createdBy = me ? me.id : ''; db.inquiries.push(x); toast('세관 질의를 기록했습니다.'); }
+      else toast('세관 질의를 수정했습니다.');
+    },
+    onDelete: isNew ? null : () => { if(!confirm('이 세관 질의 기록을 삭제할까요?')) return false; db.inquiries = db.inquiries.filter(v => v.id !== x.id); toast('삭제했습니다.'); },
+    onOpen(f){
+      const N = n => f.elements.namedItem(n);
+      N('clientId').addEventListener('change', () => { const cur = N('recId').value; N('recId').innerHTML = opts(recOpts(N('clientId').value), cur); });
+      if(isNew) N('question').focus();
+    }
+  });
+}
+
+/* ---------- 품목 DB (업체별 품목·요건 + KC + 세관 질의를 HS로 묶음) ---------- */
+const REQ_BADGES = [['검역', /검역|식물|동물|가축|사료|농림/], ['식약처', /식약처|식품|건강기능|의약|화장품|위생/], ['화평법', /화평법|화학물질\s*(등록|확인)|등록면제|신규화학/],
+  ['화관법', /화관법|유해화학|유독|사고대비|제한물질|금지물질|허가물질/], ['KC·전기', /(^|[^a-z])kc([^a-z]|$)|전기용품|생활용품|어린이제품|안전인증|안전확인|공급자적합/i],
+  ['전파', /전파|적합성평가|(^|[^a-z])rra([^a-z]|$)|방송통신/i], ['위험물', /위험물/], ['폐기물', /폐기물|바젤|국가간\s*이동/]];
+let itemQ = '', itemBadge = '';
+function reqBadges(text){ return REQ_BADGES.filter(([, re]) => re.test(String(text || ''))).map(b => b[0]); }
+function itemGroups(){
+  const g = new Map();
+  db.items.forEach(i => { const h = hsDigits(i.hs), k = h ? 'h' + h : 'n' + nameKey(i.name).replace(/\s/g, ''); if(!g.has(k)) g.set(k, {hs:h, items:[]}); g.get(k).items.push(i); });
+  const uniq = a => [...new Set(a.map(v => String(v || '').trim()).filter(Boolean))];
+  return [...g.values()].map(x => {
+    const ids = new Set(x.items.map(i => i.id)), h6 = x.hs.slice(0, 6);
+    const reqs = uniq(x.items.flatMap(i => lines(i.reqs))), agency = uniq(x.items.flatMap(i => lines(i.agency)));
+    return {...x, names:uniq(x.items.map(i => i.name)), clients:uniq(x.items.map(i => i.clientId)), tariffs:uniq(x.items.map(i => i.tariff)), reqs, agency,
+      badges:reqBadges([...reqs, ...agency, ...x.items.map(i => i.notes)].join(' ')),
+      recs:db.records.filter(r => ids.has(r.itemId)).length,
+      kc:h6.length === 6 ? db.kc.filter(k => hsDigits(k.hs).startsWith(h6)).length : 0,
+      inq:h6.length === 6 ? (db.inquiries || []).filter(q => hsDigits(q.hs).startsWith(h6)).length : 0};
+  }).sort((a, b) => (a.hs || 'z').localeCompare(b.hs || 'z') || a.names[0].localeCompare(b.names[0], 'ko'));
+}
+/* 같은 품목명인데 업체마다 HS가 다른 경우(품목분류 일관성 점검) */
+function hsConflicts(){
+  const m = new Map();
+  db.items.forEach(i => { const k = nameKey(i.name).replace(/\s/g, ''), h = hsDigits(i.hs); if(k.length < 2 || !h) return; if(!m.has(k)) m.set(k, []); m.get(k).push(i); });
+  return [...m.values()].filter(a => new Set(a.map(i => hsDigits(i.hs).slice(0, 6))).size > 1);
+}
+function viewItemDb(){
+  const gs = itemGroups(), conf = hsConflicts();
+  const terms = itemQ.trim().toLowerCase().split(/\s+/).filter(Boolean), sq = x => x.replace(/[\s\-\/.]/g, '');
+  const list = gs.filter(x => (!itemBadge || x.badges.includes(itemBadge)) && terms.every(t => { const h = hay(x.hs, fmtHs(x.hs), x.names, x.tariffs, x.reqs, x.agency, x.clients.map(clientName)); return h.includes(t) || sq(h).includes(sq(t)); }));
+  const bc = {}; gs.forEach(x => x.badges.forEach(b => bc[b] = (bc[b] || 0) + 1));
+  return `<header class="client-head"><div><h2>품목 DB</h2><p class="client-meta">업체별 ‘품목·요건’에 정리한 내용을 HS 코드로 묶고, KC 인증 목록·세관 질의·업무 기록 건수를 함께 보여 줍니다. HS 해설·관세율·세관장확인 요건의 UNI-PASS 자동 확인(API018·030·029)은 보류 중입니다.</p></div>
+      <div class="client-act"><input type="search" id="itemQ" value="${esc(itemQ)}" placeholder="품목명·HS·요건·업체 검색"></div></header>
+    ${conf.length ? `<section class="pps" style="margin-top:1.25rem"><div class="sec-head"><h3>HS 확인 필요 ${conf.length}건 <span class="cnt">같은 품목명인데 업체마다 HS 6단위가 다름</span></h3></div><ul>${conf.slice(0, 20).map(a => `<li><strong>${esc(a[0].name)}</strong> ${a.map(i => `<span class="hint">${esc(clientName(i.clientId))} ${esc(i.hs)}</span> <button class="mini" data-edit-item="${esc(i.id)}">수정</button>`).join(' · ')}</li>`).join('')}</ul></section>` : ''}
+    <div class="chips" role="group" aria-label="요건">${['', ...REQ_BADGES.map(b => b[0])].filter(b => !b || bc[b]).map(b => `<button class="chip${b === itemBadge ? ' on' : ''}" data-req-badge="${esc(b)}">${esc(b || '전체')}${b ? `<b>${bc[b]}</b>` : ''}</button>`).join('')}</div>
+    ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>HS 코드</th><th>품목</th><th>업체</th><th>세율·FTA</th><th>수입요건</th><th class="num">기록·질의·KC</th></tr></thead><tbody>
+      ${list.slice(0, 200).map(x => `<tr><td class="hs">${esc(x.hs ? fmtHs(x.hs) : '미입력')}</td><td>${x.names.map(n => `<div><strong>${esc(n)}</strong></div>`).join('')}</td>
+        <td>${x.clients.map(c => `<button class="linkish" data-go="client" data-id="${esc(c)}">${esc(clientName(c))}</button>`).join('<br>')}</td>
+        <td>${x.tariffs.map(esc).join('<br>')}</td>
+        <td>${x.badges.map(b => `<span class="tag req">${esc(b)}</span> `).join('')}${x.reqs.length ? `<div class="pre hint">${esc(x.reqs.join('\n'))}</div>` : ''}${x.agency.length ? `<div class="hint">기관: ${esc(x.agency.join(', '))}</div>` : ''}</td>
+        <td class="num">${x.recs} · ${x.inq ? `<button class="linkish" data-inq-hs="${esc(x.hs.slice(0, 6))}">${x.inq}</button>` : 0} · ${x.kc}</td></tr>`).join('')}
+    </tbody></table></div>${list.length > 200 ? `<p class="hint">${list.length}개 중 200개만 보입니다. 검색어로 좁히세요.</p>` : ''}`
+    : `<p class="empty">${gs.length ? '조건에 맞는 품목이 없습니다.' : '아직 정리한 품목이 없습니다. 업체 화면의 ‘품목·요건’에서 품목을 추가하면 여기에 모입니다.'}</p>`}`;
+}

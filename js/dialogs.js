@@ -13,16 +13,21 @@ function openDialog({title, body, onSave, onDelete, onOpen, saveLabel = '저장'
   if(onOpen) onOpen(f);
 }
 
-function relatedHTML(clientId, type, selfId, itemId){
-  const item = itemId ? db.items.find(i => i.id === itemId) : null;
-  const procs = db.procedures.filter(p => p.type === type && (p.clientId === clientId || !p.clientId));
-  const same = db.records.filter(r => r.id !== selfId && r.clientId === clientId && r.type === type).sort(byDateDesc).slice(0,4);
-  const others = db.records.filter(r => r.id !== selfId && r.clientId !== clientId && r.type === type && r.special).sort(byDateDesc).slice(0,3);
-  if(!item && !procs.length && !same.length && !others.length) return '<p class="hint">이 업체의 같은 유형 기록과 절차가 아직 없습니다.</p>';
+/* 기록 창 오른쪽 참고 패널: 품목 요건, 참고 절차, 진행 중 중복 의심, 비슷한 과거 건(G3), 관련 세관 질의 */
+function relatedHTML(t){
+  const item = t.itemId ? db.items.find(i => i.id === t.itemId) : null;
+  const procs = db.procedures.filter(p => p.type === t.type && (p.clientId === t.clientId || !p.clientId));
+  const open = db.records.filter(r => r.id !== t.id && r.status !== '완료' && r.clientId === t.clientId && r.type === t.type).sort(byDateDesc).slice(0, 3);
+  const sims = similarRecords(t, 5), simIds = new Set(sims.map(x => x.r.id));
+  const inqs = similarInquiries(t, sims, 3);
+  const others = db.records.filter(r => r.id !== t.id && r.clientId !== t.clientId && r.type === t.type && r.special && r.status === '완료' && !simIds.has(r.id)).sort(byDateDesc).slice(0, 3);
+  if(!item && !procs.length && !open.length && !sims.length && !inqs.length && !others.length) return '<p class="hint">비슷한 과거 건과 절차가 아직 없습니다. 제목에 품목명을 넣으면 다른 업체의 같은 품목 건도 찾아 줍니다.</p>';
   const li = (r, extra = '') => `<li>${r.special ? '<span class="stamp sm">특이</span> ' : ''}<span class="rec-date">${esc(recDate(r))}</span>${esc(r.title)}${extra}${r.special && r.specialNote ? `<div class="hint" style="white-space:pre-wrap">${esc(r.specialNote)}</div>` : ''}</li>`;
   return `${item ? `<h4>품목 요건: ${esc(item.name)}</h4><ul><li>${item.hs ? `HS ${esc(item.hs)}` : ''}${item.tariff ? `, ${esc(item.tariff)}` : ''}${item.reqs ? `<div class="hint" style="white-space:pre-wrap">${esc(item.reqs)}</div>` : ''}${item.agency ? `<div class="hint">기관: ${esc(item.agency)}</div>` : ''}</li></ul>` : ''}
+    ${open.length ? `<h4>진행 중인 같은 업체·유형 건 (중복 확인)</h4><ul>${open.map(r => li(r, ` <span class="hint">${esc(r.caseNo || '')} ${esc(r.status)}</span>`)).join('')}</ul>` : ''}
     ${procs.length ? `<h4>참고할 절차</h4><ul>${procs.map(p => `<li><strong>${esc(p.title)}</strong> <span class="hint">${p.clientId ? '업체 전용' : '공통'}</span>${(p.steps || []).length ? `<ol class="mini-ol">${p.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}${p.cautions ? `<div class="hint" style="white-space:pre-wrap">주의: ${esc(p.cautions)}</div>` : ''}</li>`).join('')}</ul>` : ''}
-    ${same.length ? `<h4>이 업체의 같은 업무</h4><ul>${same.map(r => li(r)).join('')}</ul>` : ''}
+    ${sims.length ? `<h4>${esc(simSummary(sims))}</h4><ul class="sim" data-sims="${sims.length}">${sims.map(x => simItemHTML(x, {copy:'data-x-sim', inDialog:true})).join('')}</ul>` : ''}
+    ${inqs.length ? `<h4>관련 세관 질의</h4><ul class="sim">${inqs.map(q => inqMiniHTML(q, true)).join('')}</ul>` : ''}
     ${others.length ? `<h4>다른 업체의 같은 유형 특이 사례</h4><ul>${others.map(r => li(r, ` <span class="hint">${esc(clientName(r.clientId))}</span>`)).join('')}</ul>` : ''}`;
 }
 
@@ -39,7 +44,9 @@ function openRecord(r, preset = {}){
     const m = preset.mail, c = matchClient(preset.thread ? preset.thread.ms : m);
     Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:String((preset.thread ? preset.thread.ms[0] : m).date || today()).slice(0, 10), date:status === '완료' ? String(m.date || today()).slice(0, 10) : '', summary:m.snippet || '', bl:m.bl || '', refNo:m.declNo || findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:[]});
     (preset.thread ? preset.thread.ms : [m]).forEach(x => attachMail(rec, x));
-    rec.title = String(m.subject || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim() || rec.title;
+    rec.title = String(m.subject || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim() || rec.title;    const txt = (preset.thread ? preset.thread.ms : [m]).map(x => (x.subject || '') + ' ' + String(x.snippet || '').slice(0, 200)).join(' ');
+    if(!preset.type){ const g = guessType(txt, rec.clientId); if(g) rec.type = g; }          // 메일 내용으로 업무 유형·품목 추정 (창에서 바꿀 수 있음)
+    const gi = guessItem(txt, rec.clientId); if(gi) rec.itemId = gi.id;
   }
   if(isNew && preset.prefill) Object.assign(rec, preset.prefill);
   if(!db.clients.some(c => c.id === rec.clientId)) rec.clientId = first;
@@ -68,6 +75,7 @@ function openRecord(r, preset = {}){
         <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
       </div>
       <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
+      <p class="hint sim-hint" data-x="simHint" hidden></p>
       <label>진행 요약<textarea name="summary" rows="4" placeholder="진행 순서, 제출 서류, 소요 기간 등. 완료 시 비워 두면 체크리스트로 자동 작성됩니다.">${esc(rec.summary)}</textarea></label>
       <label class="check"><input type="checkbox" name="special"${rec.special ? ' checked' : ''}> 일반 절차와 다르게 처리함</label>
       <div class="special-fields"><label>특이 처리 내용<textarea name="specialNote" rows="4" placeholder="무엇이 달랐는지 / 어떻게 해결했는지 / 다음에 적용할 점">${esc(rec.specialNote)}</textarea></label></div>
@@ -158,7 +166,22 @@ function openRecord(r, preset = {}){
           .sort((a,b) => ((b.type === ty) - (a.type === ty)) || ((!!b.clientId) - (!!a.clientId)));
         procPick.innerHTML = ps.length ? opts(ps.map(p => [p.id, `${p.title} (${p.clientId ? '업체 전용' : '공통'}, ${p.type})`]), ps[0].id) : '<option value="">불러올 절차가 없습니다</option>';
       };
-      const upd = () => {rel.innerHTML = relatedHTML(N('clientId').value, N('type').value, rec.id, itemSel.value);};
+      const upd = () => {rel.innerHTML = relatedHTML({id:rec.id, clientId:N('clientId').value, type:N('type').value, itemId:itemSel.value, title:N('title').value, summary:N('summary').value, bl:N('bl').value, causes:[...f.querySelectorAll('[name=cause]:checked')].map(x => x.value)});
+        const sl = rel.querySelector('[data-sims]'), h = X('simHint');
+        h.hidden = !sl; if(sl) h.innerHTML = `${esc(sl.previousElementSibling.textContent)} — <button type="button" class="linkish" data-x="toSim">아래 참고 패널에서 보기</button>`;};
+      f.addEventListener('click', e => { if(e.target.closest('[data-x="toSim"]')) rel.querySelector('[data-sims]').scrollIntoView({behavior:'smooth', block:'start'}); });
+      let updT; const updLater = () => { clearTimeout(updT); updT = setTimeout(upd, 400); };
+      ['title', 'summary', 'bl'].forEach(n => N(n).addEventListener('input', updLater));
+      f.querySelectorAll('[name=cause]').forEach(x => x.addEventListener('change', upd));
+      rel.addEventListener('click', e => {                                 // 비슷한 과거 건의 단계·서류를 체크리스트에 더함
+        const b = e.target.closest('[data-x-sim]'); if(!b) return;
+        const src = db.records.find(x => x.id === b.dataset.xSim); if(!src) return;
+        const steps = (src.checklist || []).filter(s => !/^\[점검\]/.test(s.text)).map(s => normStep(s.text)), docs = (src.docs || []).map(s => normStep(s.text));
+        const c0 = lines(N('checklist').value), d0 = lines(N('docs').value), c1 = mergeLines(c0, steps), d1 = mergeLines(d0, docs);
+        N('checklist').value = c1.join('\n'); N('docs').value = d1.join('\n');
+        if(!usedProc && src.procId && db.procedures.some(p => p.id === src.procId)) usedProc = src.procId;
+        toast(c1.length + d1.length - c0.length - d0.length ? `${src.caseNo || src.title}의 단계 ${c1.length - c0.length}개, 서류 ${d1.length - d0.length}개를 더했습니다.` : '이미 모두 들어 있습니다.');
+      });
       const tog = () => {spf.hidden = !N('special').checked;};
       const stat = () => {if(N('status').value === '완료' && !N('date').value) N('date').value = today();};
       const loadProc = (id, ask) => {
@@ -483,6 +506,7 @@ function openClient(c){
       db.records = db.records.filter(r => r.clientId !== cl.id);
       db.procedures = db.procedures.filter(p => p.clientId !== cl.id);
       db.items = db.items.filter(i => i.clientId !== cl.id);
+      (db.inquiries || []).forEach(q => { if(q.clientId === cl.id){ q.clientId = ''; q.updatedAt = nowIso(); } });   // 세관 질의는 지식이므로 남김
       route = {name:'home', id:null}; toast('업체를 삭제했습니다.');
     },
     onOpen(f){

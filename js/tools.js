@@ -7,8 +7,45 @@ function kcRowsFor(cid, q){
 function kcTableHTML(rows, showClient){
   if(!rows.length) return '<p class="empty">해당하는 품목이 없습니다.</p>';
   return `<div class="table-wrap"><table class="grid"><thead><tr>${showClient ? '<th>업체</th>' : ''}<th>Article No</th><th>모델</th><th>HS</th><th>인증 유형</th><th>KC 인증번호</th><th>인증일</th><th>비고</th></tr></thead><tbody>
-    ${rows.slice(0,60).map(k => `<tr>${showClient ? `<td>${esc(clientName(k.c))}</td>` : ''}<td class="hs">${esc(k.a)}</td><td>${esc(k.m)}<div class="hint">${esc(k.n || k.pc || '')}</div></td><td class="hs">${esc(k.hs)}</td><td>${esc(k.t || '')}</td><td>${esc(k.no || '')}</td><td>${esc(k.d || '')}</td><td>${k.rm ? `<span class="tag cause">${esc(k.rm)}</span>` : ''}</td></tr>`).join('')}
+    ${rows.slice(0,60).map(k => `<tr>${showClient ? `<td>${esc(clientName(k.c))}</td>` : ''}<td class="hs">${esc(k.a)}</td><td>${esc(k.m)}<div class="hint">${esc(k.n || k.pc || '')}</div></td><td class="hs">${esc(k.hs)}</td><td>${esc(k.t || '')}</td><td>${esc(k.no || '')}${kcChip(k)}</td><td>${esc(k.d || '')}${k.chk && k.chk.date && k.chk.date !== k.d ? `<div class="hint">RRA ${esc(k.chk.date)}</div>` : ''}</td><td>${k.rm ? `<span class="tag cause">${esc(k.rm)}</span>` : ''}</td></tr>`).join('')}
   </tbody></table></div>${rows.length > 60 ? `<p class="hint">${rows.length}건 중 60건만 보입니다. 검색어를 더 넣어 좁히세요.</p>` : ''}`;
+}
+const kcNorm = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+function kcChip(k){
+  const c = k.chk; if(!c) return '';
+  const m = {ok:['ok', '✓ 유효'], model:['warn', '△ 모델 확인'], none:['bad', '✗ 조회 안 됨'], err:['', '? 조회 오류']}[c.st] || ['', ''];
+  return ` <span class="kc-chip ${m[0]}" title="${esc([c.mtl, c.bsm, c.models ? '모델: ' + c.models.slice(0, 200) : '', c.err || ''].filter(Boolean).join(' · '))}">${m[1]}</span>`;
+}
+/* 국립전파연구원 적합성평가 DB로 인증번호 유효 여부와 모델명 포함 여부를 확인 (Apps Script 경유, 100개씩) */
+async function kcCheck(cid){
+  const cfg = db.settings.mail || {};
+  if(!cfg.endpoint || !cfg.token){ toast('먼저 Apps Script 연동을 설정하세요.'); return; }
+  const rows = db.kc.filter(k => k.c === cid && k.no);
+  const nos = [...new Set(rows.map(k => k.no.trim()))];
+  if(!nos.length){ toast('인증번호가 있는 품목이 없습니다.'); return; }
+  const results = {};
+  try{
+    for(let i = 0; i < nos.length; i += 100){
+      toast(`국립전파연구원 DB와 대조 중… ${Math.min(i + 100, nos.length)}/${nos.length}`);
+      const j = await syncPost(cfg, {op:'kc', items:nos.slice(i, i + 100)});
+      if(!j.ok) throw new Error(j.error || '응답 오류');
+      Object.assign(results, j.results || {});
+    }
+  }catch(e){ toast('대조하지 못했습니다: ' + e.message); return; }
+  const at = nowIso();
+  rows.forEach(k => {
+    const r = results[k.no.trim()];
+    if(!r) return;
+    const inf = r.info || {};
+    let st = r.code === '0000' ? 'ok' : r.code === '0001' ? 'none' : 'err';
+    const models = [inf.matlBscMdlNm, inf.matlDerivMdlNm].filter(Boolean).join(',');
+    if(st === 'ok' && k.m && models){ const mk = kcNorm(k.m); if(!models.split(/[,;\n]/).some(x => { const xk = kcNorm(x); return xk && (xk === mk || mk.includes(xk) || xk.includes(mk)); })) st = 'model'; }
+    k.chk = {at, st, date:inf.cvaPcsYmd || '', bsm:inf.bsmNm || '', mtl:inf.mtlNm || '', models:models.slice(0, 1000), err:r.err || (st === 'err' ? r.code : '')};
+  });
+  db.kcMeta = db.kcMeta || {}; db.kcMeta[cid] = {...(db.kcMeta[cid] || {}), checkedAt:at};
+  commit();
+  const c = st => rows.filter(k => k.chk && k.chk.st === st).length;
+  toast(`대조 완료: 유효 ${c('ok')} · 모델 확인 필요 ${c('model')} · 조회 안 됨 ${c('none')}${c('err') ? ' · 오류 ' + c('err') : ''}`);
 }
 function kcSection(c){
   const all = db.kc.filter(k => k.c === c.id);
@@ -18,9 +55,10 @@ function kcSection(c){
   return `<section class="items">
     <div class="sec-head"><h3>KC 인증 목록 <span class="cnt">${all.length}건${meta.version ? ', ' + esc(meta.version) + ' 기준' : ''}</span></h3></div>
     <p class="hint">적합등록 ${cnt('적합등록')}건, 적합인증 ${cnt('적합인증')}건, 확인 필요 표시 ${all.filter(k => k.rm).length}건. 수입 전 Article No나 모델명으로 인증 여부를 확인하세요.</p>
+    <p class="hint">${meta.checkedAt ? `국립전파연구원 확인 ${esc(meta.checkedAt.slice(0, 10))}: 유효 ${all.filter(k => k.chk && k.chk.st === 'ok').length}건 · 모델 확인 필요 ${all.filter(k => k.chk && k.chk.st === 'model').length}건 · 조회 안 됨 ${all.filter(k => k.chk && k.chk.st === 'none').length}건` : '아직 국립전파연구원 DB와 대조하지 않았습니다.'} <button class="mini" data-kc-check="${esc(c.id)}">인증번호 일괄 확인</button></p>
     <input id="kcQ" data-kc-client="${esc(c.id)}" type="search" placeholder="Article No, 모델명, 인증번호로 찾기" style="max-width:420px;margin-top:.5rem">
-    <div id="kcTable" style="margin-top:.5rem">${kcTableHTML(all.filter(k => k.rm).length ? all.filter(k => k.rm) : all, false)}</div>
-    <p class="hint">처음에는 비고(시리즈 구분 필요, 단종·해지 등)가 있는 품목만 보여 줍니다.</p>
+    <div id="kcTable" style="margin-top:.5rem">${(() => { const bad = all.filter(k => k.rm || (k.chk && k.chk.st !== 'ok')); return kcTableHTML(bad.length ? bad : all, false); })()}</div>
+    <p class="hint">처음에는 비고가 있거나 국립전파연구원 대조에서 문제가 나온 품목만 보여 줍니다.</p>
   </section>`;
 }
 
