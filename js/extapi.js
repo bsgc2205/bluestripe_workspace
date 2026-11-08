@@ -5,7 +5,7 @@
    trrt UNI-PASS 관세율 기본조회(CUSTOMS_CONFIRM_KEY) — 품목 HS 10단위 기본세율
    ccct 관세청 세관장확인대상물품(DATA_GO_KR_KEY)   — 품목 HS 10단위 확인법령·요건기관
    chem 한국환경공단 화학물질(DATA_GO_KR_KEY)       — 품목 CAS → 물질명·분류(유독·제한·금지·허가·사고대비 등)
-   food 식품안전나라 I1020(FOOD_SAFETY_API_KEY)     — 품목 식품 원재료명 → 원재료 정보(사용 가능 여부)
+   food 식약처 식품 원재료 정보(DATA_GO_KR_KEY)    — 품목 식품 원재료명 → 대분류(LCLAS_NM)·사용조건(USE_CND_NM)
    결과는 품목(item.ext)·법령(db.lawInfo)에 요약만 저장하고, 변화가 있으면 db.alerts(공통 알림함)에 올린다.
    응답 필드명은 기관 문서마다 달라 '이름처럼 보이는 칸'을 골라 쓰고, 나머지는 원문 칸을 그대로 보여 준다. */
 const EXT_NAMES = {law:'법령', trrt:'관세율', ccct:'세관장확인', chem:'화학물질', food:'식품원재료'};
@@ -72,9 +72,13 @@ function summarize(svc, res, p){
     const flags = [...new Set(rows.flatMap(r => Object.entries(r).filter(([k, v]) => k[0] !== '_' && CHEM_FLAG.test(v)).map(([, v]) => String(v).trim().slice(0, 50))))].slice(0, 8);
     return {cas:p.q, name, flags, n:subs.length || rows.length, found:!!rows.length, raw:rows.slice(0, 4).map(r => rowText(r)), sig:flags.join('|') + '|' + (rows.length ? 1 : 0)};
   }
-  if(svc === 'food'){
-    const verdict = [...new Set(rows.flatMap(r => Object.values(r)).map(v => String(v).trim()).filter(v => v.length <= 12 && /가능|불가|제한|금지/.test(v)))].slice(0, 4);
-    return {name:p.name, n:rows.length, verdict, raw:rows.slice(0, 3).map(r => rowText(r)), sig:verdict.join('|') + '|' + rows.length};
+  if(svc === 'food'){                                                    // 원재료명이 같은 줄을 우선, 대분류와 사용조건으로 판단
+    const nm = x => String(x || '').replace(/\s+/g, '').toLowerCase(), q = nm(p.name);
+    const ex = rows.filter(r => nm(r.RPRSNT_RAWMTRL_NM) === q || String(r.RAWMTRL_NCKNM || '').split(/[,，]/).some(x => nm(x) === q)), use = (ex.length ? ex : rows).slice(0, 5);
+    const cls = [...new Set(use.map(r => String(r.LCLAS_NM || '').trim()).filter(Boolean))], cnd = [...new Set(use.map(r => String(r.USE_CND_NM || '').trim()).filter(Boolean))];
+    const verdict = [...cls, ...cnd.map(c => c.slice(0, 40))].slice(0, 4);
+    const limited = cnd.some(c => /제한|한함|불가|금지|사용할\s*수\s*없/.test(c)) || (cls.length > 0 && !cls.some(c => /식품원료/.test(c)));
+    return {name:p.name, n:rows.length, exact:ex.length, verdict, limited, raw:use.slice(0, 3).map(r => rowText(r, 10)), sig:verdict.join('|') + '|' + (ex.length ? 1 : 0)};
   }
   return {raw:rows.map(r => rowText(r))};
 }
@@ -92,7 +96,7 @@ function itemAlerts(it, prev, cur){
     if(/화관법|유해화학|유독|제한|금지|허가|사고대비/.test(REQ_TEXT(it))) return;
     addAlert({key:`chem|${it.id}|${c.cas}|${c.sig}`, kind:'chem', ttype:'item', tid:it.id, title:`화학물질 분류 확인: ${nm} — CAS ${c.cas}${c.name ? ' ' + c.name : ''}`, text:`분류: ${c.flags.join(', ')}\n품목 요건에 화관법 관련 내용이 없습니다.`});
   });
-  (cur.food || []).filter(f => !f.err && f.verdict.some(v => /불가|제한|금지/.test(v))).forEach(f => addAlert({key:`food|${it.id}|${f.name}|${f.sig}`, kind:'food', ttype:'item', tid:it.id, title:`식품원재료 사용 제한 확인: ${nm} — ${f.name}`, text:`판정: ${f.verdict.join(', ')}\n${f.raw.join('\n')}`}));
+  (cur.food || []).filter(f => !f.err && f.limited).forEach(f => addAlert({key:`food|${it.id}|${f.name}|${f.sig}`, kind:'food', ttype:'item', tid:it.id, title:`식품원재료 사용 조건 확인: ${nm} — ${f.name}`, text:`판정: ${f.verdict.join(', ')}\n${f.raw.join('\n')}`}));
 }
 let extBusy = false;
 async function checkItemsExt(items, silent){
@@ -130,7 +134,7 @@ function extItemHTML(it, full){
   if(e.ccct) out.push(e.ccct.err ? `<span class="kc-chip bad" title="${esc(e.ccct.err)}">세관장확인 오류</span>` : e.ccct.n ? `<span class="kc-chip warn" title="${esc(e.ccct.list.map(x => x.raw).join('\n'))}">세관장확인 ${e.ccct.n}건: ${esc([...new Set(e.ccct.list.map(x => x.law).filter(Boolean))].join(', ') || '내용 보기')}</span>` : '<span class="kc-chip ok">세관장확인 대상 아님</span>');
   if(e.trrt) out.push(e.trrt.err ? `<span class="kc-chip bad" title="${esc(e.trrt.err)}">관세율 ${/설정 필요/.test(e.trrt.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip" title="${esc(e.trrt.rows.join('\n'))}">관세율 ${esc((e.trrt.rows[0] || '없음').slice(0, 50))}</span>`);
   (e.chem || []).forEach(c => out.push(c.err ? `<span class="kc-chip bad" title="${esc(c.err)}">CAS ${esc(c.cas)} 오류</span>` : `<span class="kc-chip ${c.flags.length ? 'warn' : c.found ? 'ok' : ''}" title="${esc((c.raw || []).join('\n'))}">CAS ${esc(c.cas)}${c.name ? ' ' + esc(c.name) : ''}${c.flags.length ? ' · ' + esc(c.flags.slice(0, 3).join(', ')) : c.found ? '' : ' · 조회 안 됨'}</span>`));
-  (e.food || []).forEach(f => out.push(f.err ? `<span class="kc-chip bad" title="${esc(f.err)}">${esc(f.name)} ${/설정 필요/.test(f.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip ${f.verdict.some(v => /불가|제한|금지/.test(v)) ? 'bad' : f.n ? 'ok' : ''}" title="${esc((f.raw || []).join('\n'))}">${esc(f.name)}${f.verdict.length ? ' · ' + esc(f.verdict.join(', ')) : f.n ? '' : ' · 조회 안 됨'}</span>`));
+  (e.food || []).forEach(f => out.push(f.err ? `<span class="kc-chip bad" title="${esc(f.err)}">${esc(f.name)} ${/설정 필요/.test(f.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip ${f.limited ? 'bad' : f.n ? 'ok' : ''}" title="${esc((f.raw || []).join('\n'))}">${esc(f.name)}${f.verdict.length ? ' · ' + esc(f.verdict.join(' · ')) : f.n ? '' : ' · 조회 안 됨'}${f.n && !f.exact ? ' (이름 일부 일치)' : ''}</span>`));
   if(!out.length) return '';
   return `<div class="ext-row">${out.join(' ')}<span class="hint">${esc(e.at.slice(0, 10))} 확인</span></div>${full ? extDetailHTML(e) : ''}`;
 }
@@ -211,18 +215,17 @@ function lawLinesHTML(p){
 
 /* ---------- 연결 점검·자동 확인 ---------- */
 /* 연결 점검 + 설정: 키와 주소는 Apps Script 스크립트 속성에 저장(재배포 불필요). 키 값은 화면에 다시 보여 주지 않음 */
-const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_UNI_PATH:'UNI-PASS 세관장확인 경로 (/ext/rest/ 뒤)', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소'};
-const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', UNIPASS_KEY_API029:'UNI-PASS 세관장확인 키 (API029)', FOOD_SAFETY_API_KEY:'식품안전나라 인증키'};
+const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_UNI_PATH:'UNI-PASS 세관장확인 경로 (/ext/rest/ 뒤)', FOOD_URL:'식품 원재료 요청주소', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소'};
+const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', UNIPASS_KEY_API029:'UNI-PASS 세관장확인 키 (API029)'};
 async function openApiPing(){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token){ toast('먼저 Apps Script 연동을 설정하세요.'); return; }
   toast('공공데이터 연결을 점검하는 중…');
   let j;
   try{ j = await collectApi({apiping:1}); }catch(e){ toast('점검하지 못했습니다: ' + e.message + ' (gs를 새 버전으로 배포했는지 확인)'); return; }
-  const st = j.state || {keys:{}, conf:{}}, admin = me && me.role === 'admin', food = st.food;
+  const st = j.state || {keys:{}, conf:{}}, admin = me && me.role === 'admin';
   openDialog({title:'공공데이터 연결 점검', saveLabel:'닫기', body:`<p class="hint">서비스마다 시험 값으로 한 번씩 호출한 결과입니다. 오늘 호출 수: ${esc(Object.entries(j.today || {}).map(([k, v]) => `${EXT_NAMES[k] || k} ${v}`).join(', ') || '없음')}</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>서비스</th><th>키</th><th>결과</th><th>받은 칸</th></tr></thead><tbody>${(j.services || []).map(s => `<tr><td>${esc(s.name)}</td><td class="hs">${esc(s.key)}</td><td>${s.ok ? `<span class="kc-chip ok">정상 ${s.n}건</span>` : `<span class="kc-chip bad">${esc(s.error)}</span>`}</td><td class="hint">${esc((s.fields || []).join(', '))}</td></tr>`).join('')}</tbody></table></div>
-    <p class="hint">식품원재료(I1020)는 이름 검색이 없어 목록 전체를 받아 두고 찾습니다. ${food ? (food.err ? esc(food.err) : `받아 둔 목록 ${food.n.toLocaleString('ko-KR')}건 (${esc(String(food.at).slice(0, 10))})`) : '아직 받지 않았습니다.'} <button type="button" class="mini" data-x="foodsync">식품원재료 목록 받기</button> <span class="hint" data-x="foodmsg"></span></p>
     ${admin ? `<div class="dlg-section"><h4>설정 (관리자) — 저장하면 바로 적용, 재배포 필요 없음</h4>
       <div class="row2">${Object.keys(KEY_LABEL).map(k => `<label>${esc(KEY_LABEL[k])}<input type="password" autocomplete="new-password" data-key="${k}" placeholder="${st.keys[k] ? '저장됨 ' + esc(st.keys[k]) + ' — 바꿀 때만 입력' : '미저장'}"></label>`).join('')}</div>
       <div class="row2">${Object.keys(CONF_LABEL).map(k => `<label>${esc(CONF_LABEL[k])}<input data-conf="${k}" value="${esc(st.conf[k] || '')}"></label>`).join('')}</div>
@@ -232,20 +235,6 @@ async function openApiPing(){
     onSave(){ return true; },
     onOpen(f){
       const X = n => f.querySelector(`[data-x="${n}"]`);
-      X('foodsync').onclick = async () => {
-        const b = X('foodsync'); b.disabled = true;
-        let start = 1;
-        try{
-          for(let n = 0; n < 40; n++){                                     // 8천 건씩 나눠 받음 (한 번 요청이 화면 대기 시간을 넘지 않게)
-            X('foodmsg').textContent = `받는 중… ${start > 1 ? (start - 1).toLocaleString('ko-KR') + '건' : '시작'}`;
-            const r = await syncPost(cfg, {op:'foodsync', start});
-            if(!r.ok) throw new Error(r.error || '응답 오류');
-            if(r.done){ X('foodmsg').textContent = `${r.n.toLocaleString('ko-KR')}건 받음. 칸: ${(r.fields || []).join(', ')}`; break; }
-            start = r.next; X('foodmsg').textContent = `받는 중… ${r.got.toLocaleString('ko-KR')} / ${r.total.toLocaleString('ko-KR')}건`;
-          }
-        }catch(e){ X('foodmsg').textContent = '실패: ' + e.message + (start > 1 ? ' — 다시 누르면 처음부터 받습니다' : ''); }
-        b.disabled = false;
-      };
       if(!admin) return;
       setTimeout(() => f.querySelectorAll('[data-key],[data-x="pin"]').forEach(el => { el.value = ''; }), 300);   // 브라우저가 로그인 비밀번호를 자동으로 채운 경우 지움
       X('confsave').onclick = async () => {
