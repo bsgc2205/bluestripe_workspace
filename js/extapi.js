@@ -210,15 +210,47 @@ function lawLinesHTML(p){
 }
 
 /* ---------- 연결 점검·자동 확인 ---------- */
+/* 연결 점검 + 설정: 키와 주소는 Apps Script 스크립트 속성에 저장(재배포 불필요). 키 값은 화면에 다시 보여 주지 않음 */
+const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소'};
+const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', FOOD_SAFETY_API_KEY:'식품안전나라 인증키'};
 async function openApiPing(){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token){ toast('먼저 Apps Script 연동을 설정하세요.'); return; }
   toast('공공데이터 연결을 점검하는 중…');
   let j;
   try{ j = await collectApi({apiping:1}); }catch(e){ toast('점검하지 못했습니다: ' + e.message + ' (gs를 새 버전으로 배포했는지 확인)'); return; }
+  const st = j.state || {keys:{}, conf:{}}, admin = me && me.role === 'admin', food = st.food;
   openDialog({title:'공공데이터 연결 점검', saveLabel:'닫기', body:`<p class="hint">서비스마다 시험 값으로 한 번씩 호출한 결과입니다. 오늘 호출 수: ${esc(Object.entries(j.today || {}).map(([k, v]) => `${EXT_NAMES[k] || k} ${v}`).join(', ') || '없음')}</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>서비스</th><th>키</th><th>결과</th><th>받은 칸</th></tr></thead><tbody>${(j.services || []).map(s => `<tr><td>${esc(s.name)}</td><td class="hs">${esc(s.key)}</td><td>${s.ok ? `<span class="kc-chip ok">정상 ${s.n}건</span>` : `<span class="kc-chip bad">${esc(s.error)}</span>`}</td><td class="hint">${esc((s.fields || []).join(', '))}</td></tr>`).join('')}</tbody></table></div>
-    <p class="hint">‘설정 필요’는 gs 파일 맨 아래 EXT_CONF를, ‘미저장’은 saveApiKeys를 확인하세요. 연결 실패·HTTP 오류는 Apps Script(해외 서버)에서 막힌 경우로, 사무실 PC 수집기 경유가 필요합니다.</p>`, onSave(){ return true; }});
+    <p class="hint">식품원재료(I1020)는 이름 검색이 없어 목록 전체를 받아 두고 찾습니다. ${food ? (food.err ? esc(food.err) : `받아 둔 목록 ${food.n.toLocaleString('ko-KR')}건 (${esc(String(food.at).slice(0, 10))})`) : '아직 받지 않았습니다.'} <button type="button" class="mini" data-x="foodsync">식품원재료 목록 받기</button> <span class="hint" data-x="foodmsg"></span></p>
+    ${admin ? `<div class="dlg-section"><h4>설정 (관리자) — 저장하면 바로 적용, 재배포 필요 없음</h4>
+      <div class="row2">${Object.keys(KEY_LABEL).map(k => `<label>${esc(KEY_LABEL[k])}<input type="password" autocomplete="off" data-key="${k}" placeholder="${st.keys[k] ? '저장됨 ' + esc(st.keys[k]) + ' — 바꿀 때만 입력' : '미저장'}"></label>`).join('')}</div>
+      <div class="row2">${Object.keys(CONF_LABEL).map(k => `<label>${esc(CONF_LABEL[k])}<input data-conf="${k}" value="${esc(st.conf[k] || '')}"></label>`).join('')}</div>
+      <div class="btn-row"><button type="button" class="primary" data-x="confsave">설정 저장 후 다시 점검</button><span class="hint" data-x="confmsg"></span></div>
+      <p class="hint">키는 Apps Script 스크립트 속성에만 저장되고 Workspace 데이터·GitHub에는 남지 않습니다. 주소를 비우고 저장하면 기본값으로 돌아갑니다.</p></div>` : ''}`,
+    onSave(){ return true; },
+    onOpen(f){
+      const X = n => f.querySelector(`[data-x="${n}"]`);
+      X('foodsync').onclick = async () => {
+        X('foodmsg').textContent = '받는 중… (수천 건이면 1~2분)';
+        try{ const r = await syncPost(cfg, {op:'foodsync'}); X('foodmsg').textContent = r.ok ? `${r.n.toLocaleString('ko-KR')}건 받음. 칸: ${(r.fields || []).join(', ')}` : '실패: ' + r.error; }
+        catch(e){ X('foodmsg').textContent = '실패: ' + e.message; }
+      };
+      if(!admin) return;
+      X('confsave').onclick = async () => {
+        const set = {};
+        f.querySelectorAll('[data-key]').forEach(el => { if(el.value.trim()) set[el.dataset.key] = el.value.trim(); });
+        f.querySelectorAll('[data-conf]').forEach(el => { if(el.value.trim() !== (st.conf[el.dataset.conf] || '')) set[el.dataset.conf] = el.value.trim(); });
+        if(!Object.keys(set).length){ X('confmsg').textContent = '바뀐 값이 없습니다.'; return; }
+        X('confmsg').textContent = '저장 중…';
+        try{
+          const r = await syncPost(cfg, {op:'conf', set});
+          if(!r.ok) throw new Error(r.error || '응답 오류');
+          if((r.bad || []).length){ X('confmsg').textContent = '형식이 맞지 않아 저장하지 않음: ' + r.bad.map(k => CONF_LABEL[k] || k).join(', '); return; }
+          db.settings.extPause = ''; $('#dlg').close(); toast('설정을 저장했습니다. 다시 점검합니다.'); openApiPing();
+        }catch(e){ X('confmsg').textContent = '저장하지 못했습니다: ' + e.message; }
+      };
+    }});
 }
 function autoExtChecks(){
   const cfg = db.settings.mail || {};
