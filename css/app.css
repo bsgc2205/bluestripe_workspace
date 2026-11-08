@@ -2,14 +2,14 @@
   --bg:#EDF0F3; --surface:#FFFFFF; --ink:#16202A; --muted:#5B6774; --line:#D3D9DF;
   --accent:#1E4E79; --accent-ink:#FFFFFF; --stamp:#B3261E; --stamp-bg:#FBEDEC; --chip:#E3E9EF;
   /* 색 규칙: 빨강=조치 필요, 주황=확인, 파랑=진행, 초록=정산 대기, 회색=참고·보류 */
-  --act:#B3261E; --chk:#A15C00; --chk-bg:#FFF4E5; --prog:#1E4E79; --settle:#2E7D5B; --ref:#8A96A3;
+  --act:#B3261E; --chk:#A15C00; --chk-bg:#FFF4E5; --prog:#1E4E79; --settle:#2E7D5B; --ship:#0F7C8C; --ref:#8A96A3;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){
   :root{
     --bg:#11161B; --surface:#1A2128; --ink:#E6EBEF; --muted:#95A1AC; --line:#2C3640;
     --accent:#7FB0DC; --accent-ink:#0E1A26; --stamp:#F07167; --stamp-bg:#2A1B1C; --chip:#24303A;
-    --act:#F07167; --chk:#E8A33D; --chk-bg:#2B2215; --prog:#7FB0DC; --settle:#5CC08F; --ref:#6F7B87;
+    --act:#F07167; --chk:#E8A33D; --chk-bg:#2B2215; --prog:#7FB0DC; --settle:#5CC08F; --ship:#4CC3D2; --ref:#6F7B87;
     color-scheme:dark;
   }
 }
@@ -382,7 +382,7 @@ details.nav-grp[open]>summary::after{content:" ▾"}
 /* 홈: 범례, 오늘 할 일 */
 .legend{display:flex;flex-wrap:wrap;gap:.35rem .9rem;font-size:.78rem;color:var(--muted);margin:.3rem 0 .6rem}
 .lg::before{content:"";display:inline-block;width:.7rem;height:.7rem;border-radius:2px;margin-right:.3rem;vertical-align:-1px;background:var(--ref)}
-.lg.act::before{background:var(--act)}.lg.chk::before{background:var(--chk)}.lg.prog::before{background:var(--prog)}.lg.settle::before{background:var(--settle)}
+.lg.act::before{background:var(--act)}.lg.chk::before{background:var(--chk)}.lg.prog::before{background:var(--prog)}.lg.settle::before{background:var(--settle)}.lg.ship::before{background:var(--ship)}
 .today{margin:.4rem 0 1.6rem}
 .todo{display:grid;grid-template-columns:5.6rem minmax(0,1fr) auto;gap:.6rem;align-items:center;padding:.5rem .6rem;border-bottom:1px solid var(--line);border-left:4px solid var(--ref);background:var(--surface)}
 .todo.lv-act{border-left-color:var(--act)}.todo.lv-chk{border-left-color:var(--chk)}.todo.lv-prog{border-left-color:var(--prog)}
@@ -395,8 +395,8 @@ details.nav-grp[open]>summary::after{content:" ▾"}
 .home-more{margin:1.2rem 0}
 .home-more>summary{cursor:pointer;color:var(--muted);font-size:.9rem;padding:.4rem 0}
 /* 기록 카드: 단계 색 띠 + 더보기 */
-.rec.b-act,.rec.b-prog,.rec.b-settle,.rec.b-hold{border-left:4px solid var(--ref);padding-left:.6rem}
-.rec.b-act{border-left-color:var(--act)}.rec.b-prog{border-left-color:var(--prog)}.rec.b-settle{border-left-color:var(--settle)}.rec.b-hold{border-left-color:var(--ref)}
+.rec.b-act,.rec.b-prog,.rec.b-ship,.rec.b-settle,.rec.b-hold{border-left:4px solid var(--ref);padding-left:.6rem}
+.rec.b-act{border-left-color:var(--act)}.rec.b-prog{border-left-color:var(--prog)}.rec.b-settle{border-left-color:var(--settle)}.rec.b-ship{border-left-color:var(--ship)}.rec.b-hold{border-left-color:var(--ref)}
 details.more{margin-top:.45rem;font-size:.85rem}
 details.more>summary{cursor:pointer;color:var(--muted)}
 details.more[open]>summary{margin-bottom:.3rem}
@@ -410,7 +410,7 @@ details.more[open]>summary{margin-bottom:.3rem}
 .th-sort{background:none;border:0;padding:0;font:inherit;font-weight:600;color:inherit;cursor:pointer;white-space:nowrap}
 .th-sort.on{color:var(--accent)}
 .band-dot{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.35rem;background:var(--ref)}
-.band-dot.act{background:var(--act)}.band-dot.prog{background:var(--prog)}.band-dot.settle{background:var(--settle)}
+.band-dot.act{background:var(--act)}.band-dot.prog{background:var(--prog)}.band-dot.settle{background:var(--settle)}.band-dot.ship{background:var(--ship)}
 .hist ul{margin:.3rem 0 0;padding-left:1.1rem;font-size:.85rem}
 @media (max-width:860px){
   .nav-grp{display:contents}

@@ -39,13 +39,14 @@ function go(name, id){route = {name, id:id || null}; typeFilter = '전체'; rend
 function ckItem(rid, kind, i, x){
   return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${x.done && x.doneAt ? `<small>${esc(x.doneAt)}</small>` : ''}</span></label></li>`;
 }
-/* 기록 단계 색 띠: 조치 필요(빨강) · 진행(파랑) · 정산 대기(초록) · 보류(회색) */
+/* 기록 단계 색 띠: 조치 필요(빨강) · 진행(파랑) · 선적 대기(청록, 수출 수리 후) · 정산 대기(초록) · 보류(회색) */
 function recBand(r){
   if(r.status === '완료') return {k:'done', t:'완료'};
   if(r.status === '보류') return {k:'hold', t:'보류'};
   const overdue = (r.deadlines || []).some(d => !d.done && daysLeft(d.due) < 0), stale = bizDaysSince(lastActivity(r)) >= STALE_DAYS;
   if(overdue || stale) return {k:'act', t:overdue ? '지난 기한 있음' : `${STALE_DAYS}영업일 넘게 변화 없음`};
-  if(stageOf(r).customs) return {k:'settle', t:'통관완료 · 정산 대기'};
+  if(stageOf(r).customs) return {k:'settle', t:`${stageName(r, 'customs')} · 정산 대기`};
+  if(isExp(r) && stageOf(r).accept) return {k:'ship', t:'수리완료 · 선적 대기'};
   return {k:'prog', t:'진행 중'};
 }
 let moreOpen = new Set();
@@ -156,13 +157,13 @@ function viewHome(){
   const month = today().slice(0,7);
   const m = done.filter(r => (r.date || '').startsWith(month)).length;
   const autoDone = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).sort((a, b) => (b.autoDone.at || '').localeCompare(a.autoDone.at || ''));
-  const order = {act:0, prog:1, settle:2, hold:3};
+  const order = {act:0, prog:1, ship:2, settle:3, hold:4};
   const act = active.slice().sort((a, b) => order[recBand(a).k] - order[recBand(b).k] || (a.startDate || '').localeCompare(b.startDate || ''));
   return `<section class="home-intro">
     <h2>${today()}</h2>
     <p>진행 중인 업무가 ${active.length}건이고, 7일 안에 돌아오는 기한이 ${soon}건${over ? `, 이미 지난 기한이 ${over}건` : ''} 있습니다. 이번 달에는 ${m}건을 완료했습니다.</p>
     ${homeWidgetsHTML()}
-    <p class="legend"><span class="lg act">조치 필요</span><span class="lg chk">확인</span><span class="lg prog">진행</span><span class="lg settle">정산 대기</span><span class="lg ref">참고·보류</span></p>
+    <p class="legend"><span class="lg act">조치 필요</span><span class="lg chk">확인</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">정산 대기</span><span class="lg ref">참고·보류</span></p>
     <div class="quick"><button class="primary" data-new-rec data-status="진행중">업무 시작</button><button class="ghost" data-new-rec data-status="완료">완료 기록 남기기</button><button class="ghost" data-new-proc>처리 절차 추가</button><button class="ghost" data-new-client>업체 추가</button></div>
   </section>
   <div class="home-grid">
@@ -185,7 +186,7 @@ function viewHome(){
 
 let activeMode = 'list', activeSort = {k:'band', dir:1};
 function activeTableHTML(rows){
-  const order = {act:0, prog:1, settle:2, hold:3};
+  const order = {act:0, prog:1, ship:2, settle:3, hold:4};
   const nextDl = r => (r.deadlines || []).filter(d => !d.done).sort((a, b) => a.due.localeCompare(b.due))[0];
   const val = {band:r => order[recBand(r).k], client:r => clientName(r.clientId), title:r => r.title || '', type:r => r.type || '', who:r => assigneeName(r.assignee) || '', dday:r => { const d = nextDl(r); return d ? d.due : '9999'; },
     quiet:r => -bizDaysSince(lastActivity(r)), start:r => r.startDate || '', caseNo:r => r.caseNo || ''};
@@ -207,7 +208,7 @@ function viewActive(){
   const dls = openDeadlines();
   const head = `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
     <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
-  if(activeMode === 'table') return head + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg settle">정산 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
+  if(activeMode === 'table') return head + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">정산 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
     + ([...act, ...hold].length ? activeTableHTML([...act, ...hold]) : '<p class="empty">진행 중인 업무가 없습니다.</p>')
     + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>전체 기한</h3></div>${dls.length ? dls.map(deadlineRow).join('') : '<p class="empty">남은 기한이 없습니다.</p>'}</section>`;
   return head + `

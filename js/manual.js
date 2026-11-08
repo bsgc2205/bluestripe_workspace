@@ -80,7 +80,7 @@ const dayDiff = (a, b) => (a && b) ? Math.round((Date.parse(b) - Date.parse(a)) 
 function procStats(p){
   const recs = procRecords(p);
   const days = recs.map(r => dayDiff(r.startDate, r.date)).filter(x => x !== null && x >= 0);
-  const toCustoms = recs.map(r => dayDiff(r.startDate, (r.stage || {}).customs)).filter(x => x !== null && x >= 0);
+  const toCustoms = recs.map(r => dayDiff(r.startDate, (r.stage || {}).accept || (r.stage || {}).customs)).filter(x => x !== null && x >= 0);
   const docCnt = {};
   recs.forEach(r => { const ts = new Set(); recFiles(r).forEach(f => docTypes(f.name).forEach(t => ts.add(t))); ts.forEach(t => docCnt[t] = (docCnt[t] || 0) + 1); });
   const docs = Object.entries(docCnt).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${Math.round(n / recs.length * 100)}%`);
@@ -109,7 +109,7 @@ function manualHTML(p){
   return `<section class="manual" data-man="${esc(p.id)}">
     <header><span class="tag type">${esc(p.type)}</span><h4>${esc(p.title)}</h4><span class="note">${p.clientId ? esc(clientName(p.clientId)) : '공통'}</span>
       <span class="p-act"><button class="mini" data-man-print="${esc(p.id)}">인쇄</button><button class="mini" data-edit-proc="${esc(p.id)}">수정</button></span></header>
-    <p class="man-stat">완료 ${s.n}건${s.n ? ` · 평균 소요 ${s.avg}일${s.avgCustoms !== '-' ? ` (통관완료까지 ${s.avgCustoms}일)` : ''} · 특이 ${s.spRate}% · 최근 ${esc(s.last)}` : ' · 아직 이 절차로 완료한 기록이 없습니다'}</p>
+    <p class="man-stat">완료 ${s.n}건${s.n ? ` · 평균 소요 ${s.avg}일${s.avgCustoms !== '-' ? ` (통관·수리까지 ${s.avgCustoms}일)` : ''} · 특이 ${s.spRate}% · 최근 ${esc(s.last)}` : ' · 아직 이 절차로 완료한 기록이 없습니다'}</p>
     ${(p.steps || []).length ? `<ol>${p.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : '<p class="hint">단계가 없습니다.</p>'}
     <div class="man-grid">
       <div><span class="lbl">필요 서류</span>${esc(p.docs || '-')}${s.docs.length ? `<div class="hint">실제로 받은 서류: ${esc(s.docs.slice(0, 6).join(', '))}</div>` : ''}</div>

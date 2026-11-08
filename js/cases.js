@@ -80,17 +80,29 @@ function addFiles(r, items){
 
 /* ---------- 진행단계: 통관완료 → 정산완료 → 자동 완료 (G1) ----------
    r.stage = {customs:'YYYY-MM-DD', customsBy:'UNI-PASS…|메일|직접', settle:'YYYY-MM-DD', settleBy}
-   수입: API001 수리 + (API049 납부 또는 반출신고) / 수출: API002 선적완료 → 통관완료 (자동)
+   수입: API001 수리 + (API049 납부 또는 반출신고) → 통관완료 (자동)
+   수출: API002 수리일자 → 수리완료(stage.accept, 적재기한 등록) / 선적완료 → stage.customs('선적완료'로 표시) (자동)
    정산: customs@ 메일 제목에 '정산서' → 정산완료 (자동). 업체 정산 방식이 '월 정산'이면 통관완료만으로 완료.
    둘 다 되면 기록을 자동 완료하고(되돌리기 가능) r.autoDone에 근거를 남긴다. */
 const SETTLE_RE = /정산서/;
 const kDecl = s => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 function stageOf(r){ return r.stage || {}; }
+const isExp = r => caseCode(r.type) === 'E';
+function stageName(r, k){ return k === 'accept' ? '수리완료' : k === 'customs' ? (isExp(r) ? '선적완료' : '통관완료') : '정산완료'; }
+/* 수출 적재기한: 수리일부터 30일(관세법 제251조). UNI-PASS 적재의무기한이 있으면 그 날짜를 쓴다 */
+function setLoadDue(r, base, due){
+  if(!base && !due) return;
+  r.deadlines = r.deadlines || [];
+  const d = r.deadlines.find(x => x.kind === '수출물품 적재기한');
+  const val = due || addPeriod(base, 30, 'd');
+  if(!d) r.deadlines.push({id:uid(), kind:'수출물품 적재기한', base:base || null, due:val, done:false, auto:true});
+  else if(d.auto && due && d.due !== due) d.due = due;
+}
 function setStage(r, k, date, by){
   r.stage = r.stage || {};
   if(r.stage[k]) return false;
   r.stage[k] = String(date || today()).slice(0, 10); r.stage[k + 'By'] = by;
-  addHist(r, `${k === 'customs' ? '통관완료' : '정산완료'} ${r.stage[k]} (${by})`);
+  addHist(r, `${stageName(r, k)} ${r.stage[k]} (${by})`);
   r.updatedAt = nowIso();
   return true;
 }
@@ -98,9 +110,13 @@ function settleMode(r){ const c = db.clients.find(x => x.id === r.clientId); ret
 function stageHTML(r){
   const st = stageOf(r), u = r.unipass || {}, out = [];
   const btn = (k, label) => `<button class="stg ok" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 잘못 표시했으면 눌러서 취소">${label} ${esc(st[k].slice(5))}</button>`;
-  if(st.customs) out.push(btn('customs', '통관완료'));
+  if(isExp(r)){
+    const ld = (r.deadlines || []).find(x => x.kind === '수출물품 적재기한');
+    if(st.accept) out.push(btn('accept', '수리완료'));
+    if(st.customs) out.push(btn('customs', '선적완료'));
+    else if(st.accept || u.accepted) out.push(`<span class="stg">선적 전${ld && !ld.done ? ' · 적재기한 ' + esc(ld.due.slice(5)) : ''}</span>`);
+  } else if(st.customs) out.push(btn('customs', '통관완료'));
   else if(u.cleared && !u.paid && !u.released) out.push('<span class="stg">수리 · 납부 확인 전</span>');
-  else if(u.accepted && !u.loaded) out.push(`<span class="stg">수리 · 선적 전${u.loadDue ? ' (적재기한 ' + esc(u.loadDue.slice(5)) + ')' : ''}</span>`);
   if(st.settle) out.push(btn('settle', '정산완료'));
   if(u.mdfy) out.push(`<span class="stg">정정: ${esc(u.mdfy)}</span>`);
   if(u.req) out.push(`<span class="stg">요건: ${esc(u.req)}</span>`);
@@ -115,7 +131,8 @@ function stageHTML(r){
 function stageActsHTML(r){
   if(r.status === '완료') return r.autoDone ? `<button class="mini" data-undo-auto="${esc(r.id)}">완료 되돌리기</button>` : '';
   const st = stageOf(r), b = [];
-  if(!st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|customs">통관완료</button>`);
+  if(isExp(r) && !st.accept && !st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|accept">수리완료</button>`);
+  if(!st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|customs">${stageName(r, 'customs')}</button>`);
   if(!st.settle && settleMode(r) === 'each') b.push(`<button class="mini" data-stage="${esc(r.id)}|settle">정산완료</button>`);
   return b.join('');
 }
@@ -126,7 +143,7 @@ function autoComplete(r, why){
   if(!st.customs || !(st.settle || settleMode(r) === 'monthly')) return false;
   r.status = '완료';
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
-  const reason = [`통관완료 ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
+  const reason = [`${stageName(r, 'customs')} ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
   r.autoDone = {at:nowIso(), reason};
   addHist(r, '자동 완료: ' + reason);
   proposeFromRecord(r);
@@ -150,7 +167,7 @@ function evalStages(){
 function unsetStage(r, k){
   if(!r.stage) return;
   delete r.stage[k]; delete r.stage[k + 'By'];
-  addHist(r, `${k === 'customs' ? '통관완료' : '정산완료'} 표시 취소`);
+  addHist(r, `${stageName(r, k)} 표시 취소`);
   if(r.autoDone) undoAuto(r);
   r.updatedAt = nowIso();
 }
@@ -163,7 +180,7 @@ function undoAuto(r){
 
 /* ---------- 제안 (자동으로 정하기 어려운 것만) ---------- */
 const MAIL_HINTS = [
-  {key:'mail-clear', re:/수리|필증|면허|면장 발급|cleared/i, not:/요청|신청|부탁|예정/, when:r => r.status !== '완료' && !stageOf(r).customs, text:'수리·필증 관련 메일이 왔습니다', act:'customs', label:'통관완료로 표시'},
+  {key:'mail-clear', re:/수리|필증|면허|면장 발급|cleared/i, not:/요청|신청|부탁|예정/, when:r => r.status !== '완료' && !stageOf(r).customs && !(isExp(r) && stageOf(r).accept), text:'수리·필증 관련 메일이 왔습니다', act:'customs', label:'통관완료로 표시'},
   {key:'mail-amend', re:/정정|보완|기각|반려/, when:r => !r.special, text:'정정·보완 관련 메일이 왔습니다', act:'special', label:'특이로 표시'},
   {key:'mail-insp', re:/검역.*(합격|완료|결과)|검사.*(완료|결과|합격)|합격/, when:r => (r.checklist || []).some(x => !x.done && /검역|검사/.test(x.text)), text:'검역·검사 결과 메일이 왔습니다', act:'check', label:'해당 단계 체크'}
 ];
@@ -174,7 +191,8 @@ function suggestions(r){
   MAIL_HINTS.forEach(h => {
     const m = recent.slice().reverse().find(x => h.re.test(x.subject || '') && !(h.not && h.not.test(x.subject || '')));
     const key = m ? `${h.key}:${m.id}` : '';
-    if(m && h.when(r) && !off.has(key)) out.push({key, text:`${h.text}: “${m.subject}” (${String(m.date).slice(5, 10)})`, act:h.act, label:h.label, date:m.date});
+    const exA = h.act === 'customs' && isExp(r);                    // 수출은 수리·필증 메일 = 수리완료(선적은 UNI-PASS·직접)
+    if(m && h.when(r) && !off.has(key)) out.push({key, text:`${h.text}: “${m.subject}” (${String(m.date).slice(5, 10)})`, act:exA ? 'accept' : h.act, label:exA ? '수리완료로 표시' : h.label, date:m.date});
   });
   const u = r.unipass || {};
   const k1 = 'up-req:' + (u.reqRqst || '');
@@ -199,6 +217,7 @@ function applySuggestion(r, key){
   if(s.act === 'special'){ r.special = true; openRecord(r); return; }
   if(s.act === 'complete'){ openRecord(r, {complete:true}); return; }
   if(s.act === 'customs'){ setStage(r, 'customs', s.date, '메일 확인(직접)'); autoComplete(r); }
+  if(s.act === 'accept' && setStage(r, 'accept', s.date, '메일 확인(직접)')) setLoadDue(r, r.stage.accept);
   if(s.act === 'check'){ const i = (r.checklist || []).findIndex(x => !x.done && /검역|검사|요건/.test(x.text)); if(i >= 0){ r.checklist[i].done = true; r.checklist[i].doneAt = today(); } }
   r.updatedAt = nowIso(); commit(); toast('반영했습니다.');
 }
@@ -268,12 +287,9 @@ async function checkExport(r, u){
   catch(e){ u.err = e.message; return; }
   const yn = pick(j, 'shpmCmplYn') || pick(j, 'shpmcmplYn'), acpt = pick(j, 'acptDt'), due = pick(j, 'loadDtyTmIm'), tk = pick(j, 'tkofDt');
   Object.assign(u, {accepted:!!acpt, acceptedAt:fmtYmd(acpt), loaded:yn === 'Y', loadDue:fmtYmd(due), departAt:fmtYmd(tk), last:yn === 'Y' ? '선적완료' : (acpt ? '수출신고수리' : '')});
-  if(u.loadDue){                                                        // 적재의무기한을 기한 목록에 자동 등록, 선적되면 처리 표시
-    r.deadlines = r.deadlines || [];
-    let d = r.deadlines.find(x => x.kind === '수출물품 적재기한');
-    if(!d){ d = {id:uid(), kind:'수출물품 적재기한', base:u.acceptedAt || null, due:u.loadDue, done:false, auto:true}; r.deadlines.push(d); }
-    if(u.loaded) d.done = true;
-  }
+  if(u.accepted) setStage(r, 'accept', u.acceptedAt || today(), 'UNI-PASS: 수출신고수리');   // 수리 시점에 '수리완료' 단계
+  if(u.accepted || u.loadDue) setLoadDue(r, u.acceptedAt, u.loadDue);  // 적재기한: UNI-PASS 적재의무기한, 없으면 수리일 + 30일
+  if(u.loaded) (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true);
   if(decl && u.accepted && !u.ldpDone){
     try{ const j = await uni('API053', {expDclrNo:decl}); const t = pick(j, 'expInscTrgtYn'), c = pick(j, 'expInscCmplYn');
       if(t) u.ldp = t === 'Y' ? (c === 'Y' ? '검사완료' : '검사대상') : '대상 아님'; u.ldpDone = t !== 'Y' || c === 'Y'; }
@@ -368,13 +384,14 @@ let lastCollectRun = '';
 function weekStart(){ const d = new Date(today() + 'T00:00:00'), w = (d.getDay() + 6) % 7; d.setDate(d.getDate() - w); return d.toISOString().slice(0, 10); }
 function homeWidgetsHTML(){
   const act = db.records.filter(r => r.status !== '완료' && r.status !== '보류');
-  const waitC = act.filter(r => !stageOf(r).customs).length, waitS = act.filter(r => stageOf(r).customs && !stageOf(r).settle && settleMode(r) === 'each').length;
+  const waitP = act.filter(r => isExp(r) && stageOf(r).accept && !stageOf(r).customs).length;
+  const waitC = act.filter(r => !stageOf(r).customs).length - waitP, waitS = act.filter(r => stageOf(r).customs && !stageOf(r).settle && settleMode(r) === 'each').length;
   const ws = weekStart(), doneW = db.records.filter(r => r.status === '완료' && (r.date || '') >= ws).length;
   const auto7 = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).length;
   const ma = mailAlerts(), dls = openDeadlines(), soon = dls.filter(x => { const n = daysLeft(x.d.due); return n >= 0 && n <= 7; }).length, over = dls.filter(x => daysLeft(x.d.due) < 0).length;
   const tile = (go, n, label, sub, warn) => `<button class="tile${warn ? ' warn' : ''}" ${go}><span class="t-n">${n}</span><span class="t-l">${label}</span><span class="t-s">${sub}</span></button>`;
   const tiles = [
-    tile('data-go="active"', act.length, '진행 중', `통관 대기 ${waitC} · 정산 대기 ${waitS}`),
+    tile('data-go="active"', act.length, '진행 중', `통관 대기 ${waitC}${waitP ? ` · 선적 대기 ${waitP}` : ''} · 정산 대기 ${waitS}`),
     tile('data-go="report"', doneW, '이번 주 완료', `자동 완료(7일) ${auto7}`),
     tile('data-go="mail"', ma.total, '미연결 메일 대화', `24시간 경과 ${ma.overdue} · 새 의뢰 ${ma.requests}`, ma.overdue > 0),
     tile('data-go="active"', soon + over, '7일 내 기한', over ? `지난 기한 ${over}` : '지난 기한 없음', over > 0),

@@ -126,7 +126,7 @@ function simSummary(list){
     sp && `특이 ${sp}건`, top(cc).length && `정정 원인 ${top(cc).slice(0, 3).join(', ')}`, top(who).length && `주로 ${assigneeName(top(who)[0])} 담당`].filter(Boolean).join(' · ');
 }
 function simItemHTML(x, o = {}){
-  const r = x.r, p = procFor(r), d = dayDiff(r.startDate, r.date), dc = dayDiff(r.startDate, (r.stage || {}).customs);
+  const r = x.r, p = procFor(r), d = dayDiff(r.startDate, r.date), dc = dayDiff(r.startDate, (r.stage || {}).accept || (r.stage || {}).customs);
   const meta = [o.showClient === false ? '' : clientName(r.clientId), r.date && `완료 ${r.date}`, d !== null && d >= 0 && `소요 ${d}일${dc !== null && dc >= 0 && dc !== d ? ` (통관 ${dc}일)` : ''}`, r.assignee && `담당 ${assigneeName(r.assignee)}`].filter(Boolean).join(' · ');
   const steps = (r.checklist || []).filter(s => !/^\[점검\]/.test(s.text));
   const inq = (db.inquiries || []).filter(q => q.recId === r.id);
