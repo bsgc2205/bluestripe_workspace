@@ -389,7 +389,8 @@ async function refreshCustoms(force){
   if(!cfg.endpoint || !cfg.token) return;
   const cutoff = new Date(Date.now() - 12 * 3600e3).toISOString();
   const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && ['I', 'E'].includes(caseCode(r.type)) && (r.bl || r.refNo || r.mdfy || r.reqApreNo || r.reqRqstNo)
-    && (force || !r.unipass || (r.unipass.at || '') < cutoff)).slice(0, 15);
+    && (force || !r.unipass || (r.unipass.at || '') < cutoff))
+    .sort((a, b) => ((a.unipass || {}).at || '') < ((b.unipass || {}).at || '') ? -1 : 1).slice(0, 15);   // 한 번도 확인 안 한 기록(새로 접수한 건)부터 15건씩
   for(const r of list){
     const u = {...(r.unipass || {}), at:nowIso()};
     delete u.err;
@@ -418,11 +419,24 @@ function mailWatchFrom(){
   db.settings.mailWatchFrom = db.settings.mailWatchFrom || addPeriod(today(), -1, 'd');
   return db.settings.mailWatchFrom;
 }
+/* 업무 시작 서류 (11/9): 포워더·업체가 보낸 Arrival Notice(A/N)·선적 서류·입항(도착) 안내·통관 서류 전달은 의뢰가 시작된 것으로 본다.
+   회신(RE:)이어도 외부에서 온 메일이면 인정. ETA는 제목에서만 본다(본문 서명·일정표에 흔함). */
+const DOC_RE = /arrival\s*notice|(?<![a-z])a\s*\/\s*n(?![a-z])|도착\s*(통지|안내|예정)|입항\s*(안내|예정|일|통보|정보)|선적\s*서류|shipping\s*(doc|document|advice)|custom(s)?\s*clearance|통관\s*(서류|자료)|(서류|documents?)\s*(전달|송부)|pre[-\s]?alert|cargo\s*arriv|b\s*\/\s*l\s*(copy|사본|draft)/i;
+const DOC_SUBJ_ONLY = /(?<![a-z])eta(?![a-z])/i;
+const ARRIVAL_RE = /arrival|(?<![a-z])a\s*\/\s*n(?![a-z])|도착|입항|(?<![a-z])eta(?![a-z])|cargo\s*arriv/i;
+/* 직원이 보낸 청구서·정산서 (11/9): 업무가 이미 진행됐다는 근거. B/L이 있을 때만 접수 근거로 쓴다(주별 정산 내역서 등 제외) */
+const BILL_RE = /청구서|정산서|정산\s*내역/;
+function docMail(m){
+  if(isOwn(m.from) && !m.fwdFrom) return false;
+  return DOC_RE.test(m.subject || '') || DOC_SUBJ_ONLY.test(m.subject || '') || DOC_RE.test(String(m.snippet || '').slice(0, 200));
+}
+function billMail(m){ return isOwn(m.from) && !m.fwdFrom && BILL_RE.test(m.subject || ''); }
 function threadFlags(t){
   const first = t.ms[0];
   const ext = !isOwn(first.from) || !!first.fwdFrom;
-  const request = ext && !IS_REPLY.test(first.subject || '') && (REQ_SUBJ.test(first.subject || '') || REQ_BODY.test((first.snippet || '').slice(0, 200)));
-  return {ageH:hoursSince(first.date), request, client:matchClient(t.ms), old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
+  const docs = t.ms.some(docMail);
+  const asked = ext && !IS_REPLY.test(first.subject || '') && (REQ_SUBJ.test(first.subject || '') || REQ_BODY.test((first.snippet || '').slice(0, 200)));
+  return {ageH:hoursSince(first.date), request:docs || asked, asked, docs, bill:t.ms.some(billMail), client:matchClient(t.ms), old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
 }
 function mailAlerts(){
   const fl = (mailCache ? mailThreadsList() : []).map(threadFlags), cur = fl.filter(f => !f.old);
