@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -9,6 +9,7 @@ document.addEventListener('click', e => {
   const curClient = route.name === 'client' ? route.id : '';
   const curType = typeFilter !== '전체' ? typeFilter : '';
   const findRec = id => db.records.find(r => r.id === id);
+  if('mailAudit' in d){openAudit(); return;}
   if('extItems' in d){const ids = d.extItems.split(','); checkItemsExt(db.items.filter(i => ids.includes(i.id)), false); return;}
   if('extAll' in d){const due = db.items.filter(i => itemReqs(i).length && (!i.ext || daysLeft(String(i.ext.at).slice(0, 10)) < -30)).slice(0, 30); if(!due.length){ toast('30일 안에 모두 확인했거나, HS 10단위·CAS·원재료명이 있는 품목이 없습니다.'); return; } db.settings.extPause = ''; checkItemsExt(due, false); return;}
   if('apiPing' in d){openApiPing(); return;}

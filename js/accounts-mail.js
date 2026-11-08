@@ -216,7 +216,7 @@ function viewMail(){
   const all = mailThreadsList().map(t => ({...t, f:threadFlags(t)})), olds = all.filter(t => t.f.old);
   const ths = all.filter(t => !t.f.old).sort((a, b) => (b.f.request - a.f.request) || (b.f.ageH >= OVERDUE_H) - (a.f.ageH >= OVERDUE_H) || (a.last.date < b.last.date ? 1 : -1));
   return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 customs@ 메일 중 아직 기록과 연결하지 않은 대화 ${ths.length}건입니다. 제목에 케이스 번호([2026-I-001])가 있거나, 이미 기록에 붙인 대화의 회신이거나, B/L·신고번호로 기록이 하나로 정해지면 자동으로 붙습니다.</p></div>
-      <div class="client-act"><label class="inline">누락 경고 기준일 <input type="date" id="mailWatch" value="${esc(mailWatchFrom())}"></label><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
+      <div class="client-act"><label class="inline">누락 경고 기준일 <input type="date" id="mailWatch" value="${esc(mailWatchFrom())}"></label><button class="ghost" data-mail-audit title="업체를 알아보지 못한 메일·자료에서 업체 후보 찾기">업체 미인식 점검</button><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
     ${mailErr ? `<p class="msg">${esc(mailErr)}</p>` : ''}
     <div class="narrow">
     ${mailCache === null ? '<p class="empty">‘새로 불러오기’를 누르면 메일 색인에서 가져옵니다.</p>'
@@ -281,3 +281,88 @@ function openAttachMail(t){
 }
 function markMailDone(){}
 function seeMail(id){ if(!db.mailSeen.includes(id)) db.mailSeen.push(id); if(db.mailSeen.length > 5000) db.mailSeen = db.mailSeen.slice(-5000); }
+
+/* ---------- 업체 미인식 점검 ----------
+   customs@ 메일(색인 전체 기간)과 자동 수집 미분류 자료 중 업체를 알아보지 못한 것에서 업체 후보를 뽑아 묶는다.
+   후보: 보낸 사람 회사 도메인, 본문·제목의 '(주)·주식회사·CO., LTD·CORPORATION' 앞뒤 이름, '○○ 홍길동입니다' 자기소개, 파일명 앞 단어.
+   비슷한 기존 업체가 있으면 '검색어 추가', 없으면 '새 업체 추가'를 제안. 무시한 후보는 settings.auditIgnore에 남김. */
+const AUDIT_STOP = /^(bsgc|비에스지씨|관세사|관세법인|관세사무소|customs|통관|수입|수출|안녕하세요|감사합니다|문의|요청|re|fw|fwd|the|and|korea|corporation|company|co|ltd|inc|주식회사|유한회사|드림|팀|차장|과장|대리|부장|이사|대표|담당|담당자|첨부|파일|서류|송부|전달|확인|진행|건|관련)$/i;
+function auditNorm(s){ return String(s || '').replace(/\(주\)|㈜|주식회사|\(유\)|유한회사/g, '').replace(/[\s.,·"'`()\[\]<>]/g, '').toLowerCase(); }
+function auditCands(text, from){
+  const out = new Set(), t = String(text || '');
+  const add = v => { v = String(v || '').replace(/^[\s\-:·,]+|[\s\-:·,]+$/g, '').trim(); const k = auditNorm(v); if(k.length >= 2 && k.length <= 30 && !AUDIT_STOP.test(k) && !/^\d+$/.test(k)) out.add(v); };
+  let m;
+  const reK1 = /(?:\(주\)|㈜|주식회사)\s*([가-힣A-Za-z0-9&]{2,15})/g, reK2 = /([가-힣A-Za-z0-9&]{2,15})\s*(?:\(주\)|㈜|주식회사)/g;
+  while((m = reK1.exec(t))) add(m[1]);
+  while((m = reK2.exec(t))) add(m[1]);
+  const reE = /\b([A-Z][A-Za-z0-9&\-]*(?:\s+[A-Z][A-Za-z0-9&\-]*){0,3})\s+(?:CO\.?,?\s*LTD\.?|CORPORATION|CORP\.?|INC\.?|LIMITED|GMBH|S\.?P\.?A\.?)(?![A-Za-z])/g;
+  while((m = reE.exec(t))) add(m[1]);
+  const reI = /([가-힣A-Za-z]{2,10})\s+[가-힣]{2,4}\s*(?:입니다|드림|올림)/g;
+  while((m = reI.exec(t))) add(m[1]);
+  const em = String(from || '').toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/);
+  if(em && !FREE_MAIL.includes(em[1]) && !isOwn(from)) out.add('@' + em[1]);
+  return [...out];
+}
+function auditData(){
+  const linked = new Set(db.records.flatMap(r => (r.mails || []).map(m => m.id)));
+  const ignore = new Set(db.settings.auditIgnore || []), groups = new Map();
+  const put = (cand, src) => {
+    const k = cand.startsWith('@') ? cand : auditNorm(cand);
+    if(ignore.has(k)) return;
+    const g = groups.get(k) || {key:k, name:cand, mails:[], files:[], froms:new Set()};
+    if(!cand.startsWith('@') && cand.length > g.name.length && !g.name.startsWith('@')) g.name = cand;
+    if(src.mail){ if(!g.mails.some(x => x.id === src.mail.id)) g.mails.push(src.mail); const f = src.mail.fwdFrom || src.mail.from; if(f && !isOwn(f)) g.froms.add(String(f).toLowerCase()); }
+    if(src.file && !g.files.some(x => x.id === src.file.id)) g.files.push(src.file);
+    groups.set(k, g);
+  };
+  (mailCache || []).forEach(m => {
+    if(matchClient(m)) return;                                          // 이미 업체를 알아본 메일은 제외
+    if(isOwn(m.fwdFrom || m.from) && !m.fwdFrom) return;                // 우리 회사가 보낸 메일
+    const cs = auditCands([m.subject, m.snippet, m.fromName].join(' '), m.fwdFrom || m.from), dom = cs.find(c => c.startsWith('@')), names = cs.filter(c => !c.startsWith('@'));
+    if(dom){ put(dom, {mail:m}); const g = groups.get(dom); if(g){ g.names = [...new Set([...(g.names || []), ...names])]; } }   // 회사 도메인이 있으면 그 도메인으로 묶고 이름은 함께 보관
+    else names.forEach(c => put(c, {mail:m}));
+  });
+  (db.collectPending || []).forEach(x => {
+    const lead = String(x.name || '').replace(/\.[^.]+$/, '').split(/[\s_]+/).filter(w => /[가-힣]/.test(w) || /^[A-Za-z]{3,}$/.test(w)).slice(0, 2).join(' ');
+    [...auditCands(x.name), lead].filter(Boolean).forEach(c => put(c, {file:x}));
+  });
+  const keyOf = c => [auditNorm(c.name), ...kwList(c).map(auditNorm)].filter(k => k.length >= 2);
+  return [...groups.values()].filter(g => g.mails.length + g.files.length > 0).map(g => {
+    if(g.key.startsWith('@') && (g.names || []).length) g.name = g.names.slice().sort((x, y) => auditNorm(y).length - auditNorm(x).length)[0], g.domain = g.key;   // 대표 이름은 가장 긴 후보
+    const k = auditNorm(g.name.startsWith('@') ? g.key.slice(1).split('.')[0] : g.name);
+    const similar = db.clients.filter(c => keyOf(c).some(ck => k.length >= 2 && ck.length >= 2 && (ck.includes(k) || k.includes(ck) || (k.length >= 3 && ck.length >= 3 && (ck.includes(k.slice(0, 3)) || k.includes(ck.slice(0, 3))))))).slice(0, 3);
+    const open = g.mails.filter(m => !linked.has(m.id));
+    const last = g.mails.map(m => String(m.date).slice(0, 10)).concat(g.files.map(f => f.created || '')).sort().slice(-1)[0] || '';
+    return {...g, froms:[...g.froms], similar, open:open.length, last};
+  }).sort((a, b) => (b.open + b.files.length) - (a.open + a.files.length) || b.mails.length - a.mails.length || b.last.localeCompare(a.last));
+}
+function openAudit(){
+  if(mailCache === null){ toast('메일을 먼저 불러오는 중입니다. 잠시 뒤 다시 누르세요.'); loadMail(true); return; }
+  const list = auditData().slice(0, 80);
+  const row = (g, i) => `<tr><td><strong>${esc(g.name)}</strong>${g.froms.length ? `<div class="hint">${esc(g.froms.slice(0, 2).join(', '))}</div>` : ''}</td>
+    <td class="num">${g.open}<span class="hint"> / ${g.mails.length}</span>${g.files.length ? `<div class="hint">자료 ${g.files.length}</div>` : ''}</td><td class="hint">${esc(g.last)}</td>
+    <td class="hint">${esc(g.mails.slice(0, 2).map(m => m.subject).concat(g.files.slice(0, 1).map(f => f.name)).join(' / ').slice(0, 120))}</td>
+    <td>${g.domain ? `<div class="hint">${esc(g.domain)}</div>` : ''}${g.similar.map(c => `<button type="button" class="mini" data-x-aud-kw="${i}|${esc(c.id)}" title="검색어에 '${esc(g.name)}'${g.froms.length ? ' 와 보낸 사람 주소' : ''} 추가">${esc(c.name)}에 추가</button>`).join(' ')}
+      <button type="button" class="mini strong" data-x-aud-new="${i}">새 업체</button> <button type="button" class="mini" data-x-aud-ign="${i}">무시</button></td></tr>`;
+  openDialog({title:'업체 미인식 점검', saveLabel:'닫기', body:`<p class="hint">customs@ 메일 ${(mailCache || []).length}통(최근 수집분)과 자동 수집 미분류 자료 ${(db.collectPending || []).length}건 중 <strong>업체를 알아보지 못한 것</strong>에서 업체 후보를 뽑았습니다. ‘미연결’은 어느 기록에도 붙지 않은 메일 수입니다. 업체명이 아닌 후보(포워더·제품명 등)는 ‘무시’하세요.</p>
+    ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>업체 후보</th><th class="num">미연결 / 메일</th><th>최근</th><th>예시</th><th>처리</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>` : '<p class="empty">업체를 알아보지 못한 메일·자료가 없습니다.</p>'}
+    <p class="hint">‘○○에 추가’는 그 업체의 검색어에 후보 이름과 보낸 사람 메일 주소(공용 메일이면 주소 전체, 회사 도메인이면 @도메인)를 넣습니다. ‘새 업체’는 업체를 만들고 정보 창을 엽니다. 처리 후 미분류 자료는 자동으로 다시 맞춰 봅니다.</p>`,
+    onSave(){ return true; },
+    onOpen(f){
+      f.addEventListener('click', e => {
+        const b = e.target.closest('[data-x-aud-kw],[data-x-aud-new],[data-x-aud-ign]'); if(!b) return;
+        const d = b.dataset, g = list[Number((d.xAudKw || d.xAudNew || d.xAudIgn).split('|')[0])]; if(!g) return;
+        const addrs = g.froms.map(a => { const dm = a.split('@')[1] || ''; return FREE_MAIL.includes(dm) ? a.replace(/^.*<|>.*$/g, '') : '@' + dm; }).filter(x => x.length > 3);
+        const words = [...new Set([g.name.startsWith('@') ? '' : g.name, ...addrs])].filter(Boolean);
+        const finish = msg => { const r = rematchPending(); b.closest('tr').style.opacity = .4; b.closest('td').innerHTML = `<span class="hint">${esc(msg)}${r ? ` · 미분류 자료 ${r.made + r.upd}건 반영` : ''}</span>`; commit(); };
+        if(d.xAudIgn){ db.settings.auditIgnore = [...new Set([...(db.settings.auditIgnore || []), g.key])].slice(-500); finish('무시함'); return; }
+        if(d.xAudKw){
+          const c = db.clients.find(x => x.id === d.xAudKw.split('|')[1]); if(!c) return;
+          const cur = kwList(c); c.keyword = [...String(c.keyword || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean), ...words.filter(w => !cur.includes(w.toLowerCase()))].join(', '); c.updatedAt = nowIso();
+          finish(`${c.name} 검색어에 추가`); return;
+        }
+        const c = {id:uid(), name:g.name.startsWith('@') ? g.name.slice(1).split('.')[0] : g.name, bizNo:'', industry:'', contact:'', keyword:words.join(', '), notes:'업체 미인식 점검에서 추가', createdAt:nowIso()};
+        db.clients.push(c); finish('새 업체 추가'); $('#dlg').close(); openClient(c);
+      });
+    }});
+}

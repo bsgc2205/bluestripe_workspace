@@ -307,7 +307,7 @@ function normName(s){return String(s || '').replace(/\(예시\)|주식회사|유
    1순위 담당자 메일 주소·메일 도메인 검색어, 2순위 검색어(약칭), 3순위 업체명.
    한글 두 글자 이하나 영문 이름은 앞뒤가 다른 글자와 붙어 있으면 인정하지 않는다(예: 두 글자 약칭이 더 긴 단어 안에 들어 있는 경우는 무시).
    같은 순위에서 길이가 같은 다른 업체가 함께 걸리면 추측하지 않고 미분류로 둔다. */
-const FREE_MAIL = ['gmail.com','naver.com','daum.net','hanmail.net','nate.com','kakao.com','outlook.com','hotmail.com','yahoo.com','yahoo.co.kr','icloud.com','live.com'];
+const FREE_MAIL = ['gmail.com','naver.com','daum.net','hanmail.net','nate.com','kakao.com','outlook.com','hotmail.com','yahoo.com','yahoo.co.kr','icloud.com','live.com','kita.net','korea.com','hanmir.com','empal.com'];   // kita.net: 무역협회 공용 메일 (여러 업체가 씀)
 function kwList(c){return String(c.keyword || '').split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);}
 function primaryKw(c){const k = kwList(c); return (k.find(x => x.startsWith('@')) || k[0] || c.name || '').trim();}
 function nameKey(s){return String(s || '').replace(/\(예시\)|주식회사|유한회사|\(주\)|\(유\)|㈜/g, '').replace(/\b(co\.?,?\s*ltd\.?|corp(oration)?\.?|inc\.?|ltd\.?|limited)\b/gi, '').replace(/\(.*?\)/g, '').replace(/[.,]+$/, '').trim().toLowerCase();}
@@ -331,8 +331,9 @@ function findClient(text){
     if(m1) return tiers[0].push([c, m1]);
     const m2 = Math.max(0, ...kws.filter(k => !k.startsWith('@') && nameHit(t, compact, k)).map(k => k.length));
     if(m2) return tiers[1].push([c, m2]);
-    const nk = nameKey(c.name);
+    const nk = nameKey(c.name), alt = nk.replace(/\s*(코리아|korea)$/i, '').trim();   // '티디에프코리아' → '티디에프'처럼 '코리아'를 뺀 약칭도 인정(3글자 이상)
     if(nameHit(t, compact, nk)) tiers[2].push([c, nk.length]);
+    else if(alt !== nk && alt.replace(/\s/g, '').length >= 3 && nameHit(t, compact, alt)) tiers[2].push([c, alt.length]);
   });
   for(const tier of tiers){
     if(!tier.length) continue;
