@@ -224,9 +224,9 @@ async function openApiPing(){
     <div class="table-wrap"><table class="grid"><thead><tr><th>서비스</th><th>키</th><th>결과</th><th>받은 칸</th></tr></thead><tbody>${(j.services || []).map(s => `<tr><td>${esc(s.name)}</td><td class="hs">${esc(s.key)}</td><td>${s.ok ? `<span class="kc-chip ok">정상 ${s.n}건</span>` : `<span class="kc-chip bad">${esc(s.error)}</span>`}</td><td class="hint">${esc((s.fields || []).join(', '))}</td></tr>`).join('')}</tbody></table></div>
     <p class="hint">식품원재료(I1020)는 이름 검색이 없어 목록 전체를 받아 두고 찾습니다. ${food ? (food.err ? esc(food.err) : `받아 둔 목록 ${food.n.toLocaleString('ko-KR')}건 (${esc(String(food.at).slice(0, 10))})`) : '아직 받지 않았습니다.'} <button type="button" class="mini" data-x="foodsync">식품원재료 목록 받기</button> <span class="hint" data-x="foodmsg"></span></p>
     ${admin ? `<div class="dlg-section"><h4>설정 (관리자) — 저장하면 바로 적용, 재배포 필요 없음</h4>
-      <div class="row2">${Object.keys(KEY_LABEL).map(k => `<label>${esc(KEY_LABEL[k])}<input type="password" autocomplete="off" data-key="${k}" placeholder="${st.keys[k] ? '저장됨 ' + esc(st.keys[k]) + ' — 바꿀 때만 입력' : '미저장'}"></label>`).join('')}</div>
+      <div class="row2">${Object.keys(KEY_LABEL).map(k => `<label>${esc(KEY_LABEL[k])}<input type="password" autocomplete="new-password" data-key="${k}" placeholder="${st.keys[k] ? '저장됨 ' + esc(st.keys[k]) + ' — 바꿀 때만 입력' : '미저장'}"></label>`).join('')}</div>
       <div class="row2">${Object.keys(CONF_LABEL).map(k => `<label>${esc(CONF_LABEL[k])}<input data-conf="${k}" value="${esc(st.conf[k] || '')}"></label>`).join('')}</div>
-      <label style="max-width:260px">관리자 PIN (Apps Script 스크립트 속성 CONF_PIN)<input type="password" autocomplete="off" data-x="pin"></label>
+      <label style="max-width:260px">관리자 PIN (Apps Script 스크립트 속성 CONF_PIN)<input type="password" autocomplete="new-password" data-x="pin" placeholder="숫자로 정한 PIN"></label>
       <div class="btn-row"><button type="button" class="primary" data-x="confsave">설정 저장 후 다시 점검</button><span class="hint" data-x="confmsg"></span></div>
       <p class="hint">키는 Apps Script 스크립트 속성에만 저장되고 Workspace 데이터·GitHub에는 남지 않으며, 저장 후에는 끝 4자리만 보입니다. 주소는 공공데이터포털·UNI-PASS 주소만 받습니다. 주소를 비우고 저장하면 기본값으로 돌아갑니다.</p></div>` : ''}`,
     onSave(){ return true; },
@@ -247,12 +247,13 @@ async function openApiPing(){
         b.disabled = false;
       };
       if(!admin) return;
+      setTimeout(() => f.querySelectorAll('[data-key],[data-x="pin"]').forEach(el => { el.value = ''; }), 300);   // 브라우저가 로그인 비밀번호를 자동으로 채운 경우 지움
       X('confsave').onclick = async () => {
         const set = {};
         f.querySelectorAll('[data-key]').forEach(el => { if(el.value.trim()) set[el.dataset.key] = el.value.trim(); });
         f.querySelectorAll('[data-conf]').forEach(el => { if(el.value.trim() !== (st.conf[el.dataset.conf] || '')) set[el.dataset.conf] = el.value.trim(); });
         if(!Object.keys(set).length){ X('confmsg').textContent = '바뀐 값이 없습니다.'; return; }
-        if(!X('pin').value){ X('confmsg').textContent = '관리자 PIN을 넣으세요.'; return; }
+        if(!X('pin').value.trim()){ X('confmsg').textContent = '관리자 PIN을 넣으세요.'; return; }
         X('confmsg').textContent = '저장 중…';
         try{
           const r = await syncPost(cfg, {op:'conf', set, pin:X('pin').value});
