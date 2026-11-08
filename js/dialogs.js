@@ -452,6 +452,7 @@ function openItem(it, clientId){
         <label>품목명<input name="name" required value="${esc(item.name)}"></label>
         <label>HS 코드<input name="hs" value="${esc(item.hs)}" placeholder="예: 3402.42-0000"></label>
       </div>
+      <div class="btn-row"><button type="button" class="mini" data-x="hscand">HS 후보 찾기 (품목명으로, 참고용)</button><span class="hint" data-x="hsmsg"></span></div><div data-x="hslist"></div>
       <label>세율·FTA<input name="tariff" value="${esc(item.tariff)}" placeholder="기본세율, 적용 협정과 협정세율"></label>
       <div class="row2">
         <label>수입요건 (한 줄에 하나)<textarea name="reqs" rows="4">${esc(item.reqs)}</textarea></label>
@@ -475,13 +476,28 @@ function openItem(it, clientId){
       db.records.forEach(r => { if(r.itemId === item.id) r.itemId = ''; });
       toast('품목을 삭제했습니다.');
     },
-    onOpen(f){ if(isNew) f.elements.namedItem('name').focus(); }
+    onOpen(f){
+      if(isNew) f.elements.namedItem('name').focus();
+      const X = n => f.querySelector(`[data-x="${n}"]`);
+      X('hscand').onclick = async () => {
+        const nm = f.elements.namedItem('name').value.trim();
+        if(nm.length < 2){ X('hsmsg').textContent = '품목명을 두 글자 이상 넣으세요.'; return; }
+        X('hsmsg').textContent = '찾는 중…';
+        try{
+          const list = await hsCandidates(nm);
+          X('hsmsg').textContent = list.length ? `${list.length}건 — 누르면 HS 칸에 넣습니다. 품목분류는 직접 판단하세요.` : '후보가 없습니다. 다른 이름(영문·일반명)으로 찾아보세요.';
+          X('hslist').innerHTML = list.length ? `<ul class="sim">${list.map(x => `<li><button type="button" class="linkish" data-hs="${esc(x.hs)}">${esc(x.hs.replace(/^(\d{4})(\d{2})(\d{4})$/, '$1.$2-$3'))}</button> ${esc(x.ko)} <span class="hint">${esc(x.en.slice(0, 60))}</span></li>`).join('')}</ul>` : '';
+          X('hslist').querySelectorAll('[data-hs]').forEach(b => b.onclick = () => { f.elements.namedItem('hs').value = b.textContent; });
+        }catch(e){ X('hsmsg').textContent = '찾지 못했습니다: ' + e.message; }
+      };
+    }
   });
 }
 
 function openClient(c){
   const isNew = !c;
   const cl = c || {id:uid(), name:'', bizNo:'', industry:'', contact:'', keyword:'', notes:''};
+  const bizBefore = cl.bizNo || '';
   openDialog({
     title: isNew ? '업체 추가' : '업체 정보 수정',
     body: `<div class="btn-row"><label class="btn">사업자등록증 읽기 (홈택스 PDF)<input type="file" data-x="bizfile" accept=".pdf" hidden></label><span class="hint" data-x="bizmsg">파일은 이 브라우저 안에서만 읽고 어디에도 올리지 않습니다.</span></div>
@@ -509,13 +525,16 @@ function openClient(c){
         <label>개업일<input type="date" name="openDate" value="${esc(cl.openDate || '')}"></label>
         <label>사업장 주소<input name="address" value="${esc(cl.address || '')}"></label>
       </div>
+      <div class="row2"><label>통관고유부호<input name="ecm" value="${esc(cl.ecm || '')}" placeholder="사업자번호가 있으면 저장 후 자동으로 채웁니다"></label><label>대표 전화<input name="tel" value="${esc(cl.tel || '')}"></label></div>
       <div class="row2"><label>기본 담당자 (메일로 업무 시작할 때 자동 지정)<select name="defaultAssignee">${opts([['', '지정 안 함 (작성자)'], ...accounts.map(a => [a.id, a.name])], cl.defaultAssignee || '')}</select></label><span></span></div>
       <div class="row2"><label>주의 등급<select name="cautionLevel">${opts([['', '자동 (최근 12개월 기록 기준)'], ['주의', '주의 (직접 지정)'], ['관심', '관심 (직접 지정)'], ['보통', '보통 (직접 지정)']], cl.cautionLevel || '')}</select></label><label>주의 메모<input name="cautionNote" value="${esc(cl.cautionNote || '')}" placeholder="직접 지정한 이유"></label></div>
       <label>메모<textarea name="notes" rows="4" placeholder="거래 특성, 합의 사항, 자주 생기는 이슈">${esc(cl.notes)}</textarea></label>`,
     onSave(fd){
       Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), rep: fd.get('rep').trim(), settleMode: fd.get('settleMode') || 'each', keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
       cl.relation = {since: fd.get('since') || '', last: fd.get('last') || '', basis: fd.get('basis').trim()};
-      cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim();
+      const bizChanged = bizDigits(cl.bizNo) !== bizDigits(bizBefore);
+      cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim(); cl.ecm = String(fd.get('ecm') || '').trim(); cl.tel = String(fd.get('tel') || '').trim();
+      if((bizChanged || isNew) && (db.settings.mail || {}).endpoint) setTimeout(() => checkClientsExt([cl], true), 600);   // 사업자번호가 바뀌면 통관고유부호·국세청 상태 바로 확인
       cl.cautionLevel = fd.get('cautionLevel') || ''; cl.defaultAssignee = fd.get('defaultAssignee') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
       if(isNew){cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');}
       else toast('업체 정보를 수정했습니다.');

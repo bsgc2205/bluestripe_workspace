@@ -239,10 +239,12 @@ function viewClient(){
   const spCount = fr.filter(r => r.special).length, actCount = fr.filter(r => r.status !== '완료').length;
   const kw = primaryKw(c);
   const drive = 'https://drive.google.com/drive/search?q=' + encodeURIComponent(kw);
-  const meta = [c.bizNo, c.industry, c.contact].filter(Boolean).map(esc).join(' / ');
+  const meta = [c.bizNo, c.ecm && '통관고유부호 ' + c.ecm, c.industry, c.contact].filter(Boolean).map(esc).join(' / ');
+  const ex = c.ext || {}, nts = ex.nts;
+  const extLine = [nts ? `<span class="kc-chip ${nts.cd === '01' ? 'ok' : 'bad'}" title="국세청 ${esc(nts.at)} 확인">${esc(nts.stt || nts.tax || '국세청 확인')}${nts.cd === '01' && nts.tax ? ' · ' + esc(nts.tax) : ''}</span>` : '', ex.ecmUse ? `<span class="kc-chip ${ex.ecmUse === 'Y' ? 'ok' : 'bad'}">통관고유부호 ${ex.ecmUse === 'Y' ? '사용' : '사용 안 함'}</span>` : '', ex.at ? `<span class="hint">${esc(ex.at.slice(0, 10))} 확인</span>` : ''].filter(Boolean).join(' ');
   const rel = relationOf(c);
   return `<header class="client-head">
-      <div><h2>${esc(c.name)}</h2>${meta ? `<p class="client-meta">${meta}</p>` : ''}
+      <div><h2>${esc(c.name)}</h2>${meta ? `<p class="client-meta">${meta}</p>` : ''}${extLine ? `<div class="ext-row">${extLine} <button class="mini" data-client-ext="${esc(c.id)}">다시 확인</button></div>` : `<div class="ext-row"><button class="mini" data-client-ext="${esc(c.id)}">통관고유부호·국세청 상태 확인</button></div>`}
         <div class="rel" title="${esc(rel.basis)}">${rel.longTerm ? '<span class="badge-long">1년 이상 거래</span>' : '<span class="badge-other">1년 미만·확인 필요</span>'}<span>${esc(relationText(rel))}</span>${cautionBadge(c)}</div>${(() => { const x = clientCaution(c); return x.level === '보통' ? '' : `<p class="caution-why">주의 등급 ${esc(x.level)}: ${esc(x.reasons.join(' · '))}</p>`; })()}</div>
       <div class="client-act">
         
@@ -414,7 +416,7 @@ function viewClientList(){
   const list = sortedClients();
   const types = c => [...new Set(db.records.filter(r => r.clientId === c.id).map(r => r.type))];
   return `<header class="client-head"><div><h2>거래업체 리스트</h2><p class="client-meta">업체 ${list.length}곳. 사업자등록증과 메일 기준으로 채웁니다.</p></div>
-      <div class="client-act"><button class="primary" data-biz-import>사업자등록증 폴더 반영</button><button class="ghost" data-new-client>업체 추가</button></div></header>
+      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button><button class="ghost" data-new-client>업체 추가</button></div></header>
     ${list.length ? `<div class="table-wrap" style="margin-top:1.25rem"><table class="grid"><thead><tr><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>업무담당자</th><th>관련업무</th></tr></thead><tbody>
       ${list.map(c => { const cc = (c.contacts || []).slice(0,2), ty = types(c), rw = (c.recentWork || []).slice(0,2); return `<tr>
         <td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong></button>${cautionBadge(c)}${c.bizNo ? `<div class="hint">${esc(c.bizNo)}</div>` : ''}</td>

@@ -118,6 +118,8 @@ function applyCert2Rec(r, d, fname){
   if(d.declNo && !r.refNo){ r.refNo = d.declNo; ch.push('신고번호'); }
   if(d.bl && !r.bl){ r.bl = d.bl; ch.push('B/L'); }
   if(d.cargoNo && !r.cargoNo){ r.cargoNo = d.cargoNo; ch.push('화물관리번호'); }
+  const cl = db.clients.find(c => c.id === r.clientId);                  // 필증의 수입자·수출화주가 이 업체면 사업자번호를 업체 정보에 채움
+  if(cl && d.bizNo && !bizDigits(cl.bizNo) && (findClient(d.party || '') === cl || clientByBiz(d.bizNo) === null && nameKey(d.party || '').replace(/\s/g, '').includes(nameKey(cl.name).replace(/\s/g, '')))){ cl.bizNo = d.bizNo; cl.updatedAt = nowIso(); ch.push('업체 사업자번호'); setTimeout(() => checkClientsExt([cl], true), 1500); }
   if(d.kind && caseCode(r.type) === 'X'){ r.type = d.kind === 'E' ? '수출신고' : '수입통관'; ch.push('유형'); }
   r.certs = [...(r.certs || []).filter(x => x.declNo !== d.declNo), {file:fname, declNo:d.declNo, declDate:d.declDate, kind:d.kind, party:d.party, partner:d.partner, country:d.country, terms:d.terms, lines:(d.lines || []).slice(0, 12)}].slice(-10);
   let made = 0;

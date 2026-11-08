@@ -8,7 +8,7 @@
    food 식약처 식품 원재료 정보(DATA_GO_KR_KEY)    — 품목 식품 원재료명 → 대분류(LCLAS_NM)·사용조건(USE_CND_NM)
    결과는 품목(item.ext)·법령(db.lawInfo)에 요약만 저장하고, 변화가 있으면 db.alerts(공통 알림함)에 올린다.
    응답 필드명은 기관 문서마다 달라 '이름처럼 보이는 칸'을 골라 쓰고, 나머지는 원문 칸을 그대로 보여 준다. */
-const EXT_NAMES = {law:'법령', trrt:'관세율', ccct:'세관장확인', chem:'화학물질', food:'식품원재료'};
+const EXT_NAMES = {law:'법령', trrt:'관세율', ccct:'세관장확인', chem:'화학물질', food:'식품원재료', ecm:'통관고유부호', hs:'HS 부호', nts:'국세청 사업자'};
 const CHEM_FLAG = /유독|제한물질|금지물질|허가물질|사고대비|중점관리|인체급성|인체만성|생태유해|등록대상|기존화학물질|함량/;
 const casList = s => [...new Set((String(s || '').match(/\b\d{2,7}-\d{2}-\d\b/g) || []).filter(casValid))];
 function casValid(c){ const d = c.replace(/-/g, ''), body = d.slice(0, -1).split('').reverse(); return body.reduce((a, x, i) => a + Number(x) * (i + 1), 0) % 10 === Number(d.slice(-1)); }
@@ -38,6 +38,7 @@ function openAlerts(){ return (db.alerts || []).filter(x => x.status === 'open')
 function alertTargetHTML(a){
   if(a.ttype === 'item'){ const it = db.items.find(i => i.id === a.tid); return it ? `<button class="mini" data-edit-item="${esc(it.id)}">품목 열기</button> <button class="linkish" data-go="client" data-id="${esc(it.clientId)}">${esc(clientName(it.clientId))}</button>` : ''; }
   if(a.ttype === 'proc'){ const p = db.procedures.find(x => x.id === a.tid); return p ? `<button class="mini" data-man-open="${esc(p.id)}">매뉴얼에서 보기</button>` : ''; }
+  if(a.ttype === 'client'){ const c = db.clients.find(x => x.id === a.tid); return c ? `<button class="mini" data-go="client" data-id="${esc(c.id)}">업체 열기</button>` : ''; }
   if(a.ttype === 'rec'){ const r = db.records.find(x => x.id === a.tid); return r ? `<button class="mini" data-edit-rec="${esc(r.id)}">기록 열기</button>` : ''; }
   return '';
 }
@@ -53,7 +54,7 @@ function viewAlerts(){
 /* ---------- 품목: 관세율·세관장확인·화학물질·식품원재료 (P2-D) ---------- */
 function itemReqs(it){
   const hs = hsDigits(it.hs), out = [];
-  if(hs.length === 10){ out.push({svc:'ccct', key:'ccct', p:{hs, imex:'2'}}); out.push({svc:'trrt', key:'trrt', p:{hs}}); }
+  if(hs.length === 10){ out.push({svc:'ccct', key:'ccct', p:{hs, imex:'2'}}); out.push({svc:'trrt', key:'trrt', p:{hs}}); out.push({svc:'hs', key:'hs', p:{hs}}); }
   casList(it.cas).forEach(c => out.push({svc:'chem', key:'chem:' + c, p:{by:'2', q:c}}));
   lines(it.raw).map(x => x.replace(/\s*\(.*?\)\s*/g, ' ').trim()).filter(x => x.length >= 2).slice(0, 10).forEach(n => out.push({svc:'food', key:'food:' + n, p:{name:n}}));
   return out;
@@ -89,6 +90,10 @@ function summarize(svc, res, p){
     const limited = cnd.some(c => /제한|한함|불가|금지|사용할\s*수\s*없/.test(c)) || (cls.length > 0 && !cls.some(c => /식품원료/.test(c)));
     return {name:p.name, n:rows.length, exact:ex.length, verdict, limited, raw:use.slice(0, 3).map(r => rowText(r, 10)), sig:verdict.join('|') + '|' + (ex.length ? 1 : 0)};
   }
+  if(svc === 'hs'){                                                      // UNI-PASS API018: 현행 HS인지 + 표준 품명·단위
+    const h = hsDigits(p.hs), hit = rows.find(r => hsDigits(r.hsSgn) === h);
+    return hit ? {found:true, ko:hit.korePrnm || '', en:hit.englPrnm || '', qty:hit.qtyUt || '', wt:hit.wghtUt || '', sig:'1'} : {found:false, sig:'0'};
+  }
   return {raw:rows.map(r => rowText(r))};
 }
 const REQ_TEXT = it => [it.reqs, it.agency, it.notes].join(' ');
@@ -105,6 +110,7 @@ function itemAlerts(it, prev, cur){
     if(/화관법|유해화학|유독|제한|금지|허가|사고대비/.test(REQ_TEXT(it))) return;
     addAlert({key:`chem|${it.id}|${c.cas}|${c.sig}`, kind:'chem', ttype:'item', tid:it.id, title:`화학물질 분류 확인: ${nm} — CAS ${c.cas}${c.name ? ' ' + c.name : ''}`, text:`분류: ${c.flags.join(', ')}\n품목 요건에 화관법 관련 내용이 없습니다.`});
   });
+  if(cur.hs && !cur.hs.err && !cur.hs.found) addAlert({key:`hs|${it.id}|${hsDigits(it.hs)}`, kind:'hs', ttype:'item', tid:it.id, title:`현행 HS 부호가 아님: ${nm}`, text:`UNI-PASS HS 부호 조회에 ${it.hs}가 없습니다. HS 개정(매년 1월)으로 바뀌었거나 입력이 틀렸을 수 있습니다. 품목 화면의 ‘HS 후보 찾기’로 확인하세요.`});
   (cur.food || []).filter(f => !f.err && f.limited).forEach(f => addAlert({key:`food|${it.id}|${f.name}|${f.sig}`, kind:'food', ttype:'item', tid:it.id, title:`식품원재료 사용 조건 확인: ${nm} — ${f.name}`, text:`판정: ${f.verdict.join(', ')}\n${f.raw.join('\n')}`}));
 }
 let extBusy = false;
@@ -141,6 +147,7 @@ function extItemHTML(it, full){
   const e = it.ext; if(!e) return '';
   const out = [];
   if(e.ccct) out.push(e.ccct.err ? `<span class="kc-chip bad" title="${esc(e.ccct.err)}">세관장확인 오류</span>` : e.ccct.n ? `<span class="kc-chip warn" title="${esc(e.ccct.list.map(x => x.raw).join('\n'))}">세관장확인 ${e.ccct.n}건: ${esc([...new Set(e.ccct.list.map(x => x.law).filter(Boolean))].join(', ') || '내용 보기')}</span>` : '<span class="kc-chip ok">세관장확인 대상 아님</span>');
+  if(e.hs) out.push(e.hs.err ? `<span class="kc-chip bad" title="${esc(e.hs.err)}">HS 확인 오류</span>` : e.hs.found ? `<span class="kc-chip ok" title="${esc([e.hs.ko, e.hs.en, e.hs.qty && '수량단위 ' + e.hs.qty, e.hs.wt && '중량단위 ' + e.hs.wt].filter(Boolean).join('\n'))}">현행 HS${e.hs.ko ? ' · ' + esc(e.hs.ko.slice(0, 30)) : ''}</span>` : '<span class="kc-chip bad">현행 HS 아님</span>');
   if(e.trrt) out.push(e.trrt.err ? `<span class="kc-chip bad" title="${esc(e.trrt.err)}">관세율 ${/설정 필요/.test(e.trrt.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip" title="${esc(e.trrt.rows.join('\n'))}">관세율 ${esc((e.trrt.rows[0] || '없음').slice(0, 50))}</span>`);
   (e.chem || []).forEach(c => out.push(c.err ? `<span class="kc-chip bad" title="${esc(c.err)}">CAS ${esc(c.cas)} 오류</span>` : `<span class="kc-chip ${c.flags.length ? 'warn' : c.found ? 'ok' : ''}" title="${esc((c.raw || []).join('\n'))}">CAS ${esc(c.cas)}${c.name ? ' ' + esc(c.name) : ''}${c.flags.length ? ' · ' + esc(c.flags.slice(0, 3).join(', ')) : c.found ? '' : ' · 조회 안 됨'}</span>`));
   (e.food || []).forEach(f => out.push(f.err ? `<span class="kc-chip bad" title="${esc(f.err)}">${esc(f.name)} ${/설정 필요/.test(f.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip ${f.limited ? 'bad' : f.n ? 'ok' : ''}" title="${esc((f.raw || []).join('\n'))}">${esc(f.name)}${f.verdict.length ? ' · ' + esc(f.verdict.join(' · ')) : f.n ? '' : ' · 조회 안 됨'}${f.n && !f.exact ? ' (이름 일부 일치)' : ''}</span>`));
@@ -234,8 +241,8 @@ function lawLinesHTML(p){
 
 /* ---------- 연결 점검·자동 확인 ---------- */
 /* 연결 점검 + 설정: 키와 주소는 Apps Script 스크립트 속성에 저장(재배포 불필요). 키 값은 화면에 다시 보여 주지 않음 */
-const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_UNI_PATH:'UNI-PASS 세관장확인 경로 (/ext/rest/ 뒤)', FOOD_URL:'식품 원재료 요청주소', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소'};
-const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', UNIPASS_KEY_API029:'UNI-PASS 세관장확인 키 (API029)'};
+const CONF_LABEL = {TRRT_PATH:'UNI-PASS 관세율 경로 (/ext/rest/ 뒤)', TRRT_HS_PARAM:'관세율 HS 요청변수', CCCT_UNI_PATH:'UNI-PASS 세관장확인 경로 (/ext/rest/ 뒤)', FOOD_URL:'식품 원재료 요청주소', CCCT_URL:'세관장확인 요청주소', CHEM_URL:'화학물질 요청주소', ECM_PATH:'UNI-PASS 통관고유부호 경로 (API010)', HS_PATH:'UNI-PASS HS 부호 경로 (API018)', NTS_URL:'국세청 사업자 상태조회 주소'};
+const KEY_LABEL = {LAW_API_KEY:'국가법령정보 OC', DATA_GO_KR_KEY:'공공데이터포털 인증키 (Decoding)', CUSTOMS_CONFIRM_KEY:'UNI-PASS 관세율 기본조회 키', UNIPASS_KEY_API029:'UNI-PASS 세관장확인 키 (API029)', UNIPASS_KEY_API010:'UNI-PASS 통관고유부호 키 (API010)', UNIPASS_KEY_API018:'UNI-PASS HS 부호 키 (API018)', NTS_API_KEY:'국세청 사업자 상태조회 키 (비우면 공공데이터포털 키 사용)'};
 async function openApiPing(){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token){ toast('먼저 Apps Script 연동을 설정하세요.'); return; }
@@ -281,7 +288,70 @@ function autoExtChecks(){
     if(db.settings.extPause === today()) return;
     const due = db.items.filter(it => itemReqs(it).length && old((it.ext || {}).at, 30)).slice(0, 15);
     if(due.length) await checkItemsExt(due, true);
+    const cd = db.clients.filter(c => (bizDigits(c.bizNo).length === 10 || c.name) && old((c.ext || {}).at, 30)).slice(0, 20);
+    if(cd.length) await checkClientsExt(cd, true);
   })().catch(() => {});
+}
+
+/* ---------- 업체 정보 자동 확인 (목표 5): 통관고유부호(API010) + 국세청 사업자 상태 ----------
+   사업자번호가 있으면 API010으로 통관고유부호·대표자·주소·전화를 빈칸에 채우고, 국세청으로 계속·휴업·폐업과 과세유형을 확인한다.
+   사업자번호가 없으면 상호명으로 API010을 찾아 한 곳만 나올 때 사업자번호까지 채운다. 변화는 확인 알림으로. */
+let clientExtBusy = false;
+async function checkClientsExt(list, silent){
+  if(clientExtBusy) return;
+  const cs = list.filter(c => bizDigits(c.bizNo).length === 10 || (c.name && nameKey(c.name).length >= 2));
+  if(!cs.length){ if(!silent) toast('확인할 업체가 없습니다. 사업자번호나 업체명을 넣어 주세요.'); return; }
+  clientExtBusy = true;
+  const reqs = cs.map(c => bizDigits(c.bizNo).length === 10 ? {svc:'ecm', p:{brno:bizDigits(c.bizNo)}} : {svc:'ecm', p:{name:nameKey(c.name)}});
+  const withBiz = () => cs.filter(c => bizDigits(c.bizNo).length === 10);
+  let res;
+  try{ res = await extCall(reqs); }catch(e){ clientExtBusy = false; if(!silent) toast('업체 정보를 확인하지 못했습니다: ' + e.message); return; }
+  let filled = 0, na0 = (db.alerts || []).length, errs = new Set();
+  cs.forEach((c, i) => {
+    const r = res[i] || {};
+    c.ext = {...(c.ext || {}), at:nowIso()};
+    if(!r.ok){ errs.add('통관고유부호: ' + (r.error || '응답 없음')); c.ext.ecmErr = r.error || ''; return; }
+    delete c.ext.ecmErr;
+    const rows = (r.items || []).filter(x => x.ecm || x.bsnsNo);
+    const b = bizDigits(c.bizNo);
+    const same = x => nameKey(x.conmNm).replace(/\s/g, '') === nameKey(c.name).replace(/\s/g, '');   // 상호로 찾을 때는 이름이 같은 한 곳만 인정
+    const hit = b ? rows.find(x => bizDigits(x.bsnsNo) === b) || null : (rows.filter(same).length === 1 ? rows.filter(same)[0] : null);
+    c.ext.ecmN = rows.length;
+    if(!hit) return;
+    const set = (k, v) => { if(v && !String(c[k] || '').trim()){ c[k] = String(v).trim(); filled++; return true; } return false; };
+    if(!b && hit.bsnsNo) set('bizNo', String(hit.bsnsNo).replace(/^(\d{3})(\d{2})(\d{5})$/, '$1-$2-$3'));
+    set('ecm', hit.ecm); set('rep', hit.rppnNm); set('address', hit.bslcBscsAddr); set('tel', hit.rprsTelno);
+    const prevUse = c.ext.ecmUse;
+    c.ext.ecmUse = hit.useYn || '';
+    if(hit.useYn && hit.useYn !== 'Y' && prevUse !== hit.useYn) addAlert({key:`ecm|${c.id}|${hit.useYn}`, kind:'ecm', ttype:'client', tid:c.id, title:`통관고유부호 사용 안 함: ${c.name}`, text:`UNI-PASS 통관고유부호 ${hit.ecm || ''} 사용여부 ${hit.useYn}. 신고 전에 업체에 부호 상태를 확인하세요.`});
+    c.updatedAt = nowIso();
+  });
+  const bz = withBiz();
+  for(let i = 0; i < bz.length; i += 100){                               // 국세청: 100개씩
+    const part = bz.slice(i, i + 100);
+    let nr;
+    try{ nr = (await extCall([{svc:'nts', p:{bnos:part.map(c => bizDigits(c.bizNo)).join(',')}}]))[0]; }catch(e){ nr = {ok:false, error:e.message}; }
+    if(!nr || !nr.ok){ errs.add('국세청: ' + ((nr && nr.error) || '응답 없음')); continue; }
+    (nr.items || []).filter(x => x.b_no).forEach(x => {
+      const c = part.find(y => bizDigits(y.bizNo) === bizDigits(x.b_no)); if(!c) return;
+      const prev = c.ext.nts || null, cur = {cd:x.b_stt_cd || '', stt:x.b_stt || '', tax:x.tax_type || '', end:x.end_dt || '', at:today()};
+      c.ext.nts = cur;
+      const nm = c.name;
+      if(cur.cd === '02' || cur.cd === '03') addAlert({key:`nts|${c.id}|${cur.cd}`, kind:'nts', ttype:'client', tid:c.id, title:`${cur.cd === '03' ? '폐업' : '휴업'} 사업자: ${nm}`, text:`국세청 상태 ${cur.stt}${cur.end ? ` (폐업일 ${fmtYmd(cur.end)})` : ''}. 진행 중 업무와 정산을 확인하세요.`});
+      else if(!cur.cd && /등록되지 않은/.test(cur.tax)) addAlert({key:`nts|${c.id}|none`, kind:'nts', ttype:'client', tid:c.id, title:`국세청에 없는 사업자번호: ${nm}`, text:`${c.bizNo} — ${cur.tax}`});
+      else if(prev && prev.tax && cur.tax && prev.tax !== cur.tax) addAlert({key:`ntstax|${c.id}|${cur.tax}`, kind:'nts', ttype:'client', tid:c.id, title:`과세유형 변경: ${nm}`, text:`${prev.tax} → ${cur.tax}`});
+    });
+  }
+  clientExtBusy = false;
+  commit();
+  const na = (db.alerts || []).length - na0;
+  if(!silent || na || filled) toast(`업체 정보 확인: ${cs.length}곳${filled ? ` · 빈칸 ${filled}개 채움` : ''}${na ? ` · 새 알림 ${na}건` : ''}${errs.size ? ` · ${[...errs].slice(0, 2).join(' / ')}` : ''}`);
+}
+/* 품목 화면: 품명으로 HS 후보 (참고용, 자동으로 넣지 않음) */
+async function hsCandidates(name){
+  const r = (await extCall([{svc:'hs', p:{name}}]))[0];
+  if(!r || !r.ok) throw new Error((r && r.error) || '응답 없음');
+  return (r.items || []).filter(x => x.hsSgn).slice(0, 20).map(x => ({hs:x.hsSgn, ko:x.korePrnm || '', en:x.englPrnm || ''}));
 }
 function snapLaws(rec){
   const p = (rec.procId && db.procedures.find(x => x.id === rec.procId)) || procFor(rec);
