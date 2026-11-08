@@ -154,6 +154,8 @@ function openRecord(r, preset = {}){
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
         if(preset.thread) preset.thread.ms.forEach(x => seeMail(x.id)); else if(preset.mail) seeMail(preset.mail.id);
+        const lk = (preset.thread || preset.mail) && !matchClient(preset.thread ? preset.thread.ms : [preset.mail]) ? learnClient(rec.clientId, preset.thread ? preset.thread.ms : [preset.mail]) : [];
+        if(lk.length) setTimeout(() => toast(`다음부터 ${lk[0]} 메일은 ${clientName(rec.clientId)}로 알아봅니다.`), 1200);
         toast(status === '진행중' ? '업무를 시작했습니다.' : '기록을 저장했습니다.');
       } else toast(preset.complete ? '완료 처리했습니다.' : '기록을 수정했습니다.');
     },

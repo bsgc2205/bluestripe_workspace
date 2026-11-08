@@ -208,28 +208,69 @@ function staffAccount(m){
   const a = accounts.find(x => (nm && x.name && (nm.includes(x.name) || x.name.includes(nm))) || x.id.toLowerCase() === local);
   return a ? a.id : '';
 }
+/* 자동 접수 (목표 5: 버튼 없이 기록 생성). 대상 대화는 최근 14일·누락 기준일 이후이고, 업체를 알아보며, 기록이 없을 때만.
+   ① 직원이 필증을 보낸 대화(신고번호 있음) → 수리 반영까지 ② 업체의 의뢰 메일(새 의뢰 후보) → 진행 중 기록.
+   유형·품목은 메일로 추정, 단계·서류는 절차(업체 전용 → 공통)에서, 담당은 보낸 직원 → 절차 담당 → 업체 기본 담당 순. 근거는 이력에 남긴다. */
+const cleanSubj = s => String(s || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim();
+function applyProcAuto(r){
+  const p = procFor(r);
+  if(!p) return;
+  r.procId = p.id;
+  if(!(r.checklist || []).length) r.checklist = (p.steps || []).map(text => ({text, done:false}));
+  if(!(r.docs || []).length) r.docs = splitDocs(p.docs).map(text => ({text, done:false}));
+  if(!r.assignee && p.assignee && accounts.some(a => a.id === p.assignee)) r.assignee = p.assignee;
+}
 function autoIntake(){
   const made = [];
-  const since = addPeriod(today(), -14, 'd');
+  const since = [addPeriod(today(), -14, 'd'), mailWatchFrom()].sort().slice(-1)[0];
   mailThreadsList().forEach(t => {
+    if(String(t.last.date).slice(0, 10) < since) return;
+    if(t.ms.some(x => mailRecord(x))) return;                                               // 이미 있는 건은 autoAttachMails가 붙임
     const ci = t.ms.map(m => ({m, cm:certMail(m)})).filter(x => x.cm && x.cm.decl && x.cm.date >= since);
-    if(!ci.length) return;
-    const {m, cm} = ci[0];
-    if(recordByRef({declNo:cm.decl}) || t.ms.some(x => mailRecord(x))) return;           // 이미 있는 건은 autoAttachMails가 붙임
-    const c = matchClient(t.ms);
-    if(!c) return;                                                                          // 업체 미인식 → 메일 화면에 '필증 송부됨' 표시, 업체 등록 후 다음 불러오기 때 접수
-    const type = cm.kind === 'E' ? '수출신고' : cm.kind === 'I' ? '수입통관' : (guessType(t.ms.map(x => x.subject + ' ' + String(x.snippet || '').slice(0, 200)).join(' '), c.id) || '수출신고');
-    const title = String(t.ms[0].subject || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim() || `[${type}] ${cm.decl}`;
-    const r = {id:uid(), clientId:c.id, type, status:'진행중', startDate:String(t.ms[0].date || today()).slice(0, 10), date:'', refNo:cm.decl, bl:t.ms.map(x => x.bl).find(Boolean) || '',
-      title, summary:String(t.ms[0].snippet || '').slice(0, 300), special:false, specialNote:'', tags:['자동접수'], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[],
-      assignee:staffAccount(m) || clientAssignee(c.id), history:[], createdAt:nowIso(), updatedAt:nowIso(), createdBy:'auto'};
-    const gi = guessItem(t.ms.map(x => x.subject + ' ' + String(x.snippet || '').slice(0, 200)).join(' '), c.id); if(gi) r.itemId = gi.id;
-    addHist(r, `자동 접수: ${cm.who}가 필증 송부 (${cm.date}, 신고 ${cm.decl})`);
+    if(ci.length && recordByRef({declNo:ci[0].cm.decl})) return;
+    const f = threadFlags(t);
+    if(!ci.length && !f.request) return;
+    const c = f.client;
+    if(!c) return;                                                                          // 업체 미인식 → 메일 화면 표시, 업체 등록 후 다음 불러오기 때 접수
+    const txt = t.ms.map(x => x.subject + ' ' + String(x.snippet || '').slice(0, 200)).join(' ');
+    const cm = ci.length ? ci[0].cm : null;
+    const type = cm && cm.kind === 'E' ? '수출신고' : cm && cm.kind === 'I' ? '수입통관' : (guessType(txt, c.id) || lastType(c.id) || '기타');
+    const first = t.ms[0];
+    const r = {id:uid(), clientId:c.id, type, status:'진행중', startDate:String(first.date || today()).slice(0, 10), date:'', refNo:cm ? cm.decl : (t.ms.map(mailDecl).find(Boolean) || ''), bl:t.ms.map(x => x.bl).find(Boolean) || '',
+      title:cleanSubj(first.subject) || `[${type}] ${cm ? cm.decl : ''}`, summary:String(first.snippet || '').slice(0, 300), special:false, specialNote:'', tags:['자동접수'], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[],
+      assignee:(cm ? staffAccount(ci[0].m) : '') || t.ms.filter(x => isOwn(x.from)).map(staffAccount).find(Boolean) || '', history:[], createdAt:nowIso(), updatedAt:nowIso(), createdBy:'auto'};
+    const gi = guessItem(txt, c.id); if(gi) r.itemId = gi.id;
+    applyProcAuto(r);
+    if(!r.assignee) r.assignee = clientAssignee(c.id);
+    addHist(r, cm ? `자동 접수: ${cm.who}가 필증 송부 (${cm.date}, 신고 ${cm.decl})` : `자동 접수: 의뢰 메일 “${first.subject}” (${first.fromName || first.fwdFrom || first.from}, ${String(first.date).slice(0, 16)})`);
     t.ms.forEach(x => { attachMail(r, x); seeMail(x.id); });
     ci.forEach(x => applyCert(r, x.cm));
+    if(!r.lawSnap) snapLaws(r);
     db.records.push(r); made.push(r);
   });
   return made;
+}
+function lastType(cid){ const r = db.records.filter(x => x.clientId === cid && x.type).sort(byDateDesc)[0]; return r ? r.type : ''; }
+/* 업체 인식 학습 (목표 5): 직원이 대화를 업체 기록에 연결하면, 그 대화의 의뢰자 주소(회사 도메인이면 '@도메인', 공용 메일이면 주소)를 업체 검색어에 더한다.
+   다른 업체 기록에도 나온 주소·도메인(포워더 등)은 배우지 않는다. */
+function learnClient(cid, ms){
+  const c = db.clients.find(x => x.id === cid);
+  if(!c || !ms || !ms.length) return [];
+  const ext = a => a && !isOwn(a);
+  const addr = s => (String(s || '').toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/) || [''])[0];
+  let src = ms.map(m => addr(m.fwdFrom) || addr(m.from)).filter(ext);
+  if(!src.length) src = ms.filter(m => isOwn(m.from)).flatMap(m => String(m.to || '').toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || []).filter(ext);
+  const first = src[0];
+  if(!first) return [];
+  const dom = first.split('@')[1], key = FREE_MAIL.includes(dom) ? first : '@' + dom;
+  const kws = kwList(c);
+  if(kws.includes(key)) return [];
+  const usedElsewhere = db.clients.some(o => o.id !== cid && kwList(o).some(k => k === key || (key.startsWith('@') && k.endsWith(key))))
+    || db.records.some(r => r.clientId && r.clientId !== cid && (r.mails || []).some(m => String(m.from || '').toLowerCase().includes(key)));
+  if(usedElsewhere) return [];
+  c.keyword = [...kws, key].join(', ');
+  c.learned = [...(c.learned || []), {key, at:today()}].slice(-30);
+  return [key];
 }
 function mailRecord(m){
   const cm = CASE_RE.exec(m.caseNo || m.subject || '');
@@ -324,9 +365,9 @@ async function loadMail(manual = true){
     const j = await collectApi({mails:1, days:60});
     mailCache = j.items || []; mailCollectorAt = j.collectorAt || '';
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages();
-    if(n || made.length || cs || ev.n || ev.done){ pruneThreads(); commit(); }
-    if(made.length) setTimeout(() => refreshCustoms(true), 800);                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
-    if(n || made.length || cs || ev.done) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `필증 송부 메일로 ${made.length}건을 자동 접수했습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`].filter(Boolean).join(' · '));
+    if(n || made.length || cs || ev.n || ev.done || ev.ck){ pruneThreads(); commit(); }
+    if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
+    if(n || made.length || cs || ev.done) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`].filter(Boolean).join(' · '));
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(manual) toast(mailErr);
@@ -346,7 +387,8 @@ function openAttachMail(t){
       const r = db.records.find(x => x.id === fd.get('rid'));
       if(!r) return false;
       t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
-      toast(`기록에 메일 ${t.ms.length}통을 붙였습니다.`);
+      const lk = learnClient(r.clientId, t.ms);
+      toast(`기록에 메일 ${t.ms.length}통을 붙였습니다.${lk.length ? ` 다음부터 ${lk[0]} 메일은 ${clientName(r.clientId)}로 알아봅니다.` : ''}`);
     }
   });
 }

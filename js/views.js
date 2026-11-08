@@ -37,7 +37,7 @@ function renderView(){
 function go(name, id){route = {name, id:id || null}; typeFilter = '전체'; render(); window.scrollTo(0,0);}
 
 function ckItem(rid, kind, i, x){
-  return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${x.done && x.doneAt ? `<small>${esc(x.doneAt)}</small>` : ''}</span></label></li>`;
+  return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${x.done && x.doneAt ? `<small${x.auto ? ` title="자동 체크: ${esc(x.auto)}"` : ''}>${esc(x.doneAt)}${x.auto ? ' · 자동' : ''}</small>` : ''}</span></label></li>`;
 }
 /* 기록 단계 색 띠: 조치 필요(빨강) · 진행(파랑) · 선적 대기(청록, 수출 수리 후) · 정산 대기(초록) · 보류(회색) */
 function recBand(r){
@@ -69,7 +69,7 @@ function recordHTML(r, o = {}){
     ? `${esc(r.startDate || '')}<small>${r.status === '보류' ? '보류' : '접수'}</small>`
     : `${esc(r.date)}${r.startDate && r.startDate !== r.date ? `<small>접수 ${esc(r.startDate.slice(5))}</small>` : ''}`;
   const inqN = (db.inquiries || []).filter(q => q.recId === r.id).length;
-  const byLine = accounts.length > 1 && r.createdBy ? `<small>${esc(accountName(r.createdBy))}</small>` : '';
+  const byLine = accounts.length > 1 && r.createdBy ? `<small>${r.createdBy === 'auto' ? '자동' : esc(accountName(r.createdBy))}</small>` : '';
   const band = recBand(r), dsHtml = o.compact ? '' : docsHTML(r), missDocs = /class="doc miss"/.test(dsHtml), guide = active && !o.compact ? guideHTML(r) : '';
   const guideTop = guide && !(r.checklist || []).length;               // 막 시작한 건(체크리스트 없음)은 유사 업무 가이드를 바로 보여 줌
   const moreInner = o.compact ? '' : (missDocs ? '' : dsHtml) + (guideTop ? '' : guide) + tags + linkHtml + filesHTML(r) + mailsHTML(r);

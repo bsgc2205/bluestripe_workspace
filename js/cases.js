@@ -134,6 +134,7 @@ function stageActsHTML(r){
   if(isExp(r) && !st.accept && !st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|accept">수리완료</button>`);
   if(!st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|customs">${stageName(r, 'customs')}</button>`);
   if(!st.settle && settleMode(r) === 'each') b.push(`<button class="mini" data-stage="${esc(r.id)}|settle">정산완료</button>`);
+  if((r.tags || []).includes('자동접수') && (r.history || []).length <= 6) b.push(`<button class="mini" data-intake-undo="${esc(r.id)}" title="업무가 아닌 메일이 자동 접수됐으면 취소하세요. 메일은 다시 접수되지 않습니다.">접수 취소</button>`);
   return b.join('');
 }
 function autoComplete(r, why){
@@ -154,15 +155,64 @@ function autoComplete(r, why){
   r.updatedAt = nowIso();
   return true;
 }
-/* 메일 기준 정산 판정 + 자동 완료. loadMail·refreshCustoms 뒤와 단계 버튼에서 부른다 */
+/* ---------- 단계·서류 체크리스트 자동 체크 (목표 5) ----------
+   메일(서류 수령·필증 송부·정산서)과 UNI-PASS(반입·신고·수리·반출·납부·선적·요건)에서 일어난 일을 절차 단계 문장에 맞춰 체크하고 날짜·근거를 남긴다.
+   담당자가 자동 체크를 해제하면(autoOff) 다시 체크하지 않는다. */
+const STEP_EVENTS = [
+  ['docs', /선적\s*서류|서류\s*(수령|접수|확인|검토|받)|인보이스|invoice|packing|b\/?l\s*(수령|접수)/i],
+  ['certSent', /필증.*(송부|발송|전달|전송|회신)|(송부|발송|전달).*필증/],
+  ['settle', /정산|청구|계산서|비용\s*안내/],
+  ['release', /반출/],
+  ['paid', /납부|세금|세액|관세\s*납/],
+  ['loaded', /선적|적재|출항|on\s*board/i],
+  ['accept', /수리|통관\s*완료|면허|필증\s*(발급|수령|출력)/],
+  ['in', /반입|입항|도착/],
+  ['decl', /신고/],
+  ['req', /요건|검역|검사|확인서|승인/]
+];
+function recEvents(r){
+  const u = r.unipass || {}, st = stageOf(r), ev = {}, put = (k, date, src) => { if(!ev[k] && date) ev[k] = {date:String(date).slice(0, 10), src}; };
+  const ms = (r.mails || []).slice().sort((a, b) => a.date < b.date ? -1 : 1);
+  const cert = ms.find(m => typeof certMail === 'function' && certMail(m));
+  if(cert) put('certSent', cert.date, '필증 송부 메일');
+  const dm = ms.find(m => !isOwn(m.from) && (m.files || []).some(f => ['Invoice', 'Packing List', 'B/L'].some(t => docTypes(f).includes(t))));
+  if(dm) put('docs', dm.date, '서류 첨부 메일');
+  if(st.settle) put('settle', st.settle, st.settleBy || '정산완료');
+  if(u.releasedAt) put('release', u.releasedAt, 'UNI-PASS 반출신고');
+  if(u.paid) put('paid', u.paidAt || today(), 'UNI-PASS 납부 확인');
+  if(isExp(r) && st.customs) put('loaded', u.departAt || st.customs, 'UNI-PASS 선적완료');
+  put('accept', st.accept || u.clearedAt || u.acceptedAt || (!isExp(r) && st.customs) || (cert && cert.date), st.acceptBy || (u.clearedAt ? 'UNI-PASS 수입신고수리' : u.acceptedAt ? 'UNI-PASS 수출신고수리' : '필증 송부 메일'));
+  if(u.shedIn) put('in', u.shedIn, 'UNI-PASS 반입');
+  if(u.reqRqstDone) put('req', today(), 'UNI-PASS 요건신청 처리');
+  if(ev.release || ev.paid || ev.loaded || ev.certSent) put('accept', (ev.release || ev.paid || ev.loaded || ev.certSent).date, '후속 단계로 확인');
+  if(ev.accept || u.dclrNo) put('decl', (ev.accept && ev.accept.date) || today(), ev.accept ? '수리로 확인' : 'UNI-PASS 신고번호');
+  if(ev.decl) put('docs', ev.decl.date, '신고로 확인');
+  return ev;
+}
+function autoChecklist(r){
+  const ev = recEvents(r), hit = [];
+  (r.checklist || []).forEach(x => {
+    if(x.done || x.autoOff) return;
+    const k = (STEP_EVENTS.find(([, re]) => re.test(x.text)) || [])[0];
+    if(k && ev[k]){ x.done = true; x.doneAt = ev[k].date; x.auto = ev[k].src; hit.push(x.text); }
+  });
+  if((r.docs || []).length){                                           // 받은 파일(메일 첨부·Drive)로 서류 체크
+    const {list} = docStatus(r);
+    r.docs.forEach((x, i) => { const s = list[i]; if(!x.done && !x.autoOff && s && s.file){ x.done = true; x.doneAt = String(s.file.date || today()).slice(0, 10); x.auto = `파일: ${s.file.name}`; hit.push(x.text); } });
+  }
+  if(hit.length){ addHist(r, `자동 체크: ${hit.join(', ')}`); r.updatedAt = nowIso(); }
+  return hit.length;
+}
+/* 메일 기준 정산 판정 + 체크리스트 자동 체크 + 자동 완료. loadMail·refreshCustoms 뒤와 단계 버튼에서 부른다 */
 function evalStages(){
-  let n = 0, done = 0;
+  let n = 0, done = 0, ck = 0;
   db.records.filter(r => r.status !== '완료' && r.status !== '보류').forEach(r => {
     const m = (r.mails || []).filter(x => SETTLE_RE.test(x.subject || '')).slice(-1)[0];
     if(m && setStage(r, 'settle', m.date, `메일: ${m.subject}`)) n++;
+    if(autoChecklist(r)) ck++;
     if(autoComplete(r)) done++;
   });
-  return {n, done};
+  return {n, done, ck};
 }
 function unsetStage(r, k){
   if(!r.stage) return;
@@ -350,7 +400,7 @@ async function refreshCustoms(force){
     if(before !== JSON.stringify(r.stage || {}) + [u.last, u.mdfy, u.reqRqst, u.condTxt, u.ldp].join('|')) r.updatedAt = nowIso();
   }
   const ev = evalStages();
-  if(list.length || ev.n || ev.done){ commit(); if(ev.done) toast(`통관·정산이 확인된 ${ev.done}건을 자동으로 완료했습니다.`); }
+  if(list.length || ev.n || ev.done || ev.ck){ commit(); if(ev.done) toast(`통관·정산이 확인된 ${ev.done}건을 자동으로 완료했습니다.`); }
 }
 const refreshUnipass = refreshCustoms;
 

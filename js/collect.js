@@ -38,7 +38,9 @@ function recordByRef(x){
   const open = hits.filter(r => r.status !== '완료');
   return open.length === 1 ? open[0] : hits.sort(byDateDesc)[0];
 }
-function collectText(x){ return `${x.name} ${x.path} ${x.mail ? [x.mail.subject, x.mail.from, x.mail.snippet].filter(Boolean).join(' ') : ''}`; }
+function collectText(x){ return `${x.name} ${x.path} ${x.party || ''} ${x.mail ? [x.mail.subject, x.mail.from, x.mail.snippet].filter(Boolean).join(' ') : ''}`; }
+const bizDigits = s => String(s || '').replace(/[^0-9]/g, '');
+function clientByBiz(biz){ const b = bizDigits(biz); return b.length === 10 ? db.clients.find(c => bizDigits(c.bizNo) === b) || null : null; }
 /* 자료 묶음을 기록에 넣음: ① 신고번호·B/L이 같은 기록 → ② 파일명·폴더·연결 메일(보낸 사람 포함)로 업체 → ③ 못 찾으면 미분류 */
 function assignItems(list){
   db.collectPending = db.collectPending || [];
@@ -47,7 +49,7 @@ function assignItems(list){
   list.forEach(x => {
     const hit = recordByRef(x);
     if(hit){ (attach[hit.id] = attach[hit.id] || {r:hit, list:[]}).list.push(x); return; }
-    const c = matchClientText(collectText(x));
+    const c = clientByBiz(x.bizNo) || matchClientText(collectText(x));
     if(!c){ db.collectPending.push(x); pend++; return; }
     const weekly = !['수입','수출'].includes(x.kind);
     const k = weekly ? c.id + '|' + x.kind + '|weekly|' + today() : c.id + '|' + x.kind + '|' + (x.bl || x.declNo || x.name);
@@ -89,6 +91,62 @@ function rematchPending(){
   const r = assignItems(p);
   return r.made || r.upd ? r : (db.collectPending = p, null);
 }
+/* ---------- 필증 읽기 (목표 5): 기록·미분류 자료의 PDF를 Apps Script가 글자 인식으로 읽어 신고번호·B/L·품목(품명·HS·원산지·순중량)을 채운다 ----------
+   한 번에 6개씩, 로그인 때와 '지금 확인' 때. 같은 파일은 다시 읽지 않는다(gs 캐시 + r.certRead). */
+const CERT_HINT = /필증|면장|신고서|\d{5}-?\d{2}-?\d{6}|\b\d{6}[A-Z]\b|(^|[^A-Z])(EXP|IMP)[_-]?\d/i;
+function certQueue(){
+  const cut = addPeriod(today(), -60, 'd'), q = [];
+  (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !x.certTried && x.id) q.push({id:x.id, pend:x, hint:CERT_HINT.test(x.name)}); });
+  db.records.filter(r => r.status !== '완료' || recDate(r) >= cut).forEach(r => (r.files || []).forEach(f => {
+    if(/\.pdf$/i.test(f.name || '') && f.id && String(f.id).length > 15 && !(r.certRead || {})[f.id]) q.push({id:f.id, rec:r, file:f, hint:CERT_HINT.test(f.name)});
+  }));
+  return q.sort((a, b) => b.hint - a.hint).slice(0, 6);
+}
+function itemFromLine(cid, ln, d){
+  const nm = ln.trade || ln.name, hs = hsDigits(ln.hs);
+  if(!nm && !hs) return null;
+  const nk = nameKey(nm).replace(/\s/g, '');
+  let it = db.items.find(i => i.clientId === cid && ((hs && hsDigits(i.hs) === hs && (!nk || nameKey(i.name).replace(/\s/g, '') === nk)) || (nk && nameKey(i.name).replace(/\s/g, '') === nk)));
+  if(it){ if(!it.hs && ln.hs){ it.hs = ln.hs; it.updatedAt = nowIso(); } if(!it.country && ln.origin) it.country = ln.origin; return {it, isNew:false}; }
+  it = {id:uid(), clientId:cid, name:nm, hs:ln.hs || '', tariff:'', reqs:'', agency:'', model:ln.model || '', country:ln.origin || '', maker:'',
+    notes:`필증 ${d.declNo || ''}에서 자동 등록${ln.name && ln.name !== nm ? ` (품명 ${ln.name})` : ''}`, createdAt:nowIso(), updatedAt:nowIso(), createdBy:'auto'};
+  db.items.push(it);
+  return {it, isNew:true};
+}
+function applyCert2Rec(r, d, fname){
+  const ch = [];
+  if(d.declNo && !r.refNo){ r.refNo = d.declNo; ch.push('신고번호'); }
+  if(d.bl && !r.bl){ r.bl = d.bl; ch.push('B/L'); }
+  if(d.cargoNo && !r.cargoNo){ r.cargoNo = d.cargoNo; ch.push('화물관리번호'); }
+  if(d.kind && caseCode(r.type) === 'X'){ r.type = d.kind === 'E' ? '수출신고' : '수입통관'; ch.push('유형'); }
+  r.certs = [...(r.certs || []).filter(x => x.declNo !== d.declNo), {file:fname, declNo:d.declNo, declDate:d.declDate, kind:d.kind, party:d.party, partner:d.partner, country:d.country, terms:d.terms, lines:(d.lines || []).slice(0, 12)}].slice(-10);
+  let made = 0;
+  (d.lines || []).forEach((ln, i) => { const x = itemFromLine(r.clientId, ln, d); if(!x) return; if(x.isNew) made++; if(i === 0 && !r.itemId) { r.itemId = x.it.id; ch.push('품목'); } });
+  addHist(r, `필증 읽기(${fname}): 신고 ${d.declNo || '-'}${(d.lines || []).length ? `, 품목 ${d.lines.length}란(HS ${[...new Set(d.lines.map(l => l.hs).filter(Boolean))].slice(0, 4).join(', ')})` : ''}${ch.length ? ` → ${ch.join('·')} 채움` : ''}${made ? `, 품목 DB ${made}개 추가` : ''}`);
+  r.updatedAt = nowIso();
+  return {ch:ch.length, made};
+}
+async function certRead(manual){
+  const q = certQueue();
+  if(!q.length){ if(manual) toast('새로 읽을 필증이 없습니다.'); return null; }
+  let j;
+  try{ j = await collectApi({certread:q.map(x => x.id).join(',')}); }
+  catch(e){ if(manual || !/허용|알 수 없/.test(e.message)) console.warn('필증 읽기', e.message); if(manual) toast('필증을 읽지 못했습니다: ' + e.message); return null; }
+  let recs = 0, items = 0, pend = 0;
+  (j.items || []).forEach(res => {
+    if(res.later || res.err) return;                                     // 오류는 다음에 다시 시도
+    q.filter(x => x.id === res.id).forEach(x => {
+      const d = res.doc;
+      if(x.pend){ x.pend.certTried = true; if(d){ Object.assign(x.pend, {declNo:x.pend.declNo || d.declNo || '', bl:x.pend.bl || d.bl || '', party:d.party || '', bizNo:d.bizNo || ''}); pend++; } return; }
+      x.rec.certRead = {...(x.rec.certRead || {}), [res.id]:today()};
+      if(d && (d.declNo || (d.lines || []).length)){ const a = applyCert2Rec(x.rec, d, x.file.name); recs++; items += a.made; }
+    });
+  });
+  const rm = pend ? rematchPending() : null;
+  commit();
+  if(recs || items || (rm && (rm.made || rm.upd)) || manual) toast(`필증 읽기: 기록 ${recs}건 반영, 품목 DB ${items}개 추가${rm && (rm.made || rm.upd) ? `, 미분류 자료 ${rm.made + rm.upd}건 업체 확인` : ''}`);
+  return {recs, items};
+}
 async function runCollect(manual){
   try{
     if(manual){ toast('수입·수출 폴더와 BSGC-Backup 변동사항을 확인하는 중입니다…'); await collectApi({collect:1}); await collectApi({weekly:1}); }
@@ -102,6 +160,7 @@ async function runCollect(manual){
       const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건, 미분류 ${r.pend}건`, s2 && `주간 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
       toast('자동 수집: ' + msg);
     } else if(manual) toast('새로 반영할 자료가 없습니다.');
+    setTimeout(() => certRead(false), manual ? 2500 : 4000);
   }catch(e){ if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
 }
 function viewInbox(){

@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-dl-done],[data-today-mine],[data-amode],[data-asort],[data-man-scope],[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-dl-done],[data-today-mine],[data-amode],[data-asort],[data-man-scope],[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-unstage],[data-stage],[data-intake-undo],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -78,6 +78,7 @@ document.addEventListener('click', e => {
   else if('manPrint' in d){const p = db.procedures.find(x => x.id === d.manPrint); if(p) printManual(p);}
   else if('mailOldClear' in d){const olds = mailThreadsList().filter(t => threadFlags(t).old); if(confirm(`기준일 이전 대화 ${olds.length}건을 모두 목록에서 뺄까요? 메일 색인에는 그대로 남습니다.`)){ olds.forEach(t => t.ms.forEach(m => seeMail(m.id))); commit(); toast(`${olds.length}건을 정리했습니다.`); }}
   else if('stage' in d){const [rid, k] = d.stage.split('|'), r = findRec(rid); if(r){ setStage(r, k, today(), '직접 표시'); if(k === 'accept') setLoadDue(r, r.stage.accept); if(k === 'customs') (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true); const done = autoComplete(r); commit(); toast(done ? '통관·정산이 모두 확인되어 완료 처리했습니다.' : `${stageName(r, k)}로 표시했습니다.${k === 'accept' ? ' 적재기한(수리일 + 30일)을 등록했습니다.' : ''}`); }}
+  else if('intakeUndo' in d){const r = findRec(d.intakeUndo); if(r && confirm(`자동 접수된 ‘${r.title}’을(를) 취소할까요? 기록을 지우고, 이 메일 대화는 다시 접수하지 않습니다.`)){ db.records = db.records.filter(x => x.id !== r.id); Object.keys(db.mailThreads || {}).forEach(k => { if(db.mailThreads[k] === r.id) delete db.mailThreads[k]; }); (r.mails || []).forEach(m => seeMail(m.id)); commit(); toast('자동 접수를 취소했습니다.'); }}
   else if('unstage' in d){const [rid, k] = d.unstage.split('|'), r = findRec(rid); const nm = r ? stageName(r, k) : ''; if(r && confirm(`‘${r.title}’의 ${nm} 표시를 취소할까요?${r.autoDone ? ' 자동 완료도 함께 되돌립니다.' : ''}`)){ unsetStage(r, k); commit(); toast(`${nm} 표시를 취소했습니다.`); }}
   else if('undoAuto' in d){const r = findRec(d.undoAuto); if(r){ undoAuto(r); commit(); toast('진행 중으로 되돌렸습니다. 이 기록은 다시 자동 완료하지 않습니다.'); }}
   else if('openData' in d) openDataMenu();
@@ -104,6 +105,8 @@ document.addEventListener('change', e => {
     const [rid, kind, i] = el.dataset.ck.split('|');
     const r = db.records.find(x => x.id === rid); if(!r) return;
     const x = (kind === 'c' ? r.checklist : r.docs)[Number(i)]; if(!x) return;
+    if(!el.checked && x.auto) x.autoOff = true;                         // 자동 체크를 해제하면 다시 자동 체크하지 않음
+    delete x.auto;
     x.done = el.checked; x.doneAt = el.checked ? today() : null; r.updatedAt = nowIso();
     openCk.add(rid); commit();
   } else if(el.matches('[data-dl]')){
