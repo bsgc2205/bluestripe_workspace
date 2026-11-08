@@ -376,7 +376,9 @@ function homeWidgetsHTML(){
   const uniErr = db.records.map(r => r.unipass || {}).filter(u => u.at === uniAt).map(u => u.err).find(Boolean);
   const t16 = s => s ? String(s).replace('T', ' ').slice(5, 16) : '';
   const st = [
-    `메일 수집 ${lastMail ? t16(lastMail) : '기록 없음'}${mailAge !== null && mailAge > 2 ? ' <b class="bad">(2시간 넘게 새 수집 없음 — 사무실 PC 수집기 확인)</b>' : ''}`,
+    mailCollectorAt   // 수집기가 15분마다 보고한 실행 시각 기준. 새 메일이 없는 주말·야간에는 경고하지 않음
+      ? `메일 수집기 ${t16(mailCollectorAt)} 실행${hoursSince(mailCollectorAt) > 1 ? ' <b class="bad">(1시간 넘게 실행 안 됨 — 사무실 PC 수집기 확인)</b>' : ''} · 최근 메일 ${lastMail ? t16(lastMail) : '없음'}`
+      : `최근 메일 수집 ${lastMail ? t16(lastMail) : '기록 없음'}${mailAge !== null && mailAge > 48 ? ' <b class="bad">(48시간 넘게 새 메일 없음 — 사무실 PC 수집기 확인)</b>' : ''}`,
     `UNI-PASS 확인 ${uniAt ? t16(new Date(uniAt).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'})) : '아직 없음'}${uniErr ? ` <b class="bad">(${esc(uniErr)})</b>` : ''}`,
     `Drive 자료 수집 ${lastCollectRun ? t16(new Date(lastCollectRun).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'})) : '기록 없음'}`
   ];

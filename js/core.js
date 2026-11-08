@@ -55,7 +55,7 @@ let remoteBlob = null, localBlob = null, serverBlob = null, serverPre = null, re
 let route = {name:'home', id:null}, typeFilter = '전체';
 let sOpt = {type:'', special:false}, hlRe = null;
 let openCk = new Set(), rptMonth = null, folderOpen = {long:true, other:false};
-let mailCache = null, mailLoading = false, mailErr = '';
+let mailCache = null, mailLoading = false, mailErr = '', mailCollectorAt = '';
 
 /* ---------- helpers ---------- */
 function esc(s){return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}

@@ -252,7 +252,7 @@ async function loadMail(manual = true){
   mailLoading = true; mailErr = ''; if(route.name === 'mail') renderView();
   try{
     const j = await collectApi({mails:1, days:60});
-    mailCache = j.items || [];
+    mailCache = j.items || []; mailCollectorAt = j.collectorAt || '';
     const n = autoAttachMails(), ev = evalStages();
     if(n || ev.n || ev.done){ pruneThreads(); commit(); }
     if(n || ev.done) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`].filter(Boolean).join(' · '));
