@@ -439,3 +439,21 @@ ul.plain li{padding:.3rem 0;border-bottom:1px solid var(--line);font-size:.88rem
   .rec-grid.wide{grid-template-columns:repeat(2,minmax(0,1fr))}
   .card-grid:not(.tight){grid-template-columns:repeat(auto-fill,minmax(520px,1fr))}
 }
+/* 접기·펼치기 (11/9: KC 목록·업체 담당자) */
+details.more.fold{margin-top:.4rem}
+details.more.fold>summary{display:inline-block;padding:.2rem .6rem;border:1px solid var(--line, #d8dde3);border-radius:999px;color:var(--accent);font-size:.82rem}
+details.more.fold[open]>summary{margin-bottom:.45rem}
+/* 운임 견적 (11/9) */
+.q-drop{margin:.8rem 0;padding:1rem;border:2px dashed var(--line);border-radius:10px;color:var(--muted);text-align:center;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;justify-content:center}
+.q-drop.on{border-color:var(--accent);background:var(--chip);color:var(--ink)}
+.q-paste{display:grid;grid-template-columns:1fr auto;gap:.4rem;margin-top:.4rem}.q-paste textarea{grid-column:1/-1}.q-paste button{justify-self:start}
+.q-grp{border:1px solid var(--line);border-radius:10px;padding:.7rem .8rem;margin:.7rem 0;background:var(--surface)}
+.q-grp-h{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem;align-items:center;margin-bottom:.4rem}
+.q-cmp td.num{text-align:right;white-space:nowrap}.q-tot td{font-weight:700;border-top:2px solid var(--line)}.q-best{color:var(--settle,#1b7f4b)}
+.q-raw{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:.75rem;background:var(--chip);padding:.5rem;border-radius:6px}
+.q-set,.q-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.5rem .8rem;margin:.6rem 0}.q-set label,.q-form label{display:flex;flex-direction:column;font-size:.82rem;color:var(--muted);gap:.2rem}.q-set .wide,.q-form .wide{grid-column:1/-1}
+.q-edit input,.q-edit select{font-size:.85rem;padding:.2rem .3rem}.q-edit td{vertical-align:top}.q-edit .q-note{display:block;margin-top:.2rem;font-size:.78rem;width:100%}
+.q-sec td{background:var(--chip);font-weight:600;font-size:.82rem}.q-hide{opacity:.45}.q-int{background:color-mix(in srgb,var(--chip) 60%,transparent)}
+.q-totals{display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;justify-content:flex-end;margin:.6rem 0;font-size:.92rem}.q-totals strong{font-size:1.05rem}
+.q-addrow{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;font-size:.85rem;color:var(--muted)}
+@media (max-width:640px){.q-paste{grid-template-columns:1fr}}

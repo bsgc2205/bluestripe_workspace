@@ -1,79 +1,150 @@
 'use strict';
-/* ---------- 유사 업무 가이드 (G3) ----------
+/* ---------- 유사 업무 가이드 (G3, 11/9 재설계) ----------
    새 기록 창·진행 중 기록·customs@ 대화에 '비슷한 과거 건'(완료 기록)을 3~5개 보여 준다.
-   점수: 같은 업체 30 · 같은 업무유형 20(메일에서 추정한 유형은 12) · 같은 품목 20, 아니면 같은 HS 6단위 15 / 4단위 8
-         · 제목·요약 키워드 겹침 최대 24 · 같은 선사(B/L 앞 4글자) 5 · 같은 정정 원인 개당 5(최대 15) · 특이 기록 3.
-   SIM_MIN점 이상이면서 유형·품목·HS·키워드 중 하나는 겹쳐야 보여 준다(업체만 같은 건은 제외).
-   세관 질의 DB(db.inquiries)도 HS·업체·키워드로 함께 찾아 보여 준다.
-   품목 DB는 업체별 품목·요건, KC 목록, 세관 질의를 HS 기준으로 모은 화면(UNI-PASS 018·030·029는 보류). */
-const SIM_MIN = 30;
-const SIM_STOP = new Set(('수입 수출 통관 신고 수입통관 수출통관 수입신고 수출신고 관련 관련하여 요청 의뢰 부탁 문의 신청 진행 건 건의 드립니다 바랍니다 입니다 합니다 '
-  + '요청드립니다 부탁드립니다 감사합니다 안녕하세요 확인 송부 전달 회신 답장 자료 서류 첨부 메일 업무 처리 완료 자동 단계 수리 납부 반출신고 수입신고수리 '
-  + '선적완료 정산완료 통관완료 정산서 필증 수출신고필증 수입신고필증 면장 건입니다 re fw fwd the and for of to in on with please dear regards kind '
-  + 'invoice packing list bl b/l co ltd inc corp bsgc customs uni pass 및 등 각 위 아래 해당 금일 오늘 내일 이번 다음 관세사 관세법인 주식회사').split(' '));
-const SIM_STOP2 = new Set(['수입', '수출', '통관', '신고', '요청', '진행', '관련', '확인', '부탁', '의뢰', '드립', '립니', '니다', '바랍', '랍니', '습니', '입니', '합니', '처리', '완료']);
+   기준은 '업무 내용·절차가 같은가'. 같은 업체·같은 업무유형(수입통관 등)만으로는 보여 주지 않는다.
+   ① 절차 특징(SIM_PROC): 요건확인(식약처·검역·KC·화학물질…), 감면·특례(재수입·재수출·임가공·무상…), FTA, 정정, 검사, 보세·반송 등
+      기록 제목·특이사항·요약(메일 서명·인사말 잘라냄)·태그·서류 목록·품목 요건·UNI-PASS 요건에서 찾는다. 겹치는 특징 1개 18점(최대 36)
+   ② 같은 품목 20 / HS 6단위 15 / 4단위 8 ③ 같은 정정 원인 개당 6(최대 18) ④ 업체 전용 절차(매뉴얼)가 같음 15
+   ⑤ 업무 단어 겹침: 제목·특이사항·품목명·직접 단 태그의 낱말만(인사말·서명·직함·어미 제외, 두 글자 조각 비교 안 함) 개당 5(최대 15)
+   ⑥ 보조: 같은 업체 10 · 같은 유형 6 · 같은 운송형태 3 · 같은 선사 3 · 특이 기록 2 — 보조 점수만으로는 보여 주지 않음.
+   ①~④ 중 하나, 또는 ⑤가 2개 이상 겹쳐야 하고 SIM_MIN점 이상일 때만 보여 준다. 세관 질의 DB도 같은 기준으로 찾는다. */
+const SIM_MIN = 24;
+const SIM_PROC = [
+  ['식품 수입신고', /수입식품|식품\s*등?의?\s*수입\s*신고|식약처|식품의약품안전|정밀\s*검사|무작위\s*검사|기구\s*[·및]?\s*용기|식품용\s*기구|기구.{0,4}식품|haccp|한글\s*표시/i],
+  ['동식물 검역', /식물\s*검역|동물\s*검역|식물방역|검역\s*(신청|증명|대상|합격|불합격)|훈증|소독\s*증명|위생\s*증명|phyto/i],
+  ['사료', /사료|feed(?![a-z])/i],
+  ['전파·KC', /전파\s*인증|적합성\s*평가|전파법|rra(?![a-z])|kc\s*인증|kc(?![a-z])\s*(번호|대상)/i],
+  ['전기·생활용품 안전', /전기\s*용품|전기\s*안전|생활\s*용품|어린이\s*제품|안전\s*인증|안전\s*확인|공급자\s*적합성|kats|제품안전/i],
+  ['화학물질(화평법·화관법)', /화평법|화관법|화학물질|유해\s*화학|등록\s*면제|확인\s*명세서|k-?reach|cas\s*(no|번호)/i],
+  ['위험물·MSDS', /위험물|msds|(?<![a-z])un\s*\d{4}|imdg|고압가스/i],
+  ['의료기기', /의료\s*기기|표준\s*통관\s*예정/],
+  ['의약품·화장품', /의약품|의약외품|화장품/],
+  ['폐기물·재활용', /폐기물|바젤|재활용/],
+  ['전략물자', /전략\s*물자|수출\s*허가|yestrade/i],
+  ['재수입 면세', /재수입|re-?import|반입\s*거절|반송\s*재수입|제?\s*99\s*조/i],
+  ['재수출 면세·조건부', /재수출|re-?export|일시\s*수입|수리\s*후\s*재수출|a\.?t\.?a\s*(까르네|carnet)|제?\s*9[78]\s*조/i],
+  ['해외임가공', /임가공|제?\s*101\s*조/],
+  ['무상·견본', /무상|견본|샘플|sample|f\.?o\.?c(?![a-z])|무환/i],
+  ['FTA·원산지', /fta|원산지(?!\s*관리사)|(?<![a-z])c\/o(?![a-z])|form\s*[ae](?![a-z])|사후\s*적용|협정\s*관세|원산지\s*증명/i],
+  ['정정·보정', /정정|보정|수정\s*신고|경정|취하|각하/],
+  ['과세가격', /과세\s*가격|가산세|가산금|특수\s*관계|로열티|운임\s*(공제|가산)|저가\s*신고/],
+  ['품목분류', /품목\s*분류|세번\s*변경|사전\s*심사|hs\s*(변경|분류)/i],
+  ['관세 환급', /환급|drawback/i],
+  ['세관 검사', /검사\s*대상|현품\s*검사|적재지\s*검사|세관\s*검사|x-?ray|엑스레이/i],
+  ['보세·반송', /보세\s*운송|반송|보세\s*공장|장치\s*기간|체화|보세\s*창고/],
+  ['외환', /외환|지급\s*신고|해외\s*직접\s*투자|대외\s*지급/],
+  ['특송·우편', /특송|(?<![a-z])ems(?![a-z])|우편물|목록\s*통관|간이\s*신고/i]
+];
+const SIM_WEAK = [['항공', /항공|air(?![a-z])/i], ['해상 LCL', /lcl/i], ['해상 FCL', /fcl|\d{2}\s*(ft|피트)/i]];
+const SIM_STOP = new Set(('수입 수출 통관 신고 수입통관 수출통관 수입신고 수출신고 관련 관련하여 요청 의뢰 부탁 문의 신청 진행 건 건의 표제 표제건 금번 이번 해당 '
+  + '안녕하세요 감사합니다 수고하세요 수고하십니다 고맙습니다 확인 송부 전달 회신 답장 자료 서류 첨부 메일 업무 처리 완료 자동 단계 수리 납부 반출신고 수입신고수리 '
+  + '선적완료 정산완료 통관완료 정산서 청구서 필증 수출신고필증 수입신고필증 면장 면허 건입니다 드림 드리오니 드리며 드립니다 드려요 올림 배상 '
+  + '차장 대리 과장 부장 실장 팀장 이사 상무 전무 대표 사원 주임 계장 수석 책임 선임 매니저 담당 담당자 님 차장님 대리님 과장님 부장님 실장님 팀장님 '
+  + '전화 팩스 휴대폰 핸드폰 주소 서울 서울특별시 금천구 가산디지털 가산디지털1로 에이스 에이스가산포휴 포휴 카카오 kakao '
+  + 'eta etd ata atd custom clearance shipping shipment document documents doc docs arrival notice sea air dry cargo freight booking schedule vessel container '
+  + 'jan feb mar apr may jun jul aug sep oct nov dec 해상 항공 해상수입 항공수입 해상수출 항공수출 수출면장 수입면장 면허요청 면장요청 정산내역 발급 선적서류 선적 도착 입항 출항 '
+  + '가능 여부 검토 화주 수하인 송하인 total 입항분 출항분 진행요청 확인요청 발급요청 '
+  + 're fw fwd the and for of to in on with please dear regards kind best thanks thank you sent from subject date mr ms team dept manager tel fax mobile email www http https com net co kr '
+  + 'invoice packing list bl b/l ltd inc corp bsgc customs networks uni pass 및 등 각 위 아래 금일 오늘 내일 다음 관세사 관세법인 주식회사 원산지관리사').split(' '));
+const SIM_ENDING = /(니다|니까|세요|십시오|드림|드리|드려|오니|하며|하여|해서|하고|하신|하는|하실|되어|되며|됩니다|주시|주셔|바랍|바람|감사|수고|안녕|하겠|겠습|있습|없습|었습|였습|입니|합니|습니|부탁)/;
+const SIM_PARTICLE = /(에서|으로|에게|까지|부터|이며|이고|이나|입니다|은|는|이|가|을|를|에|의|로|와|과|도|만)$/;
 const CASE_RE_G = new RegExp(CASE_RE.source, 'g');
 function hsDigits(s){ const d = String(s || '').replace(/[^0-9]/g, ''); return d.length >= 4 ? d.slice(0, 10) : ''; }
 function fmtHs(d){ d = String(d || ''); return d.length > 4 ? d.slice(0, 4) + '.' + d.slice(4, 6) + (d.length > 6 ? '-' + d.slice(6) : '') : d; }
 function hsInText(text){ const m = /(?:hs|세번)\s*(?:code|코드|no\.?|번호)?\s*[:#]?\s*(\d{4}[.\-\s]?\d{2}(?:[.\-\s]?\d{2,4})?)/i.exec(String(text || '')); return m ? hsDigits(m[1]) : ''; }
 function carrierOf(bl){ const m = /^([A-Z]{4})\d/.exec(String(bl || '').toUpperCase()); return m ? m[1] : ''; }
-let simCache = {stamp:'', feats:new Map(), stop:new Set()};
+/* 메일 본문 앞부분에서 서명·인용·인사말을 잘라 업무 내용만 남김 */
+const MAIL_CUT = /(감사합니다|감사드립니다|고맙습니다|수고하세요|\*\*\s*personal|best\s*regards|kind\s*regards|regards|thanks?(\s*you)?[,.!\s]|bsgc\s*customs\s*networks|date\s*:|from\s*:|sent\s*:|-----\s*original|보낸\s*사람|─{3,}|_{5,}|발신\s*:|\bT\.\s*0\d)/i;
+function stripMailNoise(s){
+  const t = String(s || ''); const m = MAIL_CUT.exec(t);
+  return (m ? t.slice(0, m.index) : t).replace(/^\s*(안녕하세요|안녕하십니까)[.!,]?\s*/, '').replace(/^[^.\n]{0,40}(입니다|드림|배상)[.,]?\s*/, '');
+}
+let simCache = {stamp:'', feats:new Map(), stop:new Set(), spread:null};
 function simStop(){
   const st = (db.meta.updatedAt || '') + '|' + db.records.length + '|' + db.clients.length + '|' + db.items.length;
   if(simCache.stamp !== st){
-    const stop = new Set();   // 업체명·약칭은 '같은 업체' 점수로 따로 보므로 키워드에서 뺀다
-    db.clients.forEach(c => [nameKey(c.name), ...kwList(c).filter(k => !k.startsWith('@'))].forEach(w => String(w || '').split(/\s+/).forEach(x => { if(x) stop.add(x.toLowerCase()); })));
-    simCache = {stamp:st, feats:new Map(), stop};
+    const stop = new Set();   // 업체명·약칭은 '같은 업체' 점수로 따로 보고, 직원·담당자 이름은 업무 내용이 아니므로 뺀다
+    db.clients.forEach(c => [nameKey(c.name), ...kwList(c).filter(k => !k.startsWith('@')), ...(c.contacts || []).map(p => p.name)].forEach(w => String(w || '').split(/\s+/).forEach(x => { if(x) stop.add(x.toLowerCase()); })));
+    (typeof accounts !== 'undefined' ? accounts : []).forEach(a => String(a.name || '').split(/\s+/).forEach(x => { if(x) stop.add(x.toLowerCase()); }));
+    (db.contacts || []).forEach(p => String(p.name || '').split(/\s+/).forEach(x => { if(x) stop.add(x.toLowerCase()); }));
+    simCache = {stamp:st, feats:new Map(), stop, spread:null};
   }
   return simCache.stop;
 }
+/* 업무 낱말: 인사말·직함·서명·어미가 붙은 말·조각(두 글자 비교)은 쓰지 않는다 */
 function simTokens(text){
   const stop = simStop();
-  const t = String(text || '').toLowerCase().replace(CASE_RE_G, ' ').replace(/\b\d{5}-\d{2}-\d{6,7}[a-z]?\b/g, ' ').replace(/\b[a-z]{4}\d{6,}\b/g, ' ').replace(/\d{2,4}[-./]\d{1,2}[-./]\d{1,2}/g, ' ');
-  const words = t.split(/[^0-9a-z가-힣]+/).filter(w => w.length >= 2 && !/^\d+$/.test(w) && !SIM_STOP.has(w) && !stop.has(w));
-  const out = new Set(words);
-  words.forEach(w => { if(/^[가-힣]{3,}$/.test(w)) for(let i = 0; i < w.length - 1; i++){ const g = w.slice(i, i + 2); if(!SIM_STOP2.has(g) && !stop.has(g)) out.add('§' + g); } });
+  const t = String(text || '').toLowerCase().replace(CASE_RE_G, ' ').replace(/\b\d{5}-\d{2}-\d{6,7}[a-z]?\b/g, ' ').replace(/[a-z]{2,}[a-z0-9]*\d{5,}[a-z0-9]*/g, ' ').replace(/\d{2,4}[-./]\d{1,2}[-./]\d{1,2}/g, ' ');
+  const out = new Set();
+  t.split(/[^0-9a-z가-힣]+/).forEach(w0 => {
+    let w = w0;
+    if(/^[가-힣]{3,}$/.test(w)) w = w.replace(SIM_PARTICLE, '');
+    if(w.length < 2 || /^\d+$/.test(w) || /^[a-z]{1,2}\d*$/.test(w) || SIM_STOP.has(w) || stop.has(w) || stop.has(w0)) return;
+    if(/[가-힣]/.test(w) && SIM_ENDING.test(w)) return;
+    if(/^[a-z]+$/.test(w) && w.length < 3) return;
+    if(/^\d+(팔렛|파레트|박스|건|개|ea|pcs|cbm|kg|ctn|plt|ft|피트)$/.test(w)) return;
+    out.add(w);
+  });
   return out;
 }
-/* 자동 완료 요약·체크리스트 줄은 모든 기록에 비슷하게 들어가므로 키워드에서 뺀다 */
+/* 여러 업체 기록에 두루 나오는 낱말(포워더 이름, 물류 일반 용어, 국가명 등)은 업무 내용 근거로 쓰지 않는다: 3곳 이상 업체 & 업체의 10% 이상, 또는 기록의 15% 이상 */
+function simCommon(){
+  if(simCache.spread) return simCache.spread;
+  const by = new Map(), df = new Map(), recs = db.records;
+  recs.forEach(r => { recFeat(r).tokens.forEach(w => { df.set(w, (df.get(w) || 0) + 1); if(r.clientId){ if(!by.has(w)) by.set(w, new Set()); by.get(w).add(r.clientId); } }); });
+  const nc = new Set(recs.map(r => r.clientId).filter(Boolean)).size || 1, common = new Set();
+  df.forEach((n, w) => { const sp = (by.get(w) || new Set()).size; if((sp >= 3 && sp / nc >= 0.1) || (recs.length >= 20 && n / recs.length >= 0.15)) common.add(w); });
+  simCache.spread = common;
+  return common;
+}
+function procTags(text){ const t = String(text || ''); return SIM_PROC.filter(([, re]) => re.test(t)).map(x => x[0]); }
+function weakTags(text){ const t = String(text || ''); return SIM_WEAK.filter(([, re]) => re.test(t)).map(x => x[0]); }
+/* 자동 완료 요약·체크리스트 줄은 모든 기록에 비슷하게 들어가므로 뺀다 */
 function cleanSummary(s){ return lines(s).filter(l => !/^[✓–-]\s/.test(l) && l !== '처리 단계' && !l.startsWith('[자동 완료]')).join(' ').slice(0, 400); }
+const AUTO_TAGS = new Set(['자동접수', '자동수집', '주간현황', '정정필증']);
 function recFeat(r, cache = true){
   if(cache && r.id && simCache.feats.has(r.id)) return simCache.feats.get(r.id);
   simStop();
   const item = r.itemId ? db.items.find(i => i.id === r.itemId) : null;
-  const text = [r.title, cleanSummary(r.summary), (r.tags || []).join(' '), item ? item.name : '', String(r.specialNote || '').slice(0, 200)].join(' ');
-  const f = {id:r.id, clientId:r.clientId || '', type:r.type || '', typeGuess:!!r.typeGuess, itemId:r.itemId || '', hs:hsDigits(item && item.hs) || hsInText(text),
-    carrier:carrierOf(r.bl), tokens:simTokens(text), causes:Array.isArray(r.causes) ? r.causes : causesOf(r)};
+  const userTags = (r.tags || []).filter(x => !AUTO_TAGS.has(x));
+  const summary = stripMailNoise(cleanSummary(r.summary));
+  const certNames = (r.certs || []).flatMap(c => (c.lines || []).map(l => l.trade || l.name || '')).join(' ');
+  const procText = [r.title, summary, r.specialNote, userTags.join(' '), (r.tags || []).includes('정정필증') ? '정정' : '', (r.docs || []).map(x => x.text).join(' '), item ? [item.name, item.reqs, item.agency].join(' ') : '', (r.unipass || {}).req || '', (r.unipass || {}).condTxt || ''].join(' ');
+  const p = r.procId ? db.procedures.find(x => x.id === r.procId) : null;
+  const certHs = (r.certs || []).flatMap(c => (c.lines || []).map(l => hsDigits(l.hs))).find(Boolean) || '';
+  const f = {id:r.id, clientId:r.clientId || '', type:r.type || '', typeGuess:!!r.typeGuess, itemId:r.itemId || '', hs:hsDigits(item && item.hs) || certHs || hsInText(procText),
+    carrier:carrierOf(r.bl), proc:procTags(procText), weak:weakTags([r.title, summary].join(' ')), procId:p && p.clientId ? p.id : '',
+    tokens:simTokens([r.title, String(r.specialNote || '').slice(0, 200), userTags.join(' '), item ? item.name : '', certNames, r.createdBy === 'auto' ? '' : summary.slice(0, 200)].join(' ')),
+    causes:Array.isArray(r.causes) ? r.causes : causesOf(r)};
   if(cache && r.id) simCache.feats.set(r.id, f);
   return f;
 }
 function simScore(t, f, r){
   let s = 0, core = false; const why = [];
-  if(t.clientId && f.clientId === t.clientId){ s += 30; why.push('같은 업체'); }
-  if(t.type && f.type === t.type){ s += t.typeGuess ? 12 : 20; why.push('같은 유형'); core = true; }
+  const pt = t.proc.filter(x => f.proc.includes(x));
+  if(pt.length){ s += Math.min(36, pt.length * 18); why.push('같은 절차 ' + pt.join(', ')); core = true; }
   if(t.itemId && f.itemId === t.itemId){ s += 20; why.push('같은 품목'); core = true; }
   else if(t.hs && f.hs){
     if(t.hs.length >= 6 && f.hs.length >= 6 && t.hs.slice(0, 6) === f.hs.slice(0, 6)){ s += 15; why.push('HS ' + fmtHs(f.hs.slice(0, 6))); core = true; }
     else if(t.hs.slice(0, 4) === f.hs.slice(0, 4)){ s += 8; why.push('HS ' + f.hs.slice(0, 4)); core = true; }
   }
-  const sw = [], sb = [];
-  t.tokens.forEach(x => { if(f.tokens.has(x)) (x[0] === '§' ? sb : sw).push(x); });
-  const kw = Math.min(24, sw.length * 6 + sb.length * 1.5);
-  if(kw >= 3){
-    s += kw; if(kw >= 6) core = true;
-    const part = [...new Set(sb.map(g => [...t.tokens].find(w => w[0] !== '§' && w.includes(g.slice(1)) && !sw.includes(w))).filter(Boolean))];   // 겹친 두 글자를 원래 단어로 보여 줌
-    why.push('키워드 ' + [...sw.slice(0, 3), ...part.slice(0, sw.length ? 1 : 2).map(w => w + '(일부)')].join(', '));
-  }
-  if(t.carrier && f.carrier === t.carrier){ s += 5; why.push('같은 선사 ' + t.carrier); }
   const cs = (t.causes || []).filter(c => f.causes.includes(c));
-  if(cs.length){ s += Math.min(15, cs.length * 5); why.push('같은 원인 ' + cs.join(', ')); core = true; }
-  if(r.special) s += 3;
+  if(cs.length){ s += Math.min(18, cs.length * 6); why.push('같은 정정 원인 ' + cs.join(', ')); core = true; }
+  if(t.procId && f.procId === t.procId){ s += 15; why.push('같은 업체 절차'); core = true; }
+  const common = simCommon(), sw = [...t.tokens].filter(x => f.tokens.has(x) && !common.has(x));
+  if(sw.length){ s += Math.min(15, sw.length * 5); why.push('업무 단어 ' + sw.slice(0, 4).join(', ')); if(sw.length >= 2) core = true; }
+  if(t.clientId && f.clientId === t.clientId){ s += 10; why.push('같은 업체'); }
+  if(t.type && f.type === t.type){ s += t.typeGuess ? 4 : 6; why.push('같은 유형 ' + t.type); }
+  const wk = t.weak.filter(x => f.weak.includes(x));
+  if(wk.length){ s += 3; why.push(wk.join(', ')); }
+  if(t.carrier && f.carrier === t.carrier){ s += 3; why.push('같은 선사 ' + t.carrier); }
+  if(r.special) s += 2;
   return {s:Math.round(s), why, core};
 }
 /* target: 기록이나 기록 모양의 객체 {id, clientId, type, typeGuess, itemId, title, summary, bl, causes} */
 function similarRecords(target, n = 5){
   const t = recFeat(target, false);
-  if(!t.clientId && !t.tokens.size && !t.hs) return [];
+  if(!t.proc.length && !t.tokens.size && !t.hs && !t.itemId && !(t.causes || []).length) return [];
   return db.records.filter(r => r.status === '완료' && r.id !== target.id)
     .map(r => ({r, ...simScore(t, recFeat(r), r)}))
     .filter(x => x.core && x.s >= SIM_MIN)
@@ -83,13 +154,12 @@ function similarInquiries(target, sims = [], n = 3){
   const t = recFeat(target, false), simIds = new Set(sims.map(x => x.r.id));
   return (db.inquiries || []).map(q => {
     let s = 0;
-    const h = hsDigits(q.hs);
+    const h = hsDigits(q.hs), qtext = [q.question, q.answer, q.topic, (q.tags || []).join(' ')].join(' ');
     if(t.hs && h){ if(t.hs.slice(0, 6) === h.slice(0, 6) && h.length >= 6) s += 20; else if(t.hs.slice(0, 4) === h.slice(0, 4)) s += 10; }
-    if(t.clientId && q.clientId === t.clientId) s += 10;
+    if(t.clientId && q.clientId === t.clientId) s += 6;
     if(q.recId && (q.recId === target.id || simIds.has(q.recId))) s += 15;
-    const qt = simTokens([q.question, q.answer, q.topic, (q.tags || []).join(' ')].join(' '));
-    let k = 0; t.tokens.forEach(x => { if(qt.has(x)) k += x[0] === '§' ? 1.5 : 6; });
-    s += Math.min(24, k);
+    const pt = t.proc.filter(x => procTags(qtext).includes(x)); s += Math.min(30, pt.length * 15);
+    const qt = simTokens(qtext); let k = 0; t.tokens.forEach(x => { if(qt.has(x)) k += 5; }); s += Math.min(15, k);
     return {q, s};
   }).filter(x => x.s >= 20).sort((a, b) => b.s - a.s).slice(0, n).map(x => x.q);
 }
@@ -110,9 +180,9 @@ function guessItem(text, clientId){
     .sort((a, b) => b.name.length - a.name.length)[0] || null;
 }
 function threadTarget(t){
-  const c = matchClient(t.ms), text = t.ms.map(m => (m.subject || '') + ' ' + String(m.snippet || '').slice(0, 200)).join(' ');
+  const c = matchClient(t.ms), text = t.ms.map(m => (m.subject || '') + ' ' + stripMailNoise(String(m.snippet || '').slice(0, 300))).join(' ');
   const it = c ? guessItem(text, c.id) : null, ty = guessType(text, c ? c.id : '');
-  return {id:'', clientId:c ? c.id : '', type:ty, typeGuess:true, itemId:it ? it.id : '', title:t.ms.map(m => m.subject || '').join(' '), summary:t.ms.map(m => String(m.snippet || '').slice(0, 200)).join('\n'), bl:(t.ms.find(m => m.bl) || {}).bl || '', causes:[]};
+  return {id:'', clientId:c ? c.id : '', type:ty, typeGuess:true, itemId:it ? it.id : '', title:t.ms.map(m => m.subject || '').join(' '), summary:t.ms.map(m => stripMailNoise(String(m.snippet || '').slice(0, 300))).join('\n'), bl:(t.ms.find(m => m.bl) || {}).bl || '', causes:[], createdBy:'auto'};
 }
 
 /* ---------- 화면 조각 ---------- */

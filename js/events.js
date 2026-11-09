@@ -91,7 +91,7 @@ $('#view').addEventListener('input', e => {
   if(el.id === 'contactQ'){ $('#contactTable').innerHTML = contactTable(); return; }
   if(el.id === 'inqQ' || el.id === 'itemQ'){ const id = el.id; if(id === 'inqQ') inqQ = el.value; else itemQ = el.value; clearTimeout(window._gq); window._gq = setTimeout(() => { renderView(); const q = $('#' + id); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'manQ'){ manualQ = el.value; clearTimeout(window._manT); window._manT = setTimeout(() => { renderView(); const q = $('#manQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
-  if(el.id === 'kcQ'){ $('#kcTable').innerHTML = kcTableHTML(kcRowsFor(el.dataset.kcClient, el.value), false); return; }
+  if(el.id === 'kcQ'){ $('#kcTable').innerHTML = kcTableHTML(kcRowsFor(el.dataset.kcClient, el.value), false, el.value.trim() ? 10 : 5); return; }
   if(el.dataset && el.dataset.fee && el.dataset.fee !== 'pid'){
     if(el.dataset.fee === 'amount'){ const n = num(el.value); el.value = n ? n.toLocaleString('ko-KR') : ''; }
     feeState[el.dataset.fee] = el.value;

@@ -29,7 +29,7 @@ function renderSidebar(){
 function renderView(){
   hlRe = null;
   const v = $('#view');
-  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:() => { manualScope = 'common'; route.name = 'manual'; return viewManual(); }, manual:viewManual, inquiries:viewInquiries, itemdb:viewItemDb, alerts:viewAlerts, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, bl:viewBl, accounts:viewAccounts};
+  const views = {search:viewSearch, active:viewActive, mail:viewMail, report:viewReport, common:() => { manualScope = 'common'; route.name = 'manual'; return viewManual(); }, manual:viewManual, inquiries:viewInquiries, itemdb:viewItemDb, alerts:viewAlerts, contacts:viewContacts, clientlist:viewClientList, inbox:viewInbox, fee:viewFee, quote:viewQuote, bl:viewBl, accounts:viewAccounts};
   if(route.name === 'client' && db.clients.some(c => c.id === route.id)) v.innerHTML = viewClient();
   else if(views[route.name]) v.innerHTML = views[route.name]();
   else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
@@ -335,10 +335,18 @@ function clientContactsSection(c){
   const cc = c.contacts || [], rw = c.recentWork || [];
   return `<section class="items">
     <div class="sec-head"><h3>업체 담당자 <span class="cnt">${cc.length}명</span></h3><button class="mini" data-scan="${esc(c.id)}">메일에서 담당자 스캔</button></div>
-    ${cc.length ? `<div class="table-wrap"><table class="grid cc-list"><thead><tr><th>이름</th><th>메일</th><th class="num">메일 수</th><th>최근</th><th></th></tr></thead><tbody>
-      ${cc.map(p => `<tr><td>${esc(p.name || '')}</td><td><a href="mailto:${esc(p.email)}">${esc(p.email)}</a></td><td class="num">${p.count || ''}</td><td>${esc(p.last || '')}</td><td><button class="mini" data-cc-del="${esc(c.id)}|${esc(p.email)}">빼기</button></td></tr>`).join('')}
-    </tbody></table></div>` : '<p class="empty">‘메일에서 담당자 스캔’을 누르면 최근 1년 메일에서 이 업체 담당자를 찾아 보여 줍니다. 업체 정보의 검색어에 메일 도메인(@abc.co.kr)을 넣어 두면 정확해집니다.</p>'}
-    ${rw.length ? `<h4 class="sub">최근 메일로 오간 업무</h4><ul class="pre-check">${rw.slice(0,10).map(w => `<li><span class="hint">${esc(w.date)}</span> ${safeUrl(w.link) ? `<a href="${esc(w.link)}" target="_blank" rel="noopener noreferrer">${esc(w.subject)}</a>` : esc(w.subject)}</li>`).join('')}</ul><p class="hint">마지막 스캔 ${esc(c.scannedAt || '')} 기준입니다.</p>` : ''}
+    ${cc.length ? (() => {                                            // 대표 담당자 3명(메일 많은 순)만 먼저, 나머지는 펼치기 (11/9)
+      const head = '<thead><tr><th>이름</th><th>메일</th><th class="num">메일 수</th><th>최근</th><th></th></tr></thead>';
+      const row = p => `<tr><td>${esc(p.name || '')}</td><td><a href="mailto:${esc(p.email)}">${esc(p.email)}</a></td><td class="num">${p.count || ''}</td><td>${esc(p.last || '')}</td><td><button class="mini" data-cc-del="${esc(c.id)}|${esc(p.email)}">빼기</button></td></tr>`;
+      const top = cc.slice(0, 3), rest = cc.slice(3);
+      return `<div class="table-wrap"><table class="grid cc-list">${head}<tbody>${top.map(row).join('')}</tbody></table></div>
+        ${rest.length ? `<details class="more fold"><summary>담당자 ${rest.length}명 더 보기</summary><div class="table-wrap"><table class="grid cc-list">${head}<tbody>${rest.map(row).join('')}</tbody></table></div></details>` : ''}`;
+    })() : '<p class="empty">‘메일에서 담당자 스캔’을 누르면 최근 1년 메일에서 이 업체 담당자를 찾아 보여 줍니다. 업체 정보의 검색어에 메일 도메인(@abc.co.kr)을 넣어 두면 정확해집니다.</p>'}
+    ${rw.length ? (() => {
+      const li = w => `<li><span class="hint">${esc(w.date)}</span> ${safeUrl(w.link) ? `<a href="${esc(w.link)}" target="_blank" rel="noopener noreferrer">${esc(w.subject)}</a>` : esc(w.subject)}</li>`;
+      const list = rw.slice(0, 10);
+      return `<details class="more fold"><summary>최근 메일로 오간 업무 ${list.length}건</summary><ul class="pre-check">${list.map(li).join('')}</ul><p class="hint">마지막 스캔 ${esc(c.scannedAt || '')} 기준입니다.</p></details>`;
+    })() : ''}
   </section>`;
 }
 async function scanContacts(cid){

@@ -4,11 +4,17 @@ function kcRowsFor(cid, q){
   const terms = String(q || '').toLowerCase().split(/\s+/).filter(Boolean), sq = x => x.replace(/[\s\-\/.]/g, '');
   return db.kc.filter(k => k.c === cid && terms.every(t => { const h = hay(k.a, k.m, k.pc, k.n, k.no, k.rm, k.hs); return h.includes(t) || sq(h).includes(sq(t)); }));
 }
-function kcTableHTML(rows, showClient){
+/* KC 표: show개만 먼저 보이고 나머지는 '펼치기'(11/9, 모델이 많은 업체의 스크롤 줄이기). 검색 결과는 60건까지 */
+function kcRowHTML(k, showClient){
+  return `<tr>${showClient ? `<td>${esc(clientName(k.c))}</td>` : ''}<td class="hs">${esc(k.a)}</td><td>${esc(k.m)}<div class="hint">${esc(k.n || k.pc || '')}</div></td><td class="hs">${esc(k.hs)}</td><td>${esc(k.t || '')}</td><td>${esc(k.no || '')}${kcChip(k)}</td><td>${esc(k.d || '')}${k.chk && k.chk.date && k.chk.date !== k.d ? `<div class="hint">RRA ${esc(k.chk.date)}</div>` : ''}</td><td>${k.rm ? `<span class="tag cause">${esc(k.rm)}</span>` : ''}</td></tr>`;
+}
+function kcTableHTML(rows, showClient, show = 5){
   if(!rows.length) return '<p class="empty">해당하는 품목이 없습니다.</p>';
-  return `<div class="table-wrap"><table class="grid"><thead><tr>${showClient ? '<th>업체</th>' : ''}<th>Article No</th><th>모델</th><th>HS</th><th>인증 유형</th><th>KC 인증번호</th><th>인증일</th><th>비고</th></tr></thead><tbody>
-    ${rows.slice(0,60).map(k => `<tr>${showClient ? `<td>${esc(clientName(k.c))}</td>` : ''}<td class="hs">${esc(k.a)}</td><td>${esc(k.m)}<div class="hint">${esc(k.n || k.pc || '')}</div></td><td class="hs">${esc(k.hs)}</td><td>${esc(k.t || '')}</td><td>${esc(k.no || '')}${kcChip(k)}</td><td>${esc(k.d || '')}${k.chk && k.chk.date && k.chk.date !== k.d ? `<div class="hint">RRA ${esc(k.chk.date)}</div>` : ''}</td><td>${k.rm ? `<span class="tag cause">${esc(k.rm)}</span>` : ''}</td></tr>`).join('')}
-  </tbody></table></div>${rows.length > 60 ? `<p class="hint">${rows.length}건 중 60건만 보입니다. 검색어를 더 넣어 좁히세요.</p>` : ''}`;
+  const head = `<thead><tr>${showClient ? '<th>업체</th>' : ''}<th>Article No</th><th>모델</th><th>HS</th><th>인증 유형</th><th>KC 인증번호</th><th>인증일</th><th>비고</th></tr></thead>`;
+  const list = rows.slice(0, 60), top = list.slice(0, show), rest = list.slice(show);
+  return `<div class="table-wrap"><table class="grid">${head}<tbody>${top.map(k => kcRowHTML(k, showClient)).join('')}</tbody></table></div>
+    ${rest.length ? `<details class="more fold"><summary>나머지 ${rest.length}건 펼치기</summary><div class="table-wrap"><table class="grid">${head}<tbody>${rest.map(k => kcRowHTML(k, showClient)).join('')}</tbody></table></div></details>` : ''}
+    ${rows.length > 60 ? `<p class="hint">${rows.length}건 중 60건만 보입니다. 검색어를 더 넣어 좁히세요.</p>` : ''}`;
 }
 const kcNorm = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
 function kcChip(k){
@@ -57,8 +63,8 @@ function kcSection(c){
     <p class="hint">적합등록 ${cnt('적합등록')}건, 적합인증 ${cnt('적합인증')}건, 확인 필요 표시 ${all.filter(k => k.rm).length}건. 수입 전 Article No나 모델명으로 인증 여부를 확인하세요.</p>
     <p class="hint">${meta.checkedAt ? `국립전파연구원 확인 ${esc(meta.checkedAt.slice(0, 10))}: 유효 ${all.filter(k => k.chk && k.chk.st === 'ok').length}건 · 모델 확인 필요 ${all.filter(k => k.chk && k.chk.st === 'model').length}건 · 조회 안 됨 ${all.filter(k => k.chk && k.chk.st === 'none').length}건` : '아직 국립전파연구원 DB와 대조하지 않았습니다.'} <button class="mini" data-kc-check="${esc(c.id)}">인증번호 일괄 확인</button></p>
     <input id="kcQ" data-kc-client="${esc(c.id)}" type="search" placeholder="Article No, 모델명, 인증번호로 찾기" style="max-width:420px;margin-top:.5rem">
-    <div id="kcTable" style="margin-top:.5rem">${(() => { const bad = all.filter(k => k.rm || (k.chk && k.chk.st !== 'ok')); return kcTableHTML(bad.length ? bad : all, false); })()}</div>
-    <p class="hint">처음에는 비고가 있거나 국립전파연구원 대조에서 문제가 나온 품목만 보여 줍니다.</p>
+    <div id="kcTable" style="margin-top:.5rem">${(() => { const bad = all.filter(k => k.rm || (k.chk && k.chk.st !== 'ok')); return kcTableHTML(bad.length ? bad : all, false, 5); })()}</div>
+    <p class="hint">처음에는 비고가 있거나 국립전파연구원 대조에서 문제가 나온 품목을 5건만 보여 주고, 나머지는 ‘펼치기’로 봅니다. 검색하면 맞는 품목을 10건까지 바로 보여 줍니다.</p>
   </section>`;
 }
 
