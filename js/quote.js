@@ -28,6 +28,7 @@ const QCHG = [
   ['SEAL', 'Seal Fee', /seal/i, 'local', false],
   ['AFS', 'AFS·AMS·ENS (적하목록 신고)', /(?<![a-z])(afs|ams|ens|aci|isf)(?![a-z])|manifest/i, 'local', false],
   ['LASH', 'Lashing·Securing (고박)', /lash|securing|고박|쇼링|shoring/i, 'local', true],
+  ['PACK', 'Packing (수출포장)', /수출\s*포장|포장\s*(비|견적|작업)|packing\s*(charge|fee)|crating|목재\s*포장|진공\s*포장/i, 'other', true],
   ['TRK', 'Trucking (내륙운송)', /truck|내륙\s*운송|운송료|pick\s*up|픽업|drayage|delivery\s*charge/i, 'other', true],
   ['INS', 'Insurance (보험료)', /insurance|보험/i, 'other', false],
   ['CUS', 'Customs Clearance (통관수수료)', /customs\s*clearance|clearance\s*fee|통관\s*(수수료|비)|관세사/i, 'other', true],
@@ -40,7 +41,7 @@ const QCHG = [
 const QSEC = {freight:'운임', origin:'선적지 부대비용', dest:'도착지 부대비용', local:'부대비용', other:'기타 비용', bsgc:'BSGC 항목'};
 const QCUR = [['USD', /us\s*\$|usd|\$/i], ['EUR', /eur|€/i], ['CNY', /cny|rmb/i], ['JPY', /jpy|¥/i], ['KRW', /₩|krw|\\|원/i]];
 const QCOL_RE = /(20|40|45)\s*['’`]?\s*(GP|DC|DV|HC|HQ|RF|RH|FR|OT|FT)?(?![0-9])|L\.?C\.?L|R\s*\/\s*T|(?<![A-Z])CBM|[-+]\s*\d{2,4}\s*KG|MIN(?:IMUM)?(?![A-Z])/gi;
-const QCUR_TOKEN = /(US\s*\$|USD|\$|₩|KRW|\\|EUR|€|CNY|RMB|JPY|¥)\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.\d+)?|[0-9]+(?:\.\d+)?)|([0-9]{1,3}(?:,[0-9]{3})+(?:\.\d+)?|[0-9]+\.\d{1,2}|[0-9]{2,})\s*(원|USD|KRW)?|(at\s*cost|실비|별도|포함|included|incl\.?|n\s*\/\s*a|free|-)(?![a-z])/gi;
+const QCUR_TOKEN = /(US\s*\$|USD|\$|₩|KRW|\\|EUR|€|CNY|RMB|JPY|¥)\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.\d+)?|[0-9]+(?:\.\d+)?)|(?<![A-Za-z0-9.])([0-9]{1,3}(?:,[0-9]{3})+(?:\.\d+)?|[0-9]+\.\d{1,2}|[0-9]{2,6})(?![0-9])\s*(원|USD|KRW)?|(at\s*cost|실비|별도|포함|included|incl\.?|n\s*\/\s*a|free|-)(?![a-z])/gi;   // 코드에 붙은 숫자(HAMU4920315)·7자리 이상 번호는 금액이 아님
 const qN = s => Number(String(s || '').replace(/,/g, ''));
 function qCur(tok, fallback){ const x = QCUR.find(([, re]) => re.test(tok || '')); return x ? x[0] : fallback; }
 function qColName(t){
@@ -57,8 +58,97 @@ function qColName(t){
 const KR_PORT = /busan|pusan|incheon|inchon|pyeongtaek|pyongtaek|kwangyang|gwangyang|ulsan|icn|pus|korea|부산|인천|평택|광양|울산/i;
 /* 부대비용이 어느 쪽인지: 도착항이 한국이면 수입(도착지), 선적항이 한국이면 수출(선적지), 모르면 조건으로 */
 function qLocalSide(o){ if(KR_PORT.test(o.pod || '')) return 'dest'; if(KR_PORT.test(o.pol || '')) return 'origin'; return /FOB|EXW|FCA/.test(o.term) ? 'dest' : /CIF|CFR|CPT|CIP|DAP|DPU|DDP/.test(o.term) ? 'origin' : 'local'; }
+/* 엑셀 표 견적(운송·포장 등, 11/11): Apps Script가 시트를 '## 시트이름' + 탭 구분 줄로 넘긴다.
+   머리글 줄(품명·수량·단가·금액·비고 등)을 찾아 열 위치로 읽고, 병합 셀로 비어 있는 품명은 위 줄 것을 이어 쓴다.
+   셀 안 줄바꿈으로 갈라진 줄('(2개/대)', '(EA)')은 앞 줄에 붙인다. '합계' 줄을 만나면 그 표를 끝내고 행 합과 맞는지 본다.
+   시트마다 구간(예: 출발지→도착지)이 다르면 항목 이름 앞에 [구간]을 붙인다. */
+const SH_COL = {name:/품\s*명|품\s*목|item|description|내\s*역|항\s*목|구\s*분/i, qty:/수\s*량|q'?ty|대\s*수/i, unit:/^단\s*위$|^unit$/i, price:/단\s*가|unit\s*price|rate/i, note:/비\s*고|remark/i, cur:/통\s*화|currency/i};
+function sheetJoin(lines){
+  const out = [];
+  lines.forEach(l => {
+    if(/^##\s/.test(l) || !out.length){ out.push(l); return; }
+    const prev = out[out.length - 1];
+    if(/^\s*\(/.test(l) && !/^##\s/.test(prev) && prev.trim()) out[out.length - 1] = prev.replace(/\s+$/, '') + ' ' + l.trim();   // 셀 안 줄바꿈의 둘째 줄
+    else out.push(l);
+  });
+  return out;
+}
+function parseSheetTables(raw){
+  const lines = sheetJoin(raw.replace(/\r/g, '').split('\n'));
+  const rows = [], totals = [];
+  let sheet = '', route = '', head = null, lastName = '', pending = null;
+  const num = c => { const t = String(c || '').replace(/[,\s원₩]/g, ''); return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : null; };
+  lines.forEach(l => {
+    if(/^##\s/.test(l)){ sheet = l.replace(/^##\s*/, '').trim(); route = ''; head = null; lastName = ''; pending = null; return; }
+    const cells = l.split('\t').map(c => c.replace(/\s+/g, ' ').trim());
+    if(!head){
+      const rm = /(견\s*적|운\s*송|포\s*장)[^(\t]*\(([^)]{4,60})\)/.exec(l); if(rm && !route) route = rm[2].replace(/\s+/g, ' ').trim();
+      const lab = cells.map(c => c.toLowerCase());
+      const hasAmt = lab.some(c => /(^|\s)계$|금\s*액|amount|공급\s*가|합\s*산/.test(c) || SH_COL.price.test(c)), hasName = lab.some(c => SH_COL.name.test(c) || /^no\.?$/.test(c));
+      if(hasAmt && (hasName || lab.filter(Boolean).length >= 3)){ pending = cells; head = {cells}; }
+      return;
+    }
+    if(pending && !cells.some(c => num(c) !== null) && cells.filter(Boolean).length){                 // 두 줄 머리글(L·W·H, 단가·계)
+      pending = pending.map((c, i) => [c, cells[i] || ''].filter(Boolean).join(' '));
+      for(let i = pending.length; i < cells.length; i++) pending.push(cells[i]);
+      return;
+    }
+    if(pending){
+      const L = pending.map(c => c.toLowerCase());
+      const amtIx = L.map((c, i) => [c, i]).filter(([c]) => /(^|\s)계$|금\s*액|amount|공급\s*가|합\s*산/.test(c)).map(x => x[1]);
+      const amount = amtIx.length ? amtIx[amtIx.length - 1] : -1;
+      const priceIx = L.map((c, i) => [c, i]).filter(([c, i]) => SH_COL.price.test(c) && i !== amount).map(x => x[1]);
+      const qtyIx = L.findIndex(c => /수\s*량/.test(c));
+      head = {name:L.findIndex(c => SH_COL.name.test(c) && !/구\s*분/.test(c)), qty:qtyIx >= 0 ? qtyIx : L.findIndex(c => SH_COL.qty.test(c)), price:priceIx.length ? priceIx[priceIx.length - 1] : -1, amount,
+        note:L.findIndex(c => SH_COL.note.test(c)), cur:L.findIndex(c => SH_COL.cur.test(c)), dims:L.map((c, i) => [c, i]).filter(([c]) => /(^|\s)(l|w|h)$|길이|폭|높이/.test(c)).map(x => x[1])};
+      if(head.name < 0) head.name = L.findIndex(c => SH_COL.name.test(c));
+      if(head.name < 0){ const no = L.findIndex(c => /^no\.?$/.test(c)); head.name = no >= 0 ? no + 1 : 0; }
+      pending = null;
+    }
+    const first = (cells.find(Boolean) || '').replace(/\s/g, '');
+    if(/^(합계|총계|소계|total|grand)/i.test(first)){
+      const t = cells.map(num).filter(v => v !== null && v >= 1000).pop();
+      if(t != null) totals.push({sheet, route, total:t});
+      head = null; return;
+    }
+    if(/^견적조건|^#\.|이하여백/.test(first)) return;
+    const amt = head.amount >= 0 ? num(cells[head.amount]) : null, pr = head.price >= 0 ? num(cells[head.price]) : null;
+    if(amt == null && pr == null) return;
+    let nm = head.name >= 0 ? cells[head.name] || '' : '';
+    if(nm && !/^\d+$/.test(nm)) lastName = nm; else nm = lastName;
+    const qty = head.qty >= 0 ? num(cells[head.qty]) : null;
+    const dims = head.dims.map(i => num(cells[i])).filter(v => v !== null);
+    rows.push({sheet, route, name:nm || '항목', dims:dims.length >= 2 ? dims.join('×') : '', qty, price:pr, amount:amt != null ? amt : (pr != null && qty != null ? pr * qty : pr),
+      note:head.note >= 0 ? cells[head.note] || '' : '', cur:head.cur >= 0 && /usd|\$/i.test(cells[head.cur] || '') ? 'USD' : 'KRW'});
+  });
+  return {rows, totals};
+}
+function sheetQuote(raw, st){
+  const doc = raw.slice(0, 2500), multi = new Set(st.rows.map(r => r.sheet + '|' + r.route)).size > 1;
+  const heads = st.rows.map(r => r.sheet + ' ' + r.route).join(' ') + ' ' + (raw.match(/^##[^\n]*/gm) || []).join(' ');   // 시트 이름·구간으로 먼저 판단(운송 견적 안의 '진공포장' 품명에 끌리지 않게)
+  const pick = t => /운\s*송|truck|delivery|배\s*송|탁\s*송/i.test(t) ? 'TRK' : /포\s*장|packing|crating/i.test(t) ? 'PACK' : /보\s*관|storage|창\s*고/i.test(t) ? 'STO' : '';
+  const ck = pick(heads) || pick(doc.slice(0, 600)) || 'OTH', ctx = QCHG.find(c => c[0] === ck);
+  const out = {title:'', pol:'', pod:'', carrier:'', valid:'', term:'', mode:'', rate:null, cols:['AMT'], lines:[], sheet:true, checks:[]};
+  const vm = /유\s*효\s*(기\s*간|일)\s*[:：]?[ \t]*([^\t\n]*\d[^\t\n]{0,25})/.exec(raw); if(vm) out.valid = vm[2].trim();
+  out.title = (st.rows[0].route || st.rows[0].sheet || '').trim();
+  st.rows.forEach((r, i) => {
+    const label = (multi ? `[${r.route || r.sheet}] ` : '') + r.name + (r.dims ? ` ${r.dims}` : '');
+    const fits = r.qty && r.price != null && r.amount != null && Math.abs(r.qty * r.price - r.amount) < 1;   // 수량×단가 = 금액일 때만 수량·단가로(운송 견적은 '대'당 단가라 금액이 기준)
+    const note = [r.note, !fits && r.qty ? `수량 ${r.qty}` : '', !fits && r.price != null && r.price !== r.amount ? `단가 ${r.price.toLocaleString('ko-KR')}` : ''].filter(Boolean).join(' · ');
+    out.lines.push({key:`${ctx[0]}:${i}`, name:label, sec:'other', unit:'', vat:ctx[4], note, cur:r.cur, amt:{AMT:r.amount}, flag:{}, qty:fits ? r.qty : null, unitPrice:fits ? r.price : null, route:r.route || r.sheet});
+  });
+  st.totals.forEach(t => {                                                          // 표의 '합계'와 행 합이 맞는지
+    const sum = st.rows.filter(r => r.sheet === t.sheet && r.route === t.route).reduce((a, r) => a + (r.amount || 0), 0);
+    out.checks.push({where:t.route || t.sheet, total:t.total, sum, ok:Math.abs(sum - t.total) < 1});
+  });
+  return out;
+}
 function parseQuote(text){
   const raw = String(text || '').replace(/ /g, ' ').replace(/\r/g, '');
+  if(/^##\s/m.test(raw) && /\t/.test(raw)){                                    // 엑셀 견적: 표 머리글로 읽기
+    const st = parseSheetTables(raw);
+    if(st.rows.length) return sheetQuote(raw, st);
+  }
   const L = raw.split('\n').map(x => x.replace(/\t+/g, '  ').replace(/[ ]{2,}/g, '  ').trim());
   const out = {title:'', pol:'', pod:'', carrier:'', valid:'', term:'', mode:'', rate:null, cols:[], lines:[]};
   const g = re => { const m = re.exec(raw); return m ? m[1].trim().replace(/\s{2,}/g, ' ') : ''; };
@@ -74,8 +164,33 @@ function parseQuote(text){
   if(rm) out.rate = qN(rm[1]);
   let cols = [], sec = 'local', rateTable = false, last = null;
   const curHint = (/currency\s*[:：]\s*([A-Z, ]+)/i.exec(raw) || [])[1] || '';
-  L.forEach((ln, i) => {
+  const QALL = new RegExp(QCHG.map(c => '(?:' + c[2].source + ')').join('|'), 'gi');
+  const LL = [];                                                                   // 인보이스처럼 한 줄에 항목이 여러 개 붙은 경우 항목 이름마다 나눔
+  L.forEach(ln => {
+    const pos = []; let m; QALL.lastIndex = 0;
+    while((m = QALL.exec(ln))){ if(!pos.length || m.index - pos[pos.length - 1] > 12) pos.push(m.index); if(m[0].length === 0) QALL.lastIndex++; }
+    const nums = (ln.match(/[0-9]{1,3}(,[0-9]{3})+|[0-9]+\.\d{2}/g) || []).length;
+    if(pos.length >= 2 && nums >= 2){ pos[0] = 0; pos.forEach((p, i) => LL.push(ln.slice(p, pos[i + 1]).trim())); }
+    else LL.push(ln);
+  });
+  let orphan = null;                                                               // 항목 이름 줄 다음에 금액만 한 줄씩 오는 PDF(열 단위로 읽힌 표)
+  const flush = () => {
+    if(!orphan) return;
+    const o = orphan; orphan = null;
+    if(!o.vals.length && !o.dash) return;
+    const v = o.vals.length ? o.vals[o.vals.length - 1] : null, krw = v != null && (o.raw[o.raw.length - 1].includes(',') || v >= 1000);
+    const ln2 = {key:o.chg ? o.chg[0] : 'X:' + o.name.toLowerCase(), name:o.chg ? o.chg[1] : o.name, sec:o.chg ? (o.chg[3] === 'local' ? qLocalSide(out) : o.chg[3]) : sec, unit:'', vat:false, note:o.vals.length > 1 ? `USD ${o.raw.slice(0, -1).join(' / ')}` : '', amt:{}, flag:{}, cur:krw ? 'KRW' : 'USD'};
+    if(v != null) ln2.amt.AMT = v; else ln2.flag.AMT = 'na';
+    if(out.lines.some(x => x.key === ln2.key)) ln2.key += '#' + out.lines.length;
+    if(!out.cols.includes('AMT')) out.cols.push('AMT');
+    out.lines.push(ln2); last = ln2;
+  };
+  LL.forEach((ln, i) => {
     if(!ln) return;
+    if(orphan && /^[\s$₩\\]*[0-9][0-9,]*(\.\d+)?\s*$/.test(ln)){ const r = ln.replace(/[^0-9.,]/g, ''); orphan.vals.push(qN(r)); orphan.raw.push(r); return; }
+    if(orphan && /^\s*-\s*$/.test(ln)){ orphan.dash = true; return; }
+    flush();
+    { const c0 = QCHG.find(c => c[2].test(ln)); if(ln.length <= 40 && !/[0-9]{2}/.test(ln) && !/total|합\s*계|소\s*계|vat|부가세|총\s*액|amount/i.test(ln) && (c0 || /^[A-Z][A-Z /&.-]{2,30}$/.test(ln)) && /^[\s]*[0-9][0-9,]*(\.\d+)?\s*$|^\s*-\s*$/.test((LL.slice(i + 1).find(x => x) || ''))){ orphan = {chg:c0 || null, name:ln.trim(), vals:[], raw:[], dash:false}; return; } }
     if(/도착지|destination|수입\s*부대|arrival\s*charge/i.test(ln) && !/[0-9]{3}/.test(ln)) sec = 'dest';
     else if(/선적지|origin|수출\s*부대|departure\s*charge/i.test(ln) && !/[0-9]{3}/.test(ln)) sec = 'origin';
     else if(/^\s*\d[.)]\s*.*(운임|freight)/i.test(ln) && !/[0-9]{3}/.test(ln)) sec = 'freight';
@@ -87,7 +202,9 @@ function parseQuote(text){
     if(/(?<![a-z])(tel|fax|mobile|contact|e-?mail|phone|attn|ref\.?\s*no)\s*[:：.]|전화|팩스|휴대|주\s*소\s*[:：]|(?<![a-z])(to|from|date)\s*[:：]/i.test(ln)) return;   // 머리글·연락처
     if(last && /약\s*[\\₩$0-9]|~|최소|minimum|필요\s*시|발생\s*시|청구합니다|청구\s*$|if\s*needed/i.test(ln)){ const ck = (QCHG.find(c => c[2].test(ln)) || [])[0]; if(!ck || ck === last.key){ last.note = [last.note, ln].filter(Boolean).join(' / ').slice(0, 120); return; } }
     const vat = /^\s*\*/.test(ln);
-    const t = ln.replace(/^\s*\*\s*/, '');
+    if(/^\s*(\d[.)]\s*)?(pol|pod|incoterms?|item|terms?|carrier|valid\w*|수\s*신|발\s*신|참\s*조|제\s*목|date|ref\.?\s*no)\s*[:：]/i.test(ln)) return;
+    if(/^\s*(vat\s*#|customer\s*id|invoice\s*(no|date|#)|due\s*date|shipment\b|ocean\s*bill|house\s*bill|containers?\s*[:：]?\s*$|[A-Z]{4}\d{7}\s*-\s*\d{2}|page\s*\d|subtotal|add\s*vat)/i.test(ln)) return;   // 인보이스 머리글   // 머리글 칸(항구·조건·수신 등)의 숫자는 금액이 아님
+    const t = ln.replace(/^\s*\*\s*/, '').replace(/@?\s*\d+\.\d{4,}/g, ' ').replace(/\d+(\.\d+)?%\s*=\s*[\d,]+/g, ' ');   // 환율(1355.100000)·부가세 몫(10%=6,000)은 뺌
     const chg = QCHG.find(c => c[2].test(t));
     const cells = []; let m, firstIdx = -1;
     QCUR_TOKEN.lastIndex = 0;
@@ -138,6 +255,7 @@ function parseQuote(text){
     }
     out.lines.push(ln2); last = ln2;
   });
+  flush();
   // 같은 항목이 '실비'와 금액으로 두 번 나오면 금액 쪽만 남김(예: 운임표의 O/F와 부대비용표의 'Ocean Freight At Cost')
   out.lines = out.lines.filter(l => !(Object.keys(l.amt).length === 0 && out.lines.some(o => o !== l && o.key.split('#')[0] === l.key.split('#')[0] && Object.keys(o.amt).length)));
   out.cols = out.cols.filter(c => out.lines.some(l => c in l.amt || c in l.flag));
@@ -179,7 +297,7 @@ function addQuotes(items){
   (items || []).forEach(x => {
     if(!x || !x.key || db.quotes.some(q => q.key === x.key)) return;
     const q = {id:uid(), key:x.key, mailId:x.mailId || '', date:x.date || String(x.at || '').slice(0, 16), at:x.at || '', from:x.from || '', fromName:x.fromName || '', subject:x.subject || '', name:x.name || '', link:x.link || '', text:String(x.text || '').slice(0, 12000), err:x.err || '', manual:!!x.manual, grp:qGroupKey(x.subject || x.name)};
-    q.p = parseQuote(q.text);
+    q.p = parseQuote(q.text); q.autoKind = qClassify(q); q.pv = QPARSE_V;
     db.quotes.push(q); n++;
   });
   db.quotes = db.quotes.slice(-300);
@@ -227,7 +345,7 @@ function pasteQuote(text, subject, fwdName){
   if(!String(text || '').trim()){ toast('견적 내용을 붙여 넣으세요.'); return; }
   qset();
   const q = {id:uid(), key:'paste:' + uid(), date:nowIso().slice(0, 16), at:nowIso(), from:'', fromName:'', fwdName:fwdName || '', subject:subject || '붙여넣은 견적', name:'(붙여넣기)', link:'', text:String(text).slice(0, 12000), manual:true, grp:qGroupKey(subject || '붙여넣은 견적')};
-  q.p = parseQuote(q.text);
+  q.p = parseQuote(q.text); q.autoKind = 'quote'; q.pv = QPARSE_V;
   db.quotes.push(q); commit();
   toast(`항목 ${q.p.lines.length}개를 추출했습니다.`);
 }
@@ -262,6 +380,56 @@ function jobTotals(j){
 const qfmt = (v, cur) => v == null || v === '' || isNaN(v) ? '' : (cur === 'KRW' ? Math.round(v).toLocaleString('ko-KR') : Number(v).toLocaleString('en-US', {minimumFractionDigits:Number(v) % 1 ? 2 : 0, maximumFractionDigits:2}));
 const qcell = (l, col) => { const v = l.amt[col] ?? (col !== 'AMT' ? l.amt.AMT : undefined); if(v != null) return `${l.cur === 'KRW' ? '₩' : l.cur + ' '}${qfmt(v, l.cur)}`; const f = l.flag[col] || l.flag.AMT; return f ? {at:'실비', incl:'포함', na:'-', free:'무료', sep:'별도'}[f] : ''; };
 
+/* ---------- 구분 (11/11): 운임·물류 견적 / 통관용 운임 인보이스 / 물류 견적 아님 ----------
+   통관 진행 중 받은 운임 인보이스(과세가격용)나 물품 견적서는 견적 목록에서 빼고 '통관용·기타 자료'에 모아 둔다.
+   필요하면 '견적으로 가져오기'로 비교표에 넣거나, 고객 견적서 편집에서 '참고 자료에서 줄 가져오기'로 쓴다. 직원이 정한 구분(q.kind)이 우선. */
+const QPARSE_V = 3;
+const QKIND = {quote:'운임·물류 견적', customs:'통관용 운임 인보이스', other:'물류 견적 아님'};
+function qClassify(q){
+  const nm = String(q.name || ''), sj = String(q.subject || ''), body = String(q.text || '').slice(0, 2500);
+  const quoteName = /견\s*적|quotation|quote|offer|proposal|rate\s*sheet|tariff/i.test(nm);
+  const invoice = /invoice|인보이스|debit\s*note|청구서|정산서|명세서|내역서|statement|pro\s*forma/i.test(nm) || (!quoteName && /(pro\s*forma\s*)?invoice\s*(no|date)|debit\s*note|due\s*date|amount\s*due|total\s*charges/i.test(body));
+  const customsFlow = /통관\s*요청|수입\s*신고|수출\s*신고|면허\s*요청|면장|선적\s*서류|서류\s*전달|arrival|(?<![a-z])a\s*\/\s*n(?![a-z])|custom(s)?\s*clearance|shipping\s*doc|정산|청구/i.test(sj);
+  if(invoice && !quoteName) return 'customs';
+  if(customsFlow && !quoteName) return 'customs';
+  const known = (q.p && q.p.lines || []).filter(l => !String(l.key).startsWith('X:')).length;
+  if(!known && !/운\s*송|포\s*장|운\s*임|freight|truck|packing|해\s*상|항\s*공|lcl|fcl|cbm/i.test(nm + ' ' + sj + ' ' + body.slice(0, 1000))) return 'other';
+  return 'quote';
+}
+const qKind = q => q.kind || q.autoKind || 'quote';
+function qRefresh(){                                                                  // 읽는 방식이 바뀌면 저장된 원문으로 다시 추출·분류
+  let n = 0;
+  (db.quotes || []).forEach(q => { if(q.pv !== QPARSE_V){ q.p = parseQuote(q.text); q.autoKind = qClassify(q); q.pv = QPARSE_V; n++; } });
+  return n;
+}
+async function rereadQuote(q){
+  const cfg = db.settings.mail || {};
+  if(!q || !q.key || q.manual && !q.link){ toast('직접 붙여 넣은 견적은 다시 읽을 파일이 없습니다.'); return; }
+  toast('Drive의 견적 파일을 다시 읽는 중입니다…');
+  try{
+    const j = await syncPost(cfg, {op:'requote', key:q.key});
+    if(!j.ok) throw new Error(/알 수 없는 요청/.test(j.error || '') ? 'Apps Script를 새 버전으로 배포해야 합니다' : (j.error || '응답 오류'));
+    q.text = String(j.item.text || '').slice(0, 12000); q.err = ''; q.pv = 0; qRefresh(); commit();
+    toast(`다시 읽었습니다: 항목 ${q.p.lines.length}개${(q.p.checks || []).length ? ` · 표 합계 ${q.p.checks.every(c => c.ok) ? '일치' : '불일치 — 원문 확인'}` : ''}`);
+  }catch(e){ toast('다시 읽지 못했습니다: ' + e.message); }
+}
+function qChecksHTML(q){
+  const c = (q.p && q.p.checks) || [];
+  if(!c.length) return '';
+  return `<div class="hint">${c.map(x => `${esc(x.where)} 합계 ₩${x.total.toLocaleString('ko-KR')} ${x.ok ? '= 항목 합 ✓' : `≠ 항목 합 ₩${x.sum.toLocaleString('ko-KR')} (원문 확인)`}`).join('<br>')}</div>`;
+}
+function qSumKrw(q){ return (q.p.lines || []).filter(l => !l.alt).reduce((a, l) => { const v = l.amt.AMT ?? Object.values(l.amt)[0]; return v == null ? a : a + toKrw(v, l.cur, q.p.rate || qset().rate); }, 0); }
+function qRefHTML(list){
+  if(!list.length) return '';
+  return `<details class="more fold q-ref"><summary>통관용 운임·기타 자료 ${list.length}건 (견적 목록에서 뺌)</summary>
+    <p class="hint">통관 중 받은 운임 인보이스(과세가격용)와 물품 견적서 등입니다. 견적 비교에 쓰려면 ‘견적으로 가져오기’, 고객 견적서에 일부 항목만 참고하려면 견적서 편집 화면의 ‘참고 자료에서 줄 가져오기’를 쓰세요.</p>
+    <div class="table-wrap"><table class="grid"><thead><tr><th>받은 날</th><th>보낸 곳</th><th>제목·파일</th><th>구분</th><th class="num">추출 합계(원)</th><th></th></tr></thead><tbody>
+    ${list.map(q => `<tr><td>${esc(String(q.date).slice(0, 10))}</td><td>${esc(fwdLabel(q))}</td><td>${esc(q.subject)}<div class="hint">${q.link ? `<a href="${esc(q.link)}" target="_blank" rel="noopener noreferrer">${esc(q.name)}</a>` : esc(q.name)}</div></td>
+      <td>${esc(QKIND[qKind(q)])}${q.kind ? ' <span class="hint">(직접 지정)</span>' : ''}</td><td class="num">${q.p.lines.length ? Math.round(qSumKrw(q)).toLocaleString('ko-KR') : '-'}</td>
+      <td><button class="mini" data-q-kind="${esc(q.id)}|quote">견적으로 가져오기</button> <button class="mini" data-q-reread="${esc(q.id)}">다시 읽기</button> <button class="mini" data-q-off="${esc(q.id)}">숨기기</button></td></tr>`).join('')}
+    </tbody></table></div></details>`;
+}
+
 /* ---------- 화면: 목록·비교 ---------- */
 let qCol = {}, qOpenText = new Set();
 function viewQuote(){
@@ -269,7 +437,9 @@ function viewQuote(){
   if(route.id){ const j = db.quoteJobs.find(x => x.id === route.id); if(j) return viewQuoteJob(j); }
   if(!quoteLoadedAt && !quoteLoading) setTimeout(() => loadQuotes(false), 50);
   const groups = new Map();
-  db.quotes.filter(q => !q.off).forEach(q => { if(!groups.has(q.grp)) groups.set(q.grp, []); groups.get(q.grp).push(q); });
+  if(qRefresh()) setTimeout(() => commit(), 0);
+  db.quotes.filter(q => !q.off && qKind(q) === 'quote').forEach(q => { if(!groups.has(q.grp)) groups.set(q.grp, []); groups.get(q.grp).push(q); });
+  const refs = db.quotes.filter(q => !q.off && qKind(q) !== 'quote').sort((a, b) => a.date < b.date ? 1 : -1);
   const gl = [...groups.entries()].map(([k, qs]) => ({k, qs:qs.sort((a, b) => a.date < b.date ? -1 : 1), last:qs.map(q => q.date).sort().slice(-1)[0] || ''})).sort((a, b) => a.last < b.last ? 1 : -1);
   const jobs = db.quoteJobs.slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   const grpOpts = gl.map(g => `<option value="${esc(g.k)}">${esc(qGroupTitle(g.qs[0].subject).slice(0, 50))}</option>`).join('');
@@ -281,6 +451,7 @@ function viewQuote(){
       <div class="q-paste"><input id="qPasteSubj" placeholder="요청 건 이름 (같은 이름끼리 비교)"><input id="qPasteFwd" placeholder="포워더 이름 (내부용)" style="max-width:180px"><textarea id="qPasteText" rows="6" placeholder="포워더 메일의 운임 부분을 그대로 붙여 넣으세요"></textarea><button class="mini strong" data-q-paste>추출</button></div></details>
     <section class="items"><div class="sec-head"><h3>견적 요청 <span class="cnt">${gl.length}건</span></h3></div>
       ${gl.length ? gl.map(g => qGroupHTML(g, grpOpts)).join('') : '<p class="empty">아직 받은 견적이 없습니다. 포워더 회신 메일의 견적 첨부는 사무실 PC 수집기가 15분마다 자동으로 가져옵니다(지난 견적은 수집기 <code>--quotes 날짜</code>).</p>'}
+      ${qRefHTML(refs)}
     </section>
     <section class="items"><div class="sec-head"><h3>고객 견적서 <span class="cnt">${jobs.length}건</span></h3></div>
       ${jobs.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>번호</th><th>제목</th><th>수신</th><th>일자</th><th class="num">합계(원)</th><th>상태</th><th></th></tr></thead><tbody>${jobs.map(j => { const t = jobTotals(j); return `<tr><td>${esc(j.no)}</td><td>${esc(j.title)}</td><td>${esc(j.to || clientName(j.clientId) || '')}</td><td>${esc(j.date)}</td><td class="num">${t.grand.toLocaleString('ko-KR')}</td><td>${esc(j.status || '작성 중')}</td><td><button class="mini" data-q-openjob="${esc(j.id)}">열기</button></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="empty">견적 비교표에서 ‘이 견적으로 작성’을 누르면 만들어집니다.</p>'}
@@ -298,7 +469,7 @@ function qGroupHTML(g, grpOpts){
   const best = Math.min(...totals.filter(t => t.krw > 0).map(t => t.krw));
   const cl = typeof findClient === 'function' ? findClient(qs.map(q => q.subject).join(' ')) : null;
   return `<article class="q-grp">
-    <div class="q-grp-h"><div><strong>${esc(qGroupTitle(qs[0].subject))}</strong> ${cl ? `<span class="tag">${esc(cl.name)}</span>` : ''}<span class="hint"> · 견적 ${qs.length}건 · ${esc(String(g.last).slice(0, 10))}</span></div>
+    <div class="q-grp-h"><div>${qs.some(q => (q.p.checks || []).some(c => !c.ok)) ? '<span class="tag warn" title="표의 합계와 추출한 항목 합이 다릅니다. 원문·설정에서 확인하세요">합계 확인</span> ' : ''}<strong>${esc(qGroupTitle(qs[0].subject))}</strong> ${cl ? `<span class="tag">${esc(cl.name)}</span>` : ''}<span class="hint"> · 견적 ${qs.length}건 · ${esc(String(g.last).slice(0, 10))}</span></div>
       <div><label class="inline">비교 기준 <select data-q-col="${esc(g.k)}">${cols.map(x => `<option${x === col ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label> <button class="mini" data-q-cmpx="${esc(g.k)}" title="내부용 비교표(포워더 이름 포함)">비교표 엑셀</button></div></div>
     <div class="table-wrap"><table class="grid q-cmp"><thead><tr><th>항목</th>${qs.map(q => `<th>${esc(fwdLabel(q))}<div class="hint">${esc(String(q.date).slice(5, 10))} ${q.link ? `<a href="${esc(q.link)}" target="_blank" rel="noopener noreferrer">원문</a>` : ''}</div></th>`).join('')}</tr></thead><tbody>
       ${keys.map(k => `<tr><td>${esc(k.name)}<div class="hint">${esc(QSEC[k.sec] || '')}</div></td>${qs.map(q => { const l = q.p.lines.find(x => x.key === k.key); return `<td class="num">${l ? esc(qcell(l, col)) : ''}${l && l.unit ? `<div class="hint">${esc(l.unit)}</div>` : ''}</td>`; }).join('')}</tr>`).join('')}
@@ -306,7 +477,7 @@ function qGroupHTML(g, grpOpts){
       <tr><td></td>${qs.map(q => `<td><button class="mini strong" data-q-make="${esc(q.id)}|${esc(col)}">이 견적으로 작성</button><details class="more"><summary>원문·설정</summary>
         <div class="hint">${esc(q.name)}${q.err ? ` · 읽기 오류: ${esc(q.err)}` : ''}${q.p.pol ? ` · ${esc(q.p.pol)} → ${esc(q.p.pod)}` : ''}${q.p.term ? ' · ' + esc(q.p.term) : ''}${q.p.valid ? ' · 유효 ' + esc(q.p.valid) : ''}${q.p.carrier ? ' · ' + esc(q.p.carrier) : ''}</div>
         <label class="inline">묶음 <select data-q-grp="${esc(q.id)}">${grpOpts.replace(`value="${esc(q.grp)}"`, `value="${esc(q.grp)}" selected`)}<option value="__new">새 요청 건으로 분리</option></select></label>
-        <button class="mini" data-q-off="${esc(q.id)}">목록에서 빼기</button>
+        ${qChecksHTML(q)}<button class="mini" data-q-kind="${esc(q.id)}|customs">통관용 자료로 빼기</button> <button class="mini" data-q-reread="${esc(q.id)}">다시 읽기</button> <button class="mini" data-q-off="${esc(q.id)}">목록에서 빼기</button>
         <pre class="q-raw">${esc(String(q.text || '(글자 없음)').slice(0, 4000))}</pre></details></td>`).join('')}</tr>
     </tbody></table></div>
   </article>`;
@@ -336,7 +507,8 @@ function makeJob(q, col){
     const v = l.amt[col] ?? l.amt.AMT, f = l.flag[col] || l.flag.AMT;
     if(v == null && !f) return;
     if(l.key === 'CUS') return;                                               // 통관수수료는 BSGC 항목으로 따로 넣음
-    j.lines.push({id:uid(), sec:l.sec === 'local' ? 'dest' : l.sec, name:l.name, unit:l.unit || (/\d/.test(col) ? '/CNTR' : ''), qty:1, cur:l.cur, cost:v ?? null, flag:v == null ? f : '', addPct:'', addAmt:0, price:'', vat:!!l.vat, note:l.note || '', src:'fwd', show:f !== 'na' && !l.alt});
+    const tq = l.unitPrice != null && l.qty ? l.qty : 1, tc = l.unitPrice != null && l.qty ? l.unitPrice : v;   // 엑셀 표 견적은 수량·단가 그대로
+    j.lines.push({id:uid(), sec:l.sec === 'local' ? 'dest' : l.sec, name:l.name, unit:l.unit || (/\d/.test(col) ? '/CNTR' : ''), qty:tq, cur:l.cur, cost:tc ?? null, flag:v == null ? f : '', addPct:'', addAmt:0, price:'', vat:!!l.vat, note:l.note || '', src:'fwd', show:f !== 'na' && !l.alt});
   });
   j.lines.push({id:uid(), sec:'bsgc', name:'통관수수료 (Customs Clearance)', unit:'/BL', qty:1, cur:'KRW', cost:null, addPct:'', addAmt:0, price:'', vat:true, note:'', src:'bsgc', show:true});
   db.quoteJobs.push(j);
@@ -374,6 +546,7 @@ function viewQuoteJob(j){
     <div class="table-wrap"><table class="grid q-edit"><thead><tr><th></th><th>항목 / 비고</th><th>단위</th><th>수량</th><th>통화</th><th class="q-int">원가</th><th class="q-int">가산</th><th>판매 단가</th><th>VAT</th><th></th></tr></thead>
       ${secs.map(sc => { const ls = j.lines.filter(l => (l.sec || 'other') === sc); return ls.length ? `<tbody><tr class="q-sec"><td colspan="10">${esc(QSEC[sc])}</td></tr>${ls.map(ln).join('')}</tbody>` : ''; }).join('')}
     </table></div>
+    <p class="q-addrow">참고 자료에서 줄 가져오기: <select id="qjRef"><option value="">— 받은 견적·통관용 운임 자료 고르기 —</option>${db.quotes.filter(q => !q.off && q.p && q.p.lines.length).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 60).map(q => `<option value="${esc(q.id)}">${esc(String(q.date).slice(5, 10))} ${esc(QKIND[qKind(q)])} · ${esc(fwdLabel(q))} · ${esc(String(q.subject).slice(0, 40))}</option>`).join('')}</select><button class="mini" data-qj-ref>가져오기</button></p>
     <p class="q-addrow">줄 추가: ${Object.entries(BSGC_ADD).map(([k, v]) => `<button class="mini" data-qj-add="${k}">${esc(v[0].replace(/\s*\(.*\)/, ''))}</button>`).join('')}<button class="mini" data-qj-add="fwd">운임·부대비 줄</button></p>
     <div class="q-totals">${Object.entries(t.by).map(([c, v]) => `<span>${esc(c)} ${esc(qfmt(v, c))}</span>`).join('')}<span>원화 환산 ₩${t.krw.toLocaleString('ko-KR')}</span><span>부가세 ₩${t.vat.toLocaleString('ko-KR')}</span><strong>합계 ₩${t.grand.toLocaleString('ko-KR')}</strong><span class="q-int">원가 ₩${t.cost.toLocaleString('ko-KR')} · 차익 ₩${t.margin.toLocaleString('ko-KR')}</span></div>
     <label class="wide">비고 (견적서 하단) <textarea data-qf="notes" rows="4">${esc(j.notes)}</textarea></label>`;
@@ -453,13 +626,20 @@ function quoteCopy(j){
 /* ---------- 이벤트 (이 화면 전용) ---------- */
 document.addEventListener('click', e => {
   if(typeof db === 'undefined' || !db) return;
-  const b = e.target.closest('[data-q-load],[data-q-newjob],[data-q-paste],[data-q-make],[data-q-off],[data-q-openjob],[data-q-back],[data-q-print],[data-q-xlsx],[data-q-copy],[data-q-deljob],[data-qj-add],[data-qj-del],[data-q-cmpx]');
+  const b = e.target.closest('[data-q-kind],[data-q-reread],[data-qj-ref],[data-q-load],[data-q-newjob],[data-q-paste],[data-q-make],[data-q-off],[data-q-openjob],[data-q-back],[data-q-print],[data-q-xlsx],[data-q-copy],[data-q-deljob],[data-qj-add],[data-qj-del],[data-q-cmpx]');
   if(!b) return;
   const d = b.dataset;
   if('qLoad' in d) loadQuotes(true);
   else if('qNewjob' in d){ const j = makeJob(null, ''); commit(); go('quote', j.id); }
   else if('qPaste' in d){ pasteQuote(($('#qPasteText') || {}).value, ($('#qPasteSubj') || {}).value, ($('#qPasteFwd') || {}).value); }
   else if('qMake' in d){ const [qid, col] = d.qMake.split('|'); const q = db.quotes.find(x => x.id === qid); if(q){ const j = makeJob(q, col); commit(); go('quote', j.id); } }
+  else if('qKind' in d){ const [qid, k] = d.qKind.split('|'), q = db.quotes.find(x => x.id === qid); if(q){ q.kind = k; commit(); toast(k === 'quote' ? '견적 목록으로 옮겼습니다.' : '통관용·기타 자료로 옮겼습니다.'); } }
+  else if('qReread' in d){ rereadQuote(db.quotes.find(x => x.id === d.qReread)); }
+  else if('qjRef' in d){ const j = db.quoteJobs.find(x => x.id === route.id), q = db.quotes.find(x => x.id === ($('#qjRef') || {}).value); if(!j || !q){ toast('가져올 자료를 고르세요.'); return; }
+    const col = j.col && q.p.cols.includes(j.col) ? j.col : q.p.cols[0];
+    let n = 0; q.p.lines.forEach(l => { const v = l.amt[col] ?? l.amt.AMT, f = l.flag[col] || l.flag.AMT; if(v == null && !f) return;
+      const fits = l.unitPrice != null && l.qty; j.lines.push({id:uid(), sec:l.sec === 'local' ? 'dest' : l.sec, name:l.name, unit:l.unit || '', qty:fits ? l.qty : 1, cur:l.cur, cost:fits ? l.unitPrice : (v ?? null), flag:v == null ? f : '', addPct:'', addAmt:0, price:'', vat:!!l.vat, note:[l.note, `참고: ${QKIND[qKind(q)]} ${String(q.date).slice(5, 10)}`].filter(Boolean).join(' · '), src:'fwd', show:true}); n++; });
+    j.updatedAt = nowIso(); commit(); toast(`${n}줄을 가져왔습니다. 필요 없는 줄은 체크를 풀거나 지우세요.`); }
   else if('qOff' in d){ const q = db.quotes.find(x => x.id === d.qOff); if(q){ q.off = true; commit(); } }
   else if('qOpenjob' in d) go('quote', d.qOpenjob);
   else if('qBack' in d) go('quote');
