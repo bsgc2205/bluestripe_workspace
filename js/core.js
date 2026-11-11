@@ -188,7 +188,8 @@ async function persistLocal(){
 function migrate(d){
   d.meta = d.meta || {}; d.settings = d.settings || {};
   if(!Array.isArray(d.settings.taskTypes) || !d.settings.taskTypes.length) d.settings.taskTypes = [...DEFAULT_TYPES];
-  d.settings.mail = d.settings.mail || {endpoint:'', token:''};
+  d.settings.mail = d.settings.mail || {endpoint:''};
+  bindDeviceToken(d);                                              // 토큰은 이 PC에만 (11/11)
   ['clients','procedures','records','items','mailSeen','contacts','inquiries','alerts'].forEach(k => { if(!Array.isArray(d[k])) d[k] = []; });
   if(!Array.isArray(d.settings.feeProfiles)) d.settings.feeProfiles = [];
   if(!Array.isArray(d.kc)) d.kc = [];
@@ -204,7 +205,7 @@ function migrate(d){
 }
 function newDb(){
   const t = nowIso();
-  return migrate({meta:{version:2, createdAt:t, updatedAt:t}, settings:{taskTypes:[...DEFAULT_TYPES], mail:{endpoint:'', token:''}}, clients:[], procedures:[], records:[], items:[], mailSeen:[]});
+  return migrate({meta:{version:2, createdAt:t, updatedAt:t}, settings:{taskTypes:[...DEFAULT_TYPES], mail:{endpoint:''}}, clients:[], procedures:[], records:[], items:[], mailSeen:[]});
 }
 
 /* ---------- gate ---------- */
@@ -215,6 +216,14 @@ async function boot(){
     return;
   }
   try{const s = localStorage.getItem(LS_KEY); if(s) localBlob = JSON.parse(s);}catch{}
+  const pairEp = pairLinkEndpoint();                                    // 관리자가 준 연결 링크(#pair=…)로 열었으면 주소를 채우고 코드 입력부터
+  if(pairEp){
+    $('#gsEp').value = pairEp;
+    try{ history.replaceState(null, '', location.pathname + location.search); }catch{}
+    $('#gateUnlock').hidden = true; $('#gateNew').hidden = true; $('#gateSync').hidden = false;
+    $('#gsMsg').textContent = '연결 링크를 열었습니다. 관리자가 불러 주는 6자리 연결 코드를 넣으세요.';
+    $('#gsCode').focus(); return;
+  }
   const sc = storedSync();
   if(sc){
     $('#gateMsg').textContent = 'Drive에서 최신 Workspace를 확인하는 중…';
@@ -223,6 +232,11 @@ async function boot(){
   }
   showGate(remoteBlob || localBlob || serverBlob ? 'unlock' : 'new');
 }
+function pairLinkEndpoint(){
+  const m = /[#&]pair=([A-Za-z0-9_-]+)/.exec(location.hash || '');
+  if(!m) return '';
+  try{ const ep = decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')))); return /^https:\/\/script\.google\.com\//.test(ep) ? ep : ''; }catch{ return ''; }
+}
 function isAdmin(){ return !!(me && me.role === 'admin'); }
 /* 로그인 화면: '새 대장 만들기'·'다른 대장 파일 열기'는 주소 끝에 #admin을 붙였을 때만 보임(직원이 실수로 별도 대장을 만들지 않도록) */
 function adminGate(){ return /admin/.test(location.hash || ''); }
@@ -230,8 +244,8 @@ function showGate(mode){
   if(mode === 'new' && !adminGate()){                                  // 처음 쓰는 PC: 서버 주소로 연결만 보여 줌
     $('#gateUnlock').hidden = true; $('#gateNew').hidden = true; $('#gateSync').hidden = false;
     $('#gateToNew').hidden = true; $('#gateToUnlock').hidden = true; $('#gateFileLink').hidden = true;
-    $('#gsMsg').textContent = '이 PC에서 처음 엽니다. 관리자에게 받은 웹 앱 주소와 토큰을 넣으세요.';
-    $('#gsEp').focus(); return;
+    $('#gsMsg').textContent = '이 PC에서 처음 엽니다. 관리자에게 받은 연결 링크로 열었거나 웹 앱 주소를 넣은 뒤, 관리자가 불러 주는 6자리 연결 코드를 넣으세요.';
+    ($('#gsEp').value ? $('#gsCode') : $('#gsEp')).focus(); return;
   }
   const u = mode === 'unlock';
   $('#gateUnlock').hidden = !u; $('#gateNew').hidden = u;

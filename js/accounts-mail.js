@@ -7,8 +7,63 @@ function viewAccounts(){
     <div class="narrow table-wrap"><table class="grid"><thead><tr><th>아이디</th><th>이름</th><th>권한</th><th></th></tr></thead><tbody>
       ${accounts.map(a => `<tr><td>${esc(a.id)}${a.id === me.id ? ' <span class="hint">(나)</span>' : ''}</td><td>${esc(a.name)}</td><td>${a.role === 'admin' ? '관리자' : '일반'}</td><td><button class="mini" data-acct-edit="${esc(a.id)}">수정</button></td></tr>`).join('')}
     </tbody></table></div>
-    <p class="hint narrow">계정을 추가·수정·삭제하면 Drive 자동 저장으로 다른 PC에 반영됩니다(자동 저장을 쓰지 않으면 암호화 파일을 새로 받아 Drive에 저장하세요). 계정을 지워도 그 전에 받아 둔 파일은 그 계정으로 열리므로, 퇴사자 계정을 지울 때는 Drive 공유와 이전 버전도 함께 정리하세요.</p>`;
+    <p class="hint narrow">계정을 추가·수정·삭제하면 Drive 자동 저장으로 다른 PC에 반영됩니다(자동 저장을 쓰지 않으면 암호화 파일을 새로 받아 Drive에 저장하세요). 계정을 지워도 그 전에 받아 둔 파일은 그 계정으로 열리므로, 퇴사자 계정을 지울 때는 Drive 공유와 이전 버전도 함께 정리하세요.</p>
+    ${pcLinkSectionHTML()}`;
 }
+/* ---------- PC 연결: 1회용 연결 코드와 직원별 토큰 (11/11) ----------
+   관리자가 계정마다 6자리 코드를 만들면(10분, 한 번만) 직원은 첫 화면에서 그 코드로 연결해 그 PC 전용 토큰을 받는다.
+   연결 링크(#pair=웹 앱 주소)는 비밀이 아니므로 메신저로 보내도 되고, 코드만 말로 불러 준다. 토큰 원문은 화면에 나오지 않는다. */
+let pcLink = {list:null, err:'', who:null, code:null, busy:false};
+function pairLinkUrl(){ const ep = (db.settings.mail || {}).endpoint || ''; return location.origin + location.pathname + '#pair=' + btoa(unescape(encodeURIComponent(ep))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+async function pcLinkLoad(){
+  const cfg = syncCfg(); if(!cfg){ pcLink.err = 'Apps Script 연동이 꺼져 있습니다.'; return; }
+  try{
+    const w = await syncPost(cfg, {op:'whoami'}); pcLink.who = w.ok ? w : null;
+    if(w.ok && w.admin){ const j = await syncPost(cfg, {op:'tokens'}); if(!j.ok) throw new Error(j.error || '응답 오류'); pcLink.list = j.items || []; pcLink.err = ''; }
+    else pcLink.err = w.ok ? '이 PC는 직원 토큰으로 연결돼 있어 연결 코드를 만들 수 없습니다. 관리자 토큰이 있는 PC에서 하세요.' : (w.error || '');
+  }catch(e){ pcLink.err = /알 수 없는 요청/.test(e.message) ? 'Apps Script를 새 버전으로 배포해야 PC 연결을 쓸 수 있습니다.' : e.message; }
+  if(route.name === 'accounts') renderView();
+}
+function pcLinkSectionHTML(){
+  if(pcLink.list === null && !pcLink.err && !pcLink.busy){ pcLink.busy = true; setTimeout(() => pcLinkLoad().finally(() => { pcLink.busy = false; }), 30); }
+  const w = pcLink.who, c = pcLink.code, left = c ? Math.max(0, Math.round((c.until - Date.now()) / 60000)) : 0;
+  const rows = (pcLink.list || []).map(t => `<tr class="${t.off ? 'q-hide' : ''}"><td>${esc(t.name || t.sid)} <span class="hint">${esc(t.sid)}</span>${t.admin ? ' <span class="tag">관리자</span>' : ''}</td><td>${esc(t.label || '')}</td><td>${esc(String(t.at || '').replace('T', ' '))}</td><td>${esc(String(t.last || '').replace('T', ' ') || '-')}</td><td>${t.off ? '끊김' : '사용 중'}</td><td>${t.off ? '' : `<button class="mini" data-pc-revoke="${esc(t.id)}">끊기</button>`}</td></tr>`).join('');
+  return `<section class="items narrow"><div class="sec-head"><h3>PC 연결 (직원별 토큰)</h3><button class="mini" data-pc-reload>새로고침</button></div>
+    <p class="hint">직원 PC·휴대폰을 처음 연결할 때: ① 아래에서 그 직원의 ‘연결 코드 만들기’ → ② ‘연결 링크 복사’로 링크를 보내거나(링크만으로는 열리지 않음) 그 PC에서 Workspace 첫 화면의 ‘서버 주소로 연결’을 엽니다 → ③ 6자리 코드는 말로 불러 주거나 직접 입력합니다. 코드는 10분 동안 한 번만 쓰이고, 그 PC 전용 토큰이 발급됩니다. 퇴사·분실 때는 그 PC만 ‘끊기’ 합니다.</p>
+    ${w ? `<p class="hint">이 PC: ${w.master ? '공용(관리자) 토큰' : `직원 토큰 — ${esc(w.name || w.sid)}${w.admin ? ' (관리자)' : ''}`}</p>` : ''}
+    ${pcLink.err ? `<p class="msg">${esc(pcLink.err)}</p>` : ''}
+    ${c && left > 0 ? `<div class="pc-code"><div>연결 코드 <strong>${esc(c.code.slice(0, 3))} ${esc(c.code.slice(3))}</strong></div><div class="hint">${esc(c.name)}(${esc(c.sid)}) · 약 ${left}분 남음 · 한 번만 쓸 수 있음</div><button class="mini" data-pc-copylink>연결 링크 복사</button> <button class="mini" data-pc-hide>코드 숨기기</button></div>` : ''}
+    ${w && w.admin ? `<div class="table-wrap"><table class="grid"><thead><tr><th>계정</th><th></th></tr></thead><tbody>${accounts.map(a => `<tr><td>${esc(a.name)} <span class="hint">${esc(a.id)}${a.role === 'admin' ? ' · 관리자' : ''}</span></td><td><button class="mini strong" data-pc-pair="${esc(a.id)}">연결 코드 만들기</button></td></tr>`).join('')}</tbody></table></div>
+      <h4 class="sub">연결된 PC</h4>${rows ? `<div class="table-wrap"><table class="grid"><thead><tr><th>계정</th><th>PC 이름</th><th>연결</th><th>마지막 사용</th><th>상태</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="empty">아직 연결 코드로 연결한 PC가 없습니다.</p>'}
+      <details class="more fold"><summary>공용 토큰 정리 (테스트 주간 뒤 한 번)</summary><ol class="hint">
+        <li>직원 PC마다 연결 코드로 다시 연결합니다(잠그기 → 첫 화면 ‘서버 주소로 연결’ → 코드 입력). 위 목록에 모두 보이는지 확인합니다.</li>
+        <li>Apps Script 편집기에서 <code>resetToken</code>을 실행해 공용 토큰을 바꿉니다(실행 기록에 새 토큰이 나옴).</li>
+        <li>관리자 PC: 데이터 → ‘이 PC의 토큰’에 새 토큰을 넣습니다. 사무실 PC 메일 수집기: <code>python bsgc_mail_collector.py --setup</code>으로 새 토큰을 넣습니다.</li>
+        <li>예전 공용 토큰을 아는 PC는 이제 연결되지 않습니다. 직원 토큰은 그대로입니다.</li></ol></details>` : ''}
+  </section>`;
+}
+document.addEventListener('click', async e => {
+  if(typeof db === 'undefined' || !db) return;
+  const b = e.target.closest('[data-pc-pair],[data-pc-revoke],[data-pc-reload],[data-pc-copylink],[data-pc-hide]'); if(!b) return;
+  const d = b.dataset, cfg = syncCfg();
+  if('pcReload' in d){ pcLink.list = null; pcLink.err = ''; renderView(); return; }
+  if('pcHide' in d){ pcLink.code = null; renderView(); return; }
+  if('pcCopylink' in d){ try{ await navigator.clipboard.writeText(pairLinkUrl()); toast('연결 링크를 복사했습니다. 링크만으로는 열리지 않고, 코드는 따로 불러 주세요.'); }catch{ prompt('연결 링크', pairLinkUrl()); } return; }
+  if(!cfg){ toast('Apps Script 연동이 꺼져 있습니다.'); return; }
+  if('pcPair' in d){
+    const a = accounts.find(x => x.id === d.pcPair); if(!a) return;
+    try{ const j = await syncPost(cfg, {op:'pair', sid:a.id, name:a.name, admin:a.role === 'admin'}); if(!j.ok) throw new Error(j.error || '응답 오류');
+      pcLink.code = {code:j.code, sid:a.id, name:a.name, until:Date.now() + (j.ttl || 600) * 1000}; renderView();
+      setTimeout(() => { if(pcLink.code && Date.now() > pcLink.code.until){ pcLink.code = null; if(route.name === 'accounts') renderView(); } }, (j.ttl || 600) * 1000 + 500);
+    }catch(err){ toast('연결 코드를 만들지 못했습니다: ' + err.message); }
+  }
+  if('pcRevoke' in d){
+    const t = (pcLink.list || []).find(x => x.id === d.pcRevoke);
+    if(!t || !confirm(`${t.name || t.sid}의 ‘${t.label || 'PC'}’ 연결을 끊을까요? 그 PC는 다음 요청부터 Workspace에 연결되지 않습니다.`)) return;
+    try{ const j = await syncPost(cfg, {op:'revoke', id:t.id}); if(!j.ok) throw new Error(j.error || '응답 오류'); pcLink.list = j.items || pcLink.list; renderView(); toast('연결을 끊었습니다.'); }
+    catch(err){ toast('끊지 못했습니다: ' + err.message); }
+  }
+});
 function openAccount(a){
   const isNew = !a;
   openDialog({

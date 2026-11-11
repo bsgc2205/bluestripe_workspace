@@ -49,9 +49,9 @@ function openDataMenu(){
     body: `<label>업무 유형 (한 줄에 하나, 순서대로 표시)<textarea name="types" rows="7">${esc(db.settings.taskTypes.join('\n'))}</textarea></label>
       <div class="dlg-section">
         <h4>Apps Script 연동 (Drive 자동 저장·메일·자동 수집)</h4>
-        <p class="hint">웹 앱 주소와 토큰을 넣으면 변경 내용이 Drive의 data.enc.json에 자동으로 저장되고, 다른 계정이 저장한 내용도 합쳐서 보여 줍니다. ‘customs@ 메일’, 자동 수집, B/L 조회도 같은 주소를 씁니다. 이 값은 암호화되어 저장되고, 다음 로그인 때 최신 파일을 먼저 받기 위해 이 PC 브라우저에도 남습니다.</p>
+        <p class="hint">웹 앱 주소와 토큰을 넣으면 변경 내용이 Drive의 data.enc.json에 자동으로 저장되고, 다른 계정이 저장한 내용도 합쳐서 보여 줍니다. ‘customs@ 메일’, 자동 수집, B/L 조회도 같은 주소를 씁니다. 웹 앱 주소는 업무 데이터에 저장되고, 토큰은 이 PC 브라우저에만 남습니다.</p>
         <label>웹 앱 주소<input name="mailEndpoint" value="${esc(mail.endpoint)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
-        <label>토큰<input type="password" name="mailToken" value="${esc(mail.token)}" autocomplete="off"></label>
+        <label>이 PC의 토큰 <span class="hint">(업무 데이터에는 저장되지 않고 이 PC 브라우저에만 남습니다. 직원 PC는 '계정 관리 → PC 연결'의 연결 코드로 받습니다)</span><input type="password" name="mailToken" value="${esc(mail.token)}" autocomplete="off"></label>
       </div>
       <div class="dlg-section">
         <h4>내 비밀번호 변경 (${esc(me.id)})</h4>
@@ -71,7 +71,7 @@ function openDataMenu(){
       db.settings.taskTypes = [...new Set(types)];
       if(ep !== db.settings.mail.endpoint) mailCache = null;
       const tk = fd.get('mailToken').trim(), syncChanged = ep !== (db.settings.mail.endpoint || '') || tk !== (db.settings.mail.token || '');
-      db.settings.mail = {endpoint: ep, token: tk};
+      db.settings.mail.endpoint = ep; db.settings.mail.token = tk;          // 토큰은 이 PC에만 저장(숨은 속성)
       if(syncChanged) setTimeout(() => syncStart(), 50);   // 주소만 바뀐 것이므로 마지막으로 맞춘 기준(base)은 그대로 두고 합친다
       const np = fd.get('npw'), np2 = fd.get('npw2');
       if(np){

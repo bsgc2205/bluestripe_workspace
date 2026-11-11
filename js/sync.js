@@ -10,6 +10,20 @@ const clone = x => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
 const saveTip = () => sync.on ? '' : ' 암호화 파일을 새로 받아 Drive에 저장하세요.';
 function syncCfg(){ const m = (db && db.settings.mail) || {}; return m.endpoint && m.token ? m : null; }
 function storedSync(){ try{ const s = JSON.parse(localStorage.getItem(LS_KEY + '-sync') || 'null'); return s && s.endpoint && s.token ? s : null; }catch{ return null; } }
+/* 기기별 연결 (11/11): 토큰은 업무 데이터(공유·암호화)에 넣지 않고 이 PC 브라우저에만 둔다.
+   db.settings.mail.token은 이 PC의 토큰을 돌려주는 숨은 속성이라 저장·동기화·내보내기 때 빠진다(JSON에 안 들어감).
+   예전 데이터에 들어 있던 공용 토큰은 이 PC에 토큰이 없을 때만 옮겨 두고 데이터에서 지운다. */
+let devTokenMem = '';
+function devSync(){ try{ return JSON.parse(localStorage.getItem(LS_KEY + '-sync') || 'null') || {}; }catch{ return {endpoint:'', token:devTokenMem}; } }
+function setDevSync(o){ devTokenMem = o.token != null ? o.token : devTokenMem; try{ const n = {...devSync(), ...o}; if(n.endpoint || n.token) localStorage.setItem(LS_KEY + '-sync', jstr(n)); else localStorage.removeItem(LS_KEY + '-sync'); }catch{} }
+function bindDeviceToken(d){
+  const m = d.settings.mail = d.settings.mail || {endpoint:''};
+  const desc = Object.getOwnPropertyDescriptor(m, 'token');
+  if(desc && 'value' in desc){ const v = desc.value; delete m.token; if(v && !devSync().token) setDevSync({endpoint:m.endpoint || devSync().endpoint || '', token:v}); }
+  if(!desc || 'value' in desc) Object.defineProperty(m, 'token', {get(){ return devSync().token || devTokenMem || ''; }, set(v){ setDevSync({endpoint:m.endpoint || devSync().endpoint || '', token:String(v || '')}); }, enumerable:false, configurable:true});
+  if(!m.endpoint && devSync().endpoint) m.endpoint = devSync().endpoint;
+  return d;
+}
 function rememberSync(){
   try{ const c = syncCfg(); if(c) localStorage.setItem(LS_KEY + '-sync', jstr({endpoint:c.endpoint, token:c.token})); else localStorage.removeItem(LS_KEY + '-sync'); }catch{}
 }

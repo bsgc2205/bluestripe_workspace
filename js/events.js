@@ -149,12 +149,24 @@ $('#pw2').addEventListener('keydown', e => {if(e.key === 'Enter') createNew();})
 $('#gateToNew').onclick = () => showGate('new');
 $('#gateToUnlock').onclick = () => showGate('unlock');
 $('#btnOpenFile').onclick = () => $('#gateFile').click();
-$('#gateToSync').onclick = () => { const g = $('#gateSync'); g.hidden = !g.hidden; if(!g.hidden){ const c = storedSync(); if(c){ $('#gsEp').value = c.endpoint; } $('#gsEp').focus(); } };
+$('#gateToSync').onclick = () => { const g = $('#gateSync'); g.hidden = !g.hidden; if(!g.hidden){ const c = devSync(); if(c.endpoint && !$('#gsEp').value) $('#gsEp').value = c.endpoint; ($('#gsEp').value ? $('#gsCode') : $('#gsEp')).focus(); } };
+$('#gsCode').addEventListener('keydown', e => { if(e.key === 'Enter') $('#btnGateSync').click(); });
 $('#btnGateSync').onclick = async () => {
-  const cfg = {endpoint: $('#gsEp').value.trim(), token: $('#gsTk').value.trim()}, m = $('#gsMsg');
-  if(!/^https:\/\/script\.google\.com\//.test(cfg.endpoint) || !cfg.token){ m.textContent = '웹 앱 주소와 토큰을 확인하세요.'; return; }
-  m.textContent = 'Drive에서 Workspace를 받는 중…';
+  const cfg = {endpoint: $('#gsEp').value.trim(), token: $('#gsTk').value.trim()}, m = $('#gsMsg'), code = $('#gsCode').value.replace(/\D/g, '');
+  if(!/^https:\/\/script\.google\.com\//.test(cfg.endpoint)){ m.textContent = '웹 앱 주소를 확인하세요. 관리자에게 받은 연결 링크로 열면 자동으로 채워집니다.'; return; }
+  if(!code && !cfg.token){ m.textContent = '6자리 연결 코드를 넣으세요.'; return; }
+  if(code && code.length !== 6){ m.textContent = '연결 코드는 숫자 6자리입니다.'; return; }
   try{
+    if(code){                                                        // 1회용 연결 코드 → 이 PC 전용 토큰 (11/11)
+      m.textContent = '연결 코드를 확인하는 중…';
+      const dev = $('#gsDev').value.trim() || (/Mobi|Android|iPhone/i.test(navigator.userAgent) ? '휴대폰' : 'PC') + ' ' + today();
+      const r = await syncFetch(cfg.endpoint, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:jstr({op:'redeem', code, device:dev})});
+      if(!r.ok) throw new Error(r.error || '연결 코드가 맞지 않습니다');
+      cfg.token = r.token; $('#gsCode').value = ''; $('#gsTk').value = '';
+      setDevSync({endpoint:cfg.endpoint, token:r.token});                 // 받은 토큰은 바로 이 PC에 저장(코드는 한 번만 쓰이므로)
+      if(r.sid && !$('#uid').value) $('#uid').value = r.sid;
+    }
+    m.textContent = 'Drive에서 Workspace를 받는 중…';
     const res = await syncGet(cfg, {load:1});
     if(!res.blob || !res.blob.ct || !Array.isArray(res.blob.accounts)) throw new Error('Drive에 Workspace 파일이 아직 없습니다. 관리자가 먼저 자동 저장을 켜야 합니다');
     serverBlob = res.blob; serverPre = {endpoint: cfg.endpoint, res};
