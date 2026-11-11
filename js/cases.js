@@ -459,7 +459,8 @@ function homeWidgetsHTML(){
     tile('data-go="report"', doneW, '이번 주 완료', `자동 완료(7일) ${auto7}`),
     tile('data-go="mail"', ma.total, '미연결 메일 대화', `24시간 경과 ${ma.overdue} · 새 의뢰 ${ma.requests}`, ma.overdue > 0),
     tile('data-go="active"', soon + over, '7일 내 기한', over ? `지난 기한 ${over}` : '지난 기한 없음', over > 0),
-    tile('data-go="alerts"', openAlerts().length, '확인 알림', '법령·요건·관세율·화학물질·식품', openAlerts().length > 0)
+    tile('data-go="alerts"', openAlerts().length, '확인 알림', '법령·요건·관세율·화학물질·식품', openAlerts().length > 0),
+    (() => { const w = waitSummary(); return tile('data-wait-list', mailCache ? w.n : '–', '회신 대기', mailCache ? `3일 이상 ${w.d3} · 7일 이상 ${w.d7}` : '메일을 불러오면 표시', w.d7 > 0); })()
   ].join('');
   // 시스템 상태: 이미 받아 둔 값으로만 표시
   const lastMail = (mailCache || []).map(m => m.collectedAt || '').sort().slice(-1)[0] || '';

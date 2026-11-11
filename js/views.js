@@ -207,7 +207,8 @@ function viewActive(){
   const hold = db.records.filter(r => r.status === '보류' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
   const dls = openDeadlines();
   const head = `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
-    <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
+    <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button><button class="${activeMode === 'board' ? 'on' : ''}" data-amode="board" title="접수 → 서류대기 → 신고진행 → 보완요청 → 검사 → 수리완료 → 종결">보드</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
+  if(activeMode === 'board') return head + boardHTML({list:[...act, ...hold], mine});
   if(activeMode === 'table') return head + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">정산 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
     + ([...act, ...hold].length ? activeTableHTML([...act, ...hold]) : '<p class="empty">진행 중인 업무가 없습니다.</p>')
     + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>전체 기한</h3></div>${dls.length ? dls.map(deadlineRow).join('') : '<p class="empty">남은 기한이 없습니다.</p>'}</section>`;
@@ -250,6 +251,7 @@ function viewClient(){
         
         <a class="btn" href="${esc(drive)}" target="_blank" rel="noopener noreferrer">Drive에서 찾기</a>
         ${safeUrl(c.bizDoc) ? `<a class="btn" href="${esc(c.bizDoc)}" target="_blank" rel="noopener noreferrer">사업자등록증</a>` : ''}
+        <button class="ghost" data-client-report="${esc(c.id)}" title="기간을 골라 이 업체의 업무 처리 내역서를 PDF로 만들거나 메일 본문 표로 복사">업무 내역서</button>
         <button class="ghost" data-letter data-client="${esc(c.id)}">사유서 작성</button>
         <button class="ghost" data-edit-client="${esc(c.id)}">업체 정보 수정</button>
       </div>
@@ -265,6 +267,7 @@ function viewClient(){
       </tbody></table></div>` : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}
     </section>
     ${amendSection(c)}
+    ${clientInqSection(c)}
     <div class="chips" role="group" aria-label="업무 유형">${['전체', ...types].map(t => `<button class="chip${t === typeFilter ? ' on' : ''}" data-chip="${esc(t)}">${esc(t)}</button>`).join('')}</div>
     <div class="client-grid">
       <section>
