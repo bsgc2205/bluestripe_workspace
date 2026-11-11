@@ -436,7 +436,7 @@ function threadFlags(t){
   const ext = !isOwn(first.from) || !!first.fwdFrom;
   const docs = t.ms.some(docMail);
   const asked = ext && !IS_REPLY.test(first.subject || '') && (REQ_SUBJ.test(first.subject || '') || REQ_BODY.test((first.snippet || '').slice(0, 200)));
-  return {ageH:hoursSince(first.date), request:docs || asked, asked, docs, bill:t.ms.some(billMail), client:matchClient(t.ms), old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
+  return {ageH:hoursSince(first.date), request:docs || asked, asked, docs, bill:t.ms.some(billMail), client:threadClient(t), old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
 }
 function mailAlerts(){
   const fl = (mailCache ? mailThreadsList() : []).map(threadFlags), cur = fl.filter(f => !f.old);

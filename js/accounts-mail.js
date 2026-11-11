@@ -206,8 +206,24 @@ function exportCsv(mon){
 /* ---------- customs@ 메일 (한비로 → 사무실 PC 수집기 → Apps Script 'BSGC 메일 색인' 시트) ----------
    같은 대화(제목에서 RE:/FW:와 숫자 없는 [머리말]을 뺀 것)는 한 줄로 묶는다.
    자동 연결 순서: 제목의 케이스 번호 → 이미 기록에 붙인 대화 → B/L·신고번호로 기록이 하나로 정해질 때. 나머지는 화면에서 고른다. */
-function mailText(m){return [m.fwdFrom, m.from, m.fromName, m.to, m.cc, m.subject, m.snippet, (m.attachments || []).join(' ')].filter(Boolean).join(' ');}
-function matchClient(m){ return findClient(Array.isArray(m) ? m.map(mailText).join(' ') : mailText(m)); }
+/* 업체 알아보기 (11/11 c): ① 주소·제목에서 먼저 찾고, ② 못 찾으면 첨부 파일명·본문 앞부분(600자), ③ 그래도 없으면 본문 단서(hints: 수집기가 본문 전체에서 뽑은 회사명 줄·메일 주소)까지 본다.
+   본문에 인용된 지난 메일·다른 업체 이름이 제목의 업체를 덮어쓰지 않게 하려는 순서다(제목에 A사, 첨부명·본문에 'A사&B사'가 있으면 A사).
+   직원이 '업체 지정'한 대화는 그 업체로 본다(db.mailClient[대화 키]). */
+function mailHead(m){return [m.fwdFrom, m.from, m.fromName, m.to, m.cc, m.subject].filter(Boolean).join(' ');}
+function mailText(m){return [mailHead(m), (m.attachments || []).join(' '), m.snippet].filter(Boolean).join(' ');}
+function matchClient(m){
+  const ms = Array.isArray(m) ? m : [m];
+  return findClient(ms.map(mailHead).join(' ')) || findClient(ms.map(mailText).join(' '))
+    || (ms.some(x => x.hints) ? findClient(ms.map(x => mailText(x) + ' ' + (x.hints || '')).join(' ')) : null);   // ③ 본문 단서는 마지막에(인용된 지난 메일의 포워더 주소가 본문 속 업체명을 덮지 않게)
+}
+function threadClient(t){ const id = (db.mailClient || {})[t.key]; return (id && db.clients.find(c => c.id === id)) || matchClient(t.ms); }
+/* 수하인(C/…) 이름: 포워더 A/N 제목 'S/SHIPPER CO C/ABC TRADING H/ABCD2611001'에서 'ABC TRADING' */
+function consigneeNames(text){
+  const out = [], re = /(?:^|[\s\[(,])C\s*\/\s*([A-Z][A-Z0-9&.'\- ]{1,40}?)\s*(?=\s(?:H|M|B|S)\s*\/|\s*\/\/|[\])/,]|\s{2,}|$)/g;
+  let m;
+  while((m = re.exec(String(text || '')))) { const v = m[1].trim(); if(v.length >= 2 && !/^(NO|PO|INV|CI)$|^O\b/i.test(v)) out.push(v); }
+  return [...new Set(out)];
+}
 function findRefNo(text){const m = String(text||'').match(/\b\d{5}-\d{2}-\d{6,7}[A-Z]?\b/); return m ? m[0] : '';}
 const refKey = s => String(s || '').toUpperCase().replace(/[-\s]/g, '');
 /* B/L 여러 건 (11/9): 메일 한 통에 B/L이 여러 개면 모두 찾는다(색인의 bl 칸은 첫 번째 하나뿐이라 제목·첨부 파일명에서 다시 찾음).
@@ -506,15 +522,17 @@ function viewMail(){
         const files = [...new Set(t.ms.flatMap(x => x.attachments || []))];
         const people = [...new Set(t.ms.map(x => x.fwdFrom ? `전달: ${x.fwdFrom}` : (x.fromName || x.from)))];
         const first = t.ms[0];
+        const openRecs = c ? db.records.filter(r => r.clientId === c.id && r.status !== '완료' && r.status !== '보류').sort(byDateDesc).slice(0, 3) : [];
         return `<article class="rec${over ? ' overdue' : ''}">
         <div class="rec-date">${esc(String(m.date).slice(0, 10))}<small>${t.ms.length > 1 ? `${t.ms.length}통 · ${esc(String(first.date).slice(5, 10))}~` : esc(String(m.date).slice(11, 16))}</small></div>
         <div class="rec-body"><h4>${esc(m.subject || '(제목 없음)')}</h4>
           <div class="rec-meta">${t.f.request ? '<span class="tag new">새 의뢰 후보</span>' : ''}${t.ms.some(certMail) ? `<span class="tag new" title="직원이 필증을 보낸 대화입니다. 업체를 알아보면 다음 불러오기 때 자동 접수됩니다.">필증 송부됨${c ? '' : ' · 업체 지정 필요'}</span>` : ''}${over ? `<span class="tag warn">${Math.floor(t.f.ageH / 24) ? Math.floor(t.f.ageH / 24) + '일' : Math.floor(t.f.ageH) + '시간'} 미연결</span>` : ''}<span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>${cautionBadge(c)}` : '<span class="tag type">업체 미지정</span>'}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
           ${m.snippet ? `<p class="rec-sum">${esc(m.snippet)}</p>` : ''}
           ${files.length ? `<div class="hint">첨부 ${files.length}개: ${esc(files.slice(0, 6).join(', '))}${files.length > 6 ? ' …' : ''}</div>` : ''}
+          ${openRecs.length ? `<div class="hint mail-to">진행 중인 ${esc(c.name)} 기록에 바로 붙이기: ${openRecs.map(r => `<button class="mini" data-mail-to="${esc(t.key)}|${esc(r.id)}" title="${esc(r.title || '')}">${esc(((r.caseNo ? r.caseNo + ' ' : '') + (r.bl ? r.bl + ' ' : '') + (r.title || '')).slice(0, 34))}</button>`).join(' ')}</div>` : ''}
           ${threadSimHTML(t)}
         </div>
-        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
+        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini${c ? '' : ' strong'}" data-mail-client="${esc(t.key)}" title="이 대화의 업체를 직접 정합니다. 의뢰·선적 서류·청구서·필증 근거가 있으면 바로 자동 접수합니다.">${c ? '업체 변경' : '업체 지정'}</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
       </article>`; }).join('')
       : '<p class="empty">새로 연결할 메일이 없습니다.</p>'}
     ${olds.length ? `<details class="old-mails"><summary>기준일(${esc(mailWatchFrom())}) 이전 대화 ${olds.length}건 — 경고에서 제외됨</summary><p class="hint">처음 연결할 때 쌓인 과거 메일입니다. 필요한 것만 위 기준일을 앞당겨 처리하거나, 한 번에 정리하세요.</p><button class="mini" data-mail-old-clear>이전 대화 ${olds.length}건 모두 정리(무시)</button><ul>${olds.slice(0, 50).map(t => `<li><span class="rec-date">${esc(String(t.last.date).slice(0, 10))}</span> ${esc(t.last.subject || '')} <span class="hint">${t.ms.length}통</span></li>`).join('')}${olds.length > 50 ? `<li class="hint">외 ${olds.length - 50}건</li>` : ''}</ul></details>` : ''}
@@ -547,7 +565,7 @@ async function loadMail(manual = true){
   mailLoading = false; renderSidebar(); if(route.name === 'mail') renderView();
 }
 function openAttachMail(t){
-  const c = matchClient(t.ms);
+  const c = threadClient(t);
   const recs = db.records.slice().sort((a, b) => (a.status === '완료') - (b.status === '완료') || (c ? (b.clientId === c.id) - (a.clientId === c.id) : 0) || byDateDesc(a, b)).slice(0, 80);
   if(!recs.length){ toast('붙일 기록이 없습니다. ‘기록 만들기’를 쓰세요.'); return; }
   openDialog({
@@ -563,6 +581,34 @@ function openAttachMail(t){
       toast(`기록에 메일 ${t.ms.length}통을 붙였습니다.${lk.length ? ` 다음부터 ${lk[0]} 메일은 ${clientName(r.clientId)}로 알아봅니다.` : ''}`);
     }
   });
+}
+/* 업체 지정 (11/11 c): 업체를 못 알아봤거나 잘못 알아본 대화를 직원이 정한다. 검색어를 함께 넣으면 다음 메일부터 자동으로 알아본다.
+   지정 후 바로 자동 접수를 돌린다(의뢰·선적 서류·청구서·필증 근거가 있는 대화만 기록이 생김). */
+function openMailClient(t){
+  const c = threadClient(t);
+  const cands = [...new Set(t.ms.flatMap(m => [...consigneeNames(m.subject), ...auditCands([m.subject, m.snippet, m.hints].join(' '), '').filter(x => !x.startsWith('@'))]))].slice(0, 6);
+  openDialog({title:'메일 업체 지정', saveLabel:'지정',
+    body:`<p class="hint">${esc(t.last.subject || '')} (${t.ms.length}통)</p>
+      <label>업체<select name="cid">${opts([['', '업체 선택'], ...sortedClients().map(x => [x.id, x.name])], c ? c.id : '')}</select></label>
+      <label>검색어로도 기억 (선택)<input name="kw" value="${esc(c ? '' : cands[0] || '')}" placeholder="예: 업체 약칭, 영문 수하인명"></label>
+      ${cands.length ? `<p class="hint">메일에서 찾은 이름 후보: ${cands.map(esc).join(', ')}</p>` : ''}
+      <p class="hint">검색어를 넣으면 그 이름이 들어간 다음 메일도 이 업체로 알아봅니다. 포워더·제품 이름은 넣지 마세요(여러 업체 메일에 나옴).</p>`,
+    onSave(fd){
+      const x = db.clients.find(y => y.id === fd.get('cid'));
+      if(!x){ toast('업체를 고르세요.'); return false; }
+      db.mailClient = {...(db.mailClient || {}), [t.key]:x.id};
+      const kw = String(fd.get('kw') || '').trim();
+      if(kw.length >= 2 && !kwList(x).includes(kw.toLowerCase())){ x.keyword = [...String(x.keyword || '').split(/[,;\n]/).map(v => v.trim()).filter(Boolean), kw].join(', '); x.updatedAt = nowIso(); }
+      const made = autoIntake();
+      toast(`${x.name}로 지정했습니다.${kw ? ` 검색어 ‘${kw}’도 기억합니다.` : ''}${made.length ? ` 메일로 ${made.length}건을 자동 접수했습니다.` : ''}`);
+    }});
+}
+function mailToRecord(key, rid){
+  const t = findThread(key), r = db.records.find(x => x.id === rid);
+  if(!t || !r) return;
+  t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
+  addHist(r, `메일 ${t.ms.length}통 연결: “${t.last.subject || ''}”`);
+  commit(); toast(`${clientName(r.clientId)} 기록에 메일 ${t.ms.length}통을 붙였습니다.`);
 }
 function markMailDone(){}
 function seeMail(id){ if(!db.mailSeen.includes(id)) db.mailSeen.push(id); if(db.mailSeen.length > 5000) db.mailSeen = db.mailSeen.slice(-5000); }
@@ -584,6 +630,7 @@ function auditCands(text, from){
   while((m = reE.exec(t))) add(m[1]);
   const reI = /([가-힣A-Za-z]{2,10})\s+[가-힣]{2,4}\s*(?:입니다|드림|올림)/g;
   while((m = reI.exec(t))) add(m[1]);
+  consigneeNames(t).forEach(add);                                         // 포워더 A/N의 수하인 'C/ABC TRADING' (11/11 c)
   const em = String(from || '').toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/);
   if(em && !FREE_MAIL.includes(em[1]) && !isOwn(from)) out.add('@' + em[1]);
   return [...out];
@@ -603,7 +650,7 @@ function auditData(){
   (mailCache || []).forEach(m => {
     if(matchClient(m)) return;                                          // 이미 업체를 알아본 메일은 제외
     if(isOwn(m.fwdFrom || m.from) && !m.fwdFrom) return;                // 우리 회사가 보낸 메일
-    const cs = auditCands([m.subject, m.snippet, m.fromName].join(' '), m.fwdFrom || m.from), dom = cs.find(c => c.startsWith('@')), names = cs.filter(c => !c.startsWith('@'));
+    const cs = auditCands([m.subject, m.snippet, m.hints, m.fromName].join(' '), m.fwdFrom || m.from), dom = cs.find(c => c.startsWith('@')), names = cs.filter(c => !c.startsWith('@'));
     if(dom){ put(dom, {mail:m}); const g = groups.get(dom); if(g){ g.names = [...new Set([...(g.names || []), ...names])]; } }   // 회사 도메인이 있으면 그 도메인으로 묶고 이름은 함께 보관
     else names.forEach(c => put(c, {mail:m}));
   });
@@ -628,12 +675,20 @@ function openAudit(){
     <td class="num">${g.open}<span class="hint"> / ${g.mails.length}</span>${g.files.length ? `<div class="hint">자료 ${g.files.length}</div>` : ''}</td><td class="hint">${esc(g.last)}</td>
     <td class="hint">${esc(g.mails.slice(0, 2).map(m => m.subject).concat(g.files.slice(0, 1).map(f => f.name)).join(' / ').slice(0, 120))}</td>
     <td>${g.domain ? `<div class="hint">${esc(g.domain)}</div>` : ''}${g.similar.map(c => `<button type="button" class="mini" data-x-aud-kw="${i}|${esc(c.id)}" title="검색어에 '${esc(g.name)}'${g.froms.length ? ' 와 보낸 사람 주소' : ''} 추가">${esc(c.name)}에 추가</button>`).join(' ')}
+      <select class="mini" data-x-aud-pick="${i}" title="비슷한 이름이 없을 때(영문 수하인명 등) 기존 업체를 골라 검색어로 추가"><option value="">다른 업체에 추가…</option>${opts(sortedClients().map(c => [c.id, c.name]), '')}</select>
       <button type="button" class="mini strong" data-x-aud-new="${i}">새 업체</button> <button type="button" class="mini" data-x-aud-ign="${i}">무시</button></td></tr>`;
   openDialog({title:'업체 미인식 점검', saveLabel:'닫기', body:`<p class="hint">customs@ 메일 ${(mailCache || []).length}통(최근 수집분)과 자동 수집 미분류 자료 ${(db.collectPending || []).length}건 중 <strong>업체를 알아보지 못한 것</strong>에서 업체 후보를 뽑았습니다. ‘미연결’은 어느 기록에도 붙지 않은 메일 수입니다. 업체명이 아닌 후보(포워더·제품명 등)는 ‘무시’하세요.</p>
     ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>업체 후보</th><th class="num">미연결 / 메일</th><th>최근</th><th>예시</th><th>처리</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>` : '<p class="empty">업체를 알아보지 못한 메일·자료가 없습니다.</p>'}
     <p class="hint">‘○○에 추가’는 그 업체의 검색어에 후보 이름과 보낸 사람 메일 주소(공용 메일이면 주소 전체, 회사 도메인이면 @도메인)를 넣습니다. ‘새 업체’는 업체를 만들고 정보 창을 엽니다. 처리 후 미분류 자료는 자동으로 다시 맞춰 봅니다.</p>`,
     onSave(){ return true; },
     onOpen(f){
+      f.addEventListener('change', e => {
+        const s = e.target.closest('[data-x-aud-pick]'); if(!s || !s.value) return;
+        const g = list[Number(s.dataset.xAudPick)], c = db.clients.find(x => x.id === s.value); if(!g || !c) return;
+        const words = g.name.startsWith('@') ? [] : [g.name];
+        const cur = kwList(c); c.keyword = [...String(c.keyword || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean), ...words.filter(w => !cur.includes(w.toLowerCase()))].join(', '); c.updatedAt = nowIso();
+        s.closest('tr').style.opacity = .4; s.closest('td').innerHTML = `<span class="hint">${esc(c.name)} 검색어에 ‘${esc(words[0] || '')}’ 추가</span>`; commit();
+      });
       f.addEventListener('click', e => {
         const b = e.target.closest('[data-x-aud-kw],[data-x-aud-new],[data-x-aud-ign]'); if(!b) return;
         const d = b.dataset, g = list[Number((d.xAudKw || d.xAudNew || d.xAudIgn).split('|')[0])]; if(!g) return;

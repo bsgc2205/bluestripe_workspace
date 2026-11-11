@@ -180,7 +180,7 @@ function guessItem(text, clientId){
     .sort((a, b) => b.name.length - a.name.length)[0] || null;
 }
 function threadTarget(t){
-  const c = matchClient(t.ms), text = t.ms.map(m => (m.subject || '') + ' ' + stripMailNoise(String(m.snippet || '').slice(0, 300))).join(' ');
+  const c = threadClient(t), text = t.ms.map(m => (m.subject || '') + ' ' + stripMailNoise(String(m.snippet || '').slice(0, 300))).join(' ');
   const it = c ? guessItem(text, c.id) : null, ty = guessType(text, c ? c.id : '');
   return {id:'', clientId:c ? c.id : '', type:ty, typeGuess:true, itemId:it ? it.id : '', title:t.ms.map(m => m.subject || '').join(' '), summary:t.ms.map(m => stripMailNoise(String(m.snippet || '').slice(0, 300))).join('\n'), bl:(t.ms.find(m => m.bl) || {}).bl || '', causes:[], createdBy:'auto'};
 }

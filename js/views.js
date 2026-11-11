@@ -398,20 +398,41 @@ function nameHit(text, compact, w){
   if(/^[\x00-\x7f]+$/.test(w) || w.replace(/\s/g, '').length <= 2) return hasWord(text, w);   // 영문이거나 두 글자 이하는 단어 경계 필요
   return compact.includes(w.replace(/\s+/g, ''));
 }
+/* 줄임 이름 (11/11 c): 메일에서는 '○○일렉트로닉'을 '○○'처럼 업종 꼬리말 없이 쓰는 일이 많다.
+   꼬리말을 뗀 앞부분이 3글자 이상이고, 다른 업체 이름·줄임 이름과 겹치지 않을 때만 쓴다('○○산업기계'·'○○정공'처럼 앞부분이 겹치면 안 씀). */
+const NAME_TAIL = /(일렉트로닉스|일렉트로닉|전자|산업기계|산업|기계|정공|물산|통상|상사|무역|인터내셔널|글로벌|코리아|테크|엠앤디|에스티|이앤비|에프앤비|네트웍스|기업|유기농|화학|케미칼|메디칼|로지스틱스|물류|엔지니어링|시스템|솔루션)+$/;
+let aliasCache = {sig:'', map:new Map()};
+function clientAlias(c){
+  const sig = db.clients.map(x => x.id + ':' + x.name).join('|');
+  if(aliasCache.sig !== sig){
+    const keys = db.clients.map(x => [x.id, nameKey(x.name).replace(/\s+/g, '')]);
+    const raw = keys.map(([id, k]) => { const a = k.replace(NAME_TAIL, ''); return [id, a !== k && a.length >= 3 && /[가-힣]/.test(a) ? a : '']; });
+    const map = new Map();
+    raw.forEach(([id, a]) => {
+      if(!a) return;
+      const clash = raw.some(([j, b]) => j !== id && b && (b.includes(a) || a.includes(b))) || keys.some(([j, k]) => j !== id && k.includes(a));
+      if(!clash) map.set(id, a);
+    });
+    aliasCache = {sig, map};
+  }
+  return aliasCache.map.get(c.id) || '';
+}
 function findClient(text){
   const t = String(text || '').toLowerCase(), compact = t.replace(/[\s_-]+/g, '');
   const addrs = t.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [];
   const tiers = [[], [], []];
   db.clients.forEach(c => {
     const kws = kwList(c), doms = kws.filter(k => k.startsWith('@') && !FREE_MAIL.includes(k.slice(1)));
-    const mails = (c.contacts || []).map(p => String(p.email || '').toLowerCase()).filter(e => e && !FREE_MAIL.includes(e.split('@')[1]));
+    const mails = (c.contacts || []).map(p => String(p.email || '').toLowerCase().trim()).filter(e => e.includes('@'));   // 담당자 주소는 공용 메일(naver·kita.net 등)이어도 주소 전체가 같으면 인정 (11/11 c)
     const m1 = Math.max(0, ...mails.filter(e => addrs.includes(e)).map(e => e.length), ...doms.filter(d => addrs.some(a => a.endsWith(d)) || t.includes(d)).map(d => d.length));
     if(m1) return tiers[0].push([c, m1]);
     const m2 = Math.max(0, ...kws.filter(k => !k.startsWith('@') && nameHit(t, compact, k)).map(k => k.length));
     if(m2) return tiers[1].push([c, m2]);
     const nk = nameKey(c.name), alt = nk.replace(/\s*(코리아|korea)$/i, '').trim();   // '티디에프코리아' → '티디에프'처럼 '코리아'를 뺀 약칭도 인정(3글자 이상)
+    const al = clientAlias(c);
     if(nameHit(t, compact, nk)) tiers[2].push([c, nk.length]);
     else if(alt !== nk && alt.replace(/\s/g, '').length >= 3 && nameHit(t, compact, alt)) tiers[2].push([c, alt.length]);
+    else if(al && nameHit(t, compact, al)) tiers[2].push([c, al.length]);
   });
   for(const tier of tiers){
     if(!tier.length) continue;

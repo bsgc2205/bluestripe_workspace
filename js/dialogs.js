@@ -45,7 +45,7 @@ function openRecord(r, preset = {}){
     tags:[], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[]};
   if(isNew && preset.thread){ preset.mail = preset.thread.ms[preset.thread.ms.length - 1]; }
   if(isNew && preset.mail){
-    const m = preset.mail, c = matchClient(preset.thread ? preset.thread.ms : m);
+    const m = preset.mail, c = preset.thread ? threadClient(preset.thread) : matchClient(m);
     Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:String((preset.thread ? preset.thread.ms[0] : m).date || today()).slice(0, 10), date:status === '완료' ? String(m.date || today()).slice(0, 10) : '', summary:m.snippet || '', bl:m.bl || '', refNo:m.declNo || findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:[]});
     (preset.thread ? preset.thread.ms : [m]).forEach(x => attachMail(rec, x));
     rec.title = String(m.subject || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim() || rec.title;    const txt = (preset.thread ? preset.thread.ms : [m]).map(x => (x.subject || '') + ' ' + String(x.snippet || '').slice(0, 200)).join(' ');
