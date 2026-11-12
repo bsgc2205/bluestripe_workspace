@@ -162,6 +162,7 @@ function autoComplete(r, why){
   const reason = [`${stageName(r, 'customs')} ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
   r.autoDone = {at:nowIso(), reason};
   addHist(r, '자동 완료: ' + reason);
+  if(r.wait){ addHist(r, '대기 해제 (완료)'); delete r.wait; }
   proposeFromRecord(r);
   if(!String(r.summary || '').trim()){
     const ck = (r.checklist || []);
@@ -229,10 +230,10 @@ function evalStages(){
   });
   return {n, done, ck};
 }
-function unsetStage(r, k){
+function unsetStage(r, k, why){
   if(!r.stage) return;
   delete r.stage[k]; delete r.stage[k + 'By']; delete r.stage[k + 'Lv'];
-  addHist(r, `${stageName(r, k)} 표시 취소`);
+  addHist(r, `${stageName(r, k)} 표시 취소${why ? ` (사유: ${why})` : ''}`);
   if(r.autoDone) undoAuto(r);
   r.updatedAt = nowIso();
 }
@@ -511,5 +512,5 @@ function lastActivity(r){
   return ds.sort().slice(-1)[0] || '';
 }
 function staleRecords(){
-  return db.records.filter(r => r.status !== '완료' && r.status !== '보류').map(r => ({r, n:bizDaysSince(lastActivity(r))})).filter(x => x.n >= STALE_DAYS).sort((a, b) => b.n - a.n);
+  return db.records.filter(r => r.status !== '완료' && r.status !== '보류' && !(typeof waitHold === 'function' && waitHold(r))).map(r => ({r, n:bizDaysSince(lastActivity(r))})).filter(x => x.n >= STALE_DAYS).sort((a, b) => b.n - a.n);
 }

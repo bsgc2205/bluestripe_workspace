@@ -500,3 +500,17 @@ td.num.bad{color:var(--act);font-weight:600}
 .stg.chk{color:var(--chk);border-color:var(--chk);border-style:dashed;background:var(--chk-bg)}
 .tag.link-chip{cursor:pointer;color:var(--prog);border-color:var(--prog);background:none;font:inherit;font-size:.74rem}
 .client-updates{margin:.8rem 0}
+/* 케이스 요약 줄·타임라인 (11/13 a) */
+.case-sum{display:flex;flex-wrap:wrap;gap:.25rem .9rem;align-items:baseline;margin:.35rem 0 .2rem;padding:.35rem .55rem;border:1px solid var(--line);border-radius:6px;font-size:.82rem;background:var(--surface)}
+.case-sum .cs-i b{font-weight:600}
+.case-sum .cs-i i{font-style:normal;font-size:.72rem;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:0 .25rem}
+.case-sum .cs-i.bad{color:var(--act)}
+.case-sum .cs-i.ok{color:var(--settle);font-weight:600}
+.case-sum .cs-act{margin-left:auto;display:flex;gap:.7rem}
+.case-sum .cs-act .linkish{font-size:.8rem}
+.cs-mini{margin-top:.15rem;font-size:.76rem}
+.timeline{list-style:none;margin:.5rem 0 0;padding:0;max-height:60vh;overflow:auto}
+.timeline li{padding:.3rem 0;border-bottom:1px solid var(--line);font-size:.85rem}
+.timeline .tl-at{display:inline-block;min-width:8.5rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.tl-chips{margin:0}
+@media (max-width:640px){.case-sum .cs-act{margin-left:0}.timeline .tl-at{display:block;min-width:0}}

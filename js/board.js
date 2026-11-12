@@ -31,9 +31,11 @@ function recPhase(r){
 function setPhase(r, k){
   if(!PHASES.some(p => p[0] === k) || k === 'done') return;
   const a = autoPhase(r);
+  const why = k === a ? '' : askReason(`‘${r.title}’을(를) ${phaseLabel(k)}(으)로 옮기는`);   // 직접 옮길 때 사유 (11/13)
+  if(why === null){ render(); return; }
   if(k === a){ delete r.phase; }
-  else r.phase = {k, auto:a, at:today(), by:me ? me.id : ''};
-  addHist(r, `진행 단계: ${phaseLabel(k)}${k === a ? ' (자동 판정과 같음)' : ' (직접 옮김)'}`);
+  else r.phase = {k, auto:a, at:today(), by:me ? me.id : '', why};
+  addHist(r, `진행 단계: ${phaseLabel(k)}${k === a ? ' (자동 판정과 같음)' : ' (직접 옮김)'}${why ? ` — 사유: ${why}` : ''}`);
   r.updatedAt = nowIso();
   commit();
 }
@@ -45,6 +47,7 @@ function boardCardHTML(r){
     <div class="bd-top">${r.caseNo ? `<span class="hs">${esc(r.caseNo)}</span>` : ''}<span class="tag type">${esc(r.type || '')}</span>${r.status === '보류' ? '<span class="tag">보류</span>' : ''}${c ? cautionBadge(c) : ''}</div>
     <button class="linkish bd-title" data-edit-rec="${esc(r.id)}">${esc(r.title || '(제목 없음)')}</button>
     <div class="hint">${esc(c ? c.name : '업체 미지정')}${r.assignee ? ' · ' + esc(assigneeName(r.assignee)) : ''}${ref ? ' · ' + esc(ref) : ''}</div>
+    ${typeof caseNextLine === 'function' ? caseNextLine(r) : ''}
     <div class="bd-foot">${d ? `${ddayHTML(d.due)} <span class="hint">${esc(d.kind)}</span>` : ''}${r.status !== '완료' ? `<span class="hint${q >= STALE_DAYS ? ' bad' : ''}">${q === 0 ? '오늘 변동' : q + '영업일 전'}</span>` : `<span class="hint">완료 ${esc(r.date || '')}</span>`}</div>
     ${r.status !== '완료' ? `<label class="bd-move"><span class="hint">${ph.auto ? '자동' : '직접'}</span><select data-bd-phase="${esc(r.id)}" aria-label="단계 옮기기">${opts(PHASES.filter(p => p[0] !== 'done'), ph.k)}</select></label>` : ''}
   </article>`;

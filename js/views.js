@@ -43,7 +43,7 @@ function ckItem(rid, kind, i, x){
 function recBand(r){
   if(r.status === '완료') return {k:'done', t:'완료'};
   if(r.status === '보류') return {k:'hold', t:'보류'};
-  const overdue = (r.deadlines || []).some(d => !d.done && daysLeft(d.due) < 0), stale = bizDaysSince(lastActivity(r)) >= STALE_DAYS;
+  const overdue = (r.deadlines || []).some(d => !d.done && daysLeft(d.due) < 0), stale = bizDaysSince(lastActivity(r)) >= STALE_DAYS && !(typeof waitHold === 'function' && waitHold(r));   // 대기 지정·재확인일 전이면 무변동 아님
   if(overdue || stale) return {k:'act', t:overdue ? '지난 기한 있음' : `${STALE_DAYS}영업일 넘게 변화 없음`};
   if(stageOf(r).customs) return {k:'settle', t:`${stageName(r, 'customs')} · 정산 대기`};
   if(isExp(r) && stageOf(r).accept) return {k:'ship', t:'수리완료 · 선적 대기'};
@@ -80,6 +80,7 @@ function recordHTML(r, o = {}){
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
       <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
+      ${active && !o.compact && typeof caseSumHTML === 'function' ? caseSumHTML(r) : ''}
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
       ${active && !o.compact ? suggestHTML(r) + (guideTop ? guide : '') : ''}
@@ -137,6 +138,7 @@ function todayItems(){
   openAlerts().forEach(a => out.push({lvl:'chk', pri:4, kind:'확인 알림', title:a.title, sub:String(a.text || '').split('\n')[0].slice(0, 120), acts:`${alertTargetHTML(a)}<button class="mini strong" data-alert-done="${esc(a.id)}">확인함</button>`}));
   db.records.filter(r => r.status !== '완료' && r.status !== '보류' && mine(r)).forEach(r => suggestions(r).forEach(sg => out.push({lvl:'prog', pri:5, kind:'제안', title:sg.text, sub:recLine(r),
     acts:`<button class="mini strong" data-sug="${esc(r.id)}|${esc(sg.key)}">${esc(sg.label)}</button><button class="mini" data-sug-off="${esc(r.id)}|${esc(sg.key)}">무시</button>`})));
+  if(typeof caseTodayItems === 'function') out.push(...caseTodayItems(mine, recLine));
   staleRecords().filter(x => mine(x.r)).forEach(x => out.push({lvl:'ref', pri:6, kind:'무변동', title:`${x.n}영업일 넘게 메일·자료·기록 변화 없음`, sub:recLine(x.r), acts:`<button class="mini" data-edit-rec="${esc(x.r.id)}">기록</button>`}));
   return out.sort((a, b) => a.pri - b.pri);
 }
@@ -197,7 +199,7 @@ function activeTableHTML(rows){
   return `<div class="table-wrap"><table class="grid act-table"><thead><tr>${th('band', '단계')}${th('caseNo', '케이스')}${th('client', '업체')}${th('title', '제목')}${th('type', '유형')}${th('who', '담당')}${th('dday', '다음 기한')}${th('quiet', '최근 변화')}${th('start', '접수일')}</tr></thead><tbody>
     ${sorted.map(r => { const b = recBand(r), d = nextDl(r), q = bizDaysSince(lastActivity(r)), c = db.clients.find(x => x.id === r.clientId);
       return `<tr class="b-${b.k}"><td><span class="band-dot ${b.k}"></span>${esc(b.t)}</td><td class="hs">${esc(r.caseNo || '')}</td><td>${c ? `<button class="linkish" data-go="client" data-id="${esc(c.id)}">${esc(c.name)}</button>${cautionBadge(c)}` : ''}</td>
-        <td><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.title)}</button>${r.special ? ' <span class="stamp sm">특이</span>' : ''}</td><td>${esc(r.type)}</td><td>${esc(assigneeName(r.assignee) || '-')}</td>
+        <td><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.title)}</button>${r.special ? ' <span class="stamp sm">특이</span>' : ''}${typeof caseNextLine === 'function' ? caseNextLine(r) : ''}</td><td>${esc(r.type)}</td><td>${esc(assigneeName(r.assignee) || '-')}</td>
         <td>${d ? `${ddayHTML(d.due)} <span class="hint">${esc(d.kind)}</span>` : '<span class="hint">-</span>'}</td><td class="${q >= STALE_DAYS ? 'bad' : ''}">${q === 0 ? '오늘' : q + '영업일 전'}</td><td>${esc(r.startDate || '')}</td></tr>`; }).join('')}
   </tbody></table></div>`;
 }

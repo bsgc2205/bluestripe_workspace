@@ -64,6 +64,7 @@ function openRecord(r, preset = {}){
       </div>
       <div class="row2">
         <label>상태<select name="status">${opts(STATUSES, rec.status)}</select></label>
+        ${isNew ? '' : `<label data-x="reasonWrap" hidden>상태 변경 사유 <span class="hint">(보류·재개·완료 되돌림은 필수)</span><input name="statusReason" placeholder="예: 화주 요청으로 선적 연기, 세관 보완 요구로 재개"></label>`}
         <label>품목<select name="itemId"></select></label>
       </div>
       <div class="row2">
@@ -126,6 +127,8 @@ function openRecord(r, preset = {}){
     onSave(fd){
       const before = isNew ? null : histSnap(rec);
       const t = nowIso(), status = fd.get('status'), wasDone = rec.status === '완료' && !isNew;
+      const oldStatus = rec.status, stReason = String(fd.get('statusReason') || '').trim();
+      if(!isNew && status !== oldStatus && status !== '완료' && !stReason){ toast('상태를 바꾸는 사유를 적어 주세요(이력에 남습니다).'); const el = document.querySelector('#dlg [name="statusReason"]'); if(el){ el.closest('label').hidden = false; el.focus(); } return false; }
       if(status === '완료' && !fd.get('date')){toast('완료 상태는 완료일이 필요합니다.'); return false;}
       const rawLinks = lines(fd.get('links'));
       const links = rawLinks.map(safeUrl).filter(Boolean);
@@ -151,7 +154,8 @@ function openRecord(r, preset = {}){
       rec.updatedBy = me ? me.id : '';
       if(usedProc) rec.procId = usedProc;
       if(!rec.lawSnap && status !== '완료') snapLaws(rec);
-      if(isNew) addHist(rec, '기록 생성' + (preset.thread || preset.mail ? ' (customs@ 메일에서)' : '')); else { const ch = histDiff(before, histSnap(rec)); if(ch) addHist(rec, ch); }                // 업무 시작 시점의 근거 법령 시행일 기록 (사후 검증용)
+      if(isNew) addHist(rec, '기록 생성' + (preset.thread || preset.mail ? ' (customs@ 메일에서)' : '')); else { const ch = histDiff(before, histSnap(rec)); if(ch) addHist(rec, ch + (status !== oldStatus && stReason ? ` — 사유: ${stReason}` : '')); }
+      if(status === '완료' && rec.wait){ addHist(rec, '대기 해제 (완료)'); delete rec.wait; }                // 업무 시작 시점의 근거 법령 시행일 기록 (사후 검증용)
       if(status === '완료' && !wasDone){ const pp = proposeFromRecord(rec); if(pp) setTimeout(() => toast('절차와 다른 점이 있어 업무 매뉴얼에 개정 제안을 올렸습니다.'), 900); }
       if(isNew){
         rec.createdAt = t; rec.createdBy = me ? me.id : ''; db.records.push(rec);
@@ -168,6 +172,7 @@ function openRecord(r, preset = {}){
     onOpen(f){
       const N = n => f.elements.namedItem(n), X = n => f.querySelector(`[data-x="${n}"]`);
       const rel = f.querySelector('.related'), spf = f.querySelector('.special-fields');
+      if(X('reasonWrap')) N('status').addEventListener('change', () => { X('reasonWrap').hidden = N('status').value === rec.status || N('status').value === '완료'; });   // 상태를 바꾸면 사유 칸 (11/13)
       const itemSel = N('itemId'), procPick = X('procPick');
       const fillItems = (sel) => {
         const its = db.items.filter(i => i.clientId === N('clientId').value);
