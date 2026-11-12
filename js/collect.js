@@ -105,7 +105,7 @@ const CERT_HINT = /필증|면장|신고서|\d{5}-?\d{2}-?\d{6}|\b\d{6}[A-Z]\b|(^
 function certQueue(){
   const cut = addPeriod(today(), -60, 'd'), q = [];
   (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !x.certTried && x.id) q.push({id:x.id, pend:x, hint:CERT_HINT.test(x.name)}); });
-  db.records.filter(r => r.status !== '완료' || recDate(r) >= cut).forEach(r => (r.files || []).forEach(f => {
+  db.records.filter(r => r.status !== '완료' || recDate(r) >= cut || r.certAgain).forEach(r => (r.files || []).forEach(f => {
     if(/\.pdf$/i.test(f.name || '') && f.id && String(f.id).length > 15 && !(r.certRead || {})[f.id]) q.push({id:f.id, rec:r, file:f, hint:CERT_HINT.test(f.name)});
   }));
   return q.sort((a, b) => b.hint - a.hint).slice(0, 6);
@@ -165,6 +165,95 @@ function fixCertItems(){
   db.settings.fixCertItems = '20261112';
   return n;
 }
+/* ---------- 한 파일에 여러 업체 필증 (11/13 e) ----------
+   수출 폴더는 하루치 수출신고필증·선적서류를 한 PDF(예: 20231112.pdf)로 묶어 두므로, 필증마다 수출화주·수입자로 업체를 나눈다.
+   이 기록 업체의 필증만 이 기록에 반영, 다른 등록 업체의 필증은 그 업체의 같은 신고번호 기록(없으면 완료 기록 새로 — 신고 1건 = 1건)에,
+   등록 안 된 업체의 필증은 미분류(확인함)로. 예전에 첫 업체로 잘못 들어간 품목은 그 품목이 실제로 나온 필증의 업체로 옮긴다. */
+const partyKey = s => normName(String(s || '').replace(/\(?\s*\d{3}-\d{2}-\d{5}\s*\)?/g, '').replace(/[\s.,·()]/g, ''));
+function partyIsClient(party, cid){
+  const c = db.clients.find(x => x.id === cid); if(!c || !party) return false;
+  const p = partyKey(party), n = partyKey(c.name);
+  return !!n && n.length >= 2 && !!p && (p.includes(n) || (p.length >= 2 && n.includes(p)));
+}
+function lineKey(l){ return nameKey(l.trade || l.name || '').replace(/\s/g, ''); }
+function splitPending(x, docs){
+  const set = (o, d) => Object.assign(o, {declNo:d.declNo || o.declNo || '', bl:d.bl || o.bl || '', party:d.party || '', bizNo:d.bizNo || '', kind:d.kind === 'E' ? '수출' : d.kind === 'I' ? '수입' : o.kind});
+  if(docs.length > 1){ x.declNo = ''; x.bl = ''; }
+  set(x, docs[0]);
+  docs.slice(1).forEach(d => { const y = set({...x, splitOf:x.id, path:(x.path || '') + ' (같은 파일의 다른 필증)'}, d); db.collectPending.push(y); });
+}
+function applyCertDocs(r, docs, file){
+  const fname = file.name, out = {made:0};
+  const mine = [], others = [];
+  docs.forEach(d => {
+    const pc = certParty(d);
+    const isMine = pc ? pc.id === r.clientId : (!d.party || partyIsClient(d.party, r.clientId) || (docs.length === 1 && !(d.lines || []).length));
+    (isMine ? mine : others).push({d, pc});
+  });
+  mine.forEach(({d}) => { const a = applyCert2Rec(r, d, fname); out.made += a.made; });
+  const moved = [];
+  others.forEach(({d, pc}) => {
+    if(pc){
+      let t = recordByRef({declNo:d.declNo, bl:d.bl});
+      if(t && t.clientId !== pc.id) t = null;
+      if(!t){
+        t = caseFromItems(pc, [{id:file.id, name:fname, link:file.link || '', created:file.date || recDate(r), kind:d.kind === 'E' ? '수출' : '수입', declNo:d.declNo || '', bl:d.bl || ''}]);
+        t.history.push({at:nowIso(), by:'', text:`같은 파일(${fname})에 묶인 필증에서 생성 — ${clientName(r.clientId)} 기록과 같은 파일`});
+        db.records.push(t);
+      } else addFiles(t, [{id:file.id, name:fname, link:file.link || '', created:file.date || ''}]);
+      t.certRead = {...(t.certRead || {}), [file.id]:today()};
+      const a = applyCert2Rec(t, d, fname); out.made += a.made;
+      moved.push(`${pc.name} ${d.declNo || ''}`);
+    } else {
+      db.collectPending = db.collectPending || [];
+      if(!db.collectPending.some(x => x.id === file.id && x.declNo === d.declNo)) db.collectPending.push({id:file.id, name:fname, link:file.link || '', created:file.date || '', kind:d.kind === 'E' ? '수출' : '수입', path:'(같은 파일의 다른 업체 필증)', declNo:d.declNo || '', bl:d.bl || '', party:d.party || '', bizNo:d.bizNo || '', certTried:true, splitOf:file.id});
+      moved.push(`미등록 업체 ${d.party || '?'} ${d.declNo || ''}`);
+    }
+  });
+  if(others.length){
+    addHist(r, `필증 읽기(${fname}): 한 파일에 필증 ${docs.length}장 — 이 업체 ${mine.length}장만 반영, 다른 업체 ${others.length}장은 나눔: ${moved.join(', ')}`);
+    if(!mine.length) r.certMismatch = {file:fname, declNo:others.map(x => x.d.declNo).filter(Boolean).join(', '), party:others.map(x => x.pc ? x.pc.name : x.d.party).join(', '), at:today()};
+    out.fixed = fixMisplacedItems(r, mine.map(x => x.d), others);
+  }
+  r.updatedAt = nowIso();
+  return out;
+}
+/* 예전에 파일 첫 필증의 업체(=이 기록 업체)로 들어간 품목 중, 실제로는 다른 업체 필증에만 나오는 품목을 그 업체로 옮김 */
+function fixMisplacedItems(r, mineDocs, others){
+  const mineKeys = new Set(mineDocs.flatMap(d => (d.lines || []).map(lineKey)).filter(Boolean));
+  let n = 0;
+  others.forEach(({d, pc}) => (d.lines || []).forEach(ln => {
+    const k = lineKey(ln), hs = hsDigits(ln.hs);
+    if(!k || mineKeys.has(k)) return;
+    db.items.filter(it => it.clientId === r.clientId && it.createdBy === 'auto' && /필증/.test(it.notes || '') && nameKey(it.name).replace(/\s/g, '') === k && (!hs || !hsDigits(it.hs) || hsDigits(it.hs) === hs)).forEach(it => {
+      const was = clientName(it.clientId);
+      if(pc){
+        const dup = db.items.find(x => x.id !== it.id && x.clientId === pc.id && nameKey(x.name).replace(/\s/g, '') === k);
+        db.records.forEach(x => { if(x.itemId === it.id) x.itemId = x.clientId === pc.id && dup ? dup.id : (x.clientId === pc.id ? it.id : ''); });
+        if(dup){ db.items = db.items.filter(x => x.id !== it.id); }
+        else { it.clientId = pc.id; it.notes = `${it.notes} · 업체 바로잡음(${was} → ${pc.name}, 같은 파일의 ${d.kind === 'E' ? '수출화주' : '수입자'} 기준)`; it.ext = null; it.updatedAt = nowIso(); }
+        openAlerts().filter(a => a.tid === it.id).forEach(a => { a.status = 'done'; a.doneAt = nowIso(); a.doneBy = 'auto'; a.doneNote = `품목이 ${pc.name} 필증에서 나온 것이어서 옮겼습니다.`; });
+      } else {
+        if(typeof addAlert === 'function') addAlert({key:`certmix|${it.id}|${d.declNo}`, kind:'certmix', ttype:'item', tid:it.id, title:`다른 업체 필증 품목으로 보임: ${it.name} (${was})`, text:`같은 파일 ${r.title}의 필증 ${d.declNo || ''}(${d.kind === 'E' ? '수출화주' : '수입자'} ${d.party || '?'})에서 나온 품목입니다. 그 업체를 등록해 옮기거나 품목을 지우세요.`});
+      }
+      n++;
+    });
+  }));
+  return n;
+}
+/* 한 번만: 예전에 한 장짜리로 읽은 '날짜 이름' 같은 묶음 PDF(파일명에 신고번호·EXP/IMP 없음)를 다시 읽게 함 */
+function recheckCombined(){
+  if(db.settings.certMulti === '20261113') return 0;
+  let n = 0;
+  db.records.forEach(r => {
+    const fs = (r.files || []).filter(f => /\.pdf$/i.test(f.name || '') && !CERT_HINT.test(f.name || '') && (r.certRead || {})[f.id]);
+    if(!fs.length) return;
+    fs.forEach(f => { delete r.certRead[f.id]; }); r.certAgain = true; n += fs.length;
+  });
+  (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !CERT_HINT.test(x.name || '') && x.certTried && !x.splitOf){ x.certTried = false; n++; } });
+  db.settings.certMulti = '20261113';
+  return n;
+}
 async function certRead(manual){
   const q = certQueue();
   if(!q.length){ if(manual) toast('새로 읽을 필증이 없습니다.'); return null; }
@@ -175,10 +264,11 @@ async function certRead(manual){
   (j.items || []).forEach(res => {
     if(res.later || res.err) return;                                     // 오류는 다음에 다시 시도
     q.filter(x => x.id === res.id).forEach(x => {
-      const d = res.doc;
-      if(x.pend){ x.pend.certTried = true; if(d){ Object.assign(x.pend, {declNo:x.pend.declNo || d.declNo || '', bl:x.pend.bl || d.bl || '', party:d.party || '', bizNo:d.bizNo || ''}); pend++; } return; }
+      const docs = (res.docs && res.docs.length ? res.docs : [res.doc]).filter(d => d && (d.declNo || (d.lines || []).length));   // 한 파일에 필증 여러 장(11/13 e)
+      if(x.pend){ x.pend.certTried = true; if(docs.length){ splitPending(x.pend, docs); pend++; } return; }
       x.rec.certRead = {...(x.rec.certRead || {}), [res.id]:today()};
-      if(d && (d.declNo || (d.lines || []).length)){ const a = applyCert2Rec(x.rec, d, x.file.name); recs++; items += a.made; }
+      if(x.rec.certAgain && (x.rec.files || []).every(f => !/\.pdf$/i.test(f.name || '') || (x.rec.certRead || {})[f.id])) delete x.rec.certAgain;
+      if(docs.length){ const a = applyCertDocs(x.rec, docs, x.file); recs++; items += a.made; }
     });
   });
   const rm = pend ? rematchPending() : null;
@@ -190,6 +280,7 @@ async function certRead(manual){
 async function runCollect(manual){
   try{
     if(manual){ toast('수입·수출 폴더와 BSGC-Backup 변동사항을 확인하는 중입니다…'); await collectApi({collect:1}); await collectApi({weekly:1}); }
+    const rc = recheckCombined(); if(rc) setTimeout(() => toast(`하루치를 한 파일로 묶은 필증 PDF ${rc}개를 필증별 업체로 다시 읽습니다(6개씩).`), 1500);
     const fx = fixCertItems(); if(fx) toast(`필증에서 등록된 품목 ${fx}개의 업체를 바로잡았습니다(필증의 수입자·수출화주 기준).`);
     const j = await collectApi({inbox:1});
     lastCollectRun = j.lastRun || lastCollectRun;
