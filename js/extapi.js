@@ -42,9 +42,22 @@ function alertTargetHTML(a){
   if(a.ttype === 'rec'){ const r = db.records.find(x => x.id === a.tid); return r ? `<button class="mini" data-edit-rec="${esc(r.id)}">기록 열기</button>` : ''; }
   return '';
 }
+/* 조건부 요건만 남은 품목의 세관장확인 알림은 자동으로 정리 (11/12 이전에 쌓인 알림 포함) */
+function tidyCcctAlerts(){
+  let n = 0;
+  openAlerts().filter(a => a.kind === 'ccct' && a.ttype === 'item').forEach(a => {
+    const it = db.items.find(i => i.id === a.tid), e = it && it.ext && it.ext.ccct;
+    if(!e || e.err) return;
+    const sp = ccctSplit(e.list, it);
+    if(sp.rel.length || !sp.cond.length) return;
+    a.status = 'done'; a.doneAt = nowIso(); a.doneBy = 'auto'; a.doneNote = `조건부 요건 — ${sp.cond.map(x => x.cond.need).join(' / ')} (품목 용도상 해당 없음으로 자동 정리)`; n++;
+  });
+  return n;
+}
 function viewAlerts(){
+  if(tidyCcctAlerts()) setTimeout(() => commit(), 0);
   const op = openAlerts().slice().sort((a, b) => b.at.localeCompare(a.at)), done = (db.alerts || []).filter(x => x.status !== 'open').sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || '')).slice(0, 50);
-  const card = a => `<article class="inq${a.status === 'open' ? '' : ' done'}"><div class="inq-head"><span class="tag type">${esc(EXT_NAMES[a.kind] || a.kind)}</span><strong>${esc(a.title)}</strong><span class="hint">${esc(a.at.slice(0, 10))}</span><span class="sp"></span>${alertTargetHTML(a)}${a.status === 'open' ? ` <button class="mini strong" data-alert-done="${esc(a.id)}">확인함</button>` : `<span class="hint">확인 ${esc(accountName(a.doneBy || ''))} ${esc((a.doneAt || '').slice(0, 10))}</span>`}</div>${a.text ? `<p class="pre hint" style="margin:.4rem 0 0">${esc(a.text)}</p>` : ''}</article>`;
+  const card = a => `<article class="inq${a.status === 'open' ? '' : ' done'}"><div class="inq-head"><span class="tag type">${esc(EXT_NAMES[a.kind] || a.kind)}</span><strong>${esc(a.title)}</strong><span class="hint">${esc(a.at.slice(0, 10))}</span><span class="sp"></span>${alertTargetHTML(a)}${a.status === 'open' ? ` <button class="mini strong" data-alert-done="${esc(a.id)}">확인함</button>` : `<span class="hint">${a.doneBy === 'auto' ? '자동 정리' : '확인 ' + esc(accountName(a.doneBy || ''))} ${esc((a.doneAt || '').slice(0, 10))}</span>`}</div>${a.text ? `<p class="pre hint" style="margin:.4rem 0 0">${esc(a.text)}</p>` : ''}${a.doneNote ? `<p class="hint" style="margin:.3rem 0 0">${esc(a.doneNote)}</p>` : ''}</article>`;
   return `<header class="client-head"><div><h2>확인 알림</h2><p class="client-meta">공공데이터 확인에서 바뀐 점(법령 개정, 세관장확인 요건·관세율 변경, 화학물질 분류, 식품원재료 판정)을 모았습니다. 내용을 보고 품목 요건·절차를 고친 뒤 ‘확인함’을 누르세요.</p></div>
       <div class="client-act">${op.length ? `<button class="ghost" data-alert-all>모두 확인함</button>` : ''}</div></header>
     <div class="card-grid">${op.length ? op.map(card).join('') : '<p class="empty">확인할 알림이 없습니다.</p>'}</div><div>
@@ -97,13 +110,49 @@ function summarize(svc, res, p){
   return {raw:rows.map(r => rowText(r))};
 }
 const REQ_TEXT = it => [it.reqs, it.agency, it.notes].join(' ');
+/* 세관장확인 조건부 요건 (11/12): 세관장확인 고시는 HS 단위로 정해 두고, 실제 대상은 용도·성분으로 한정하는 법령이 많다.
+   예) 플라스틱 시트(3920)에 식품위생법·수입식품안전관리 특별법이 걸려 있어도 '식품에 닿는 기구·용기·포장'일 때만 대상.
+   품목 이름·메모·원재료·모델에 그 용도를 뜻하는 말이 있으면 대상으로 보고(yes), 없으면 '조건부 — 해당 없을 가능성'(maybe)으로 따로 보여 주며 알림을 띄우지 않는다.
+   직원이 '해당 없음'을 누르면 it.reqNA에 법령을 남겨 계속 해당 없음으로 본다. 식품 자체(1~22류)는 조건부로 보지 않는다. */
+const CCCT_COND = [
+  {re:/수입식품|식품\s*위생|식품\s*등의|건강기능식품|축산물/, direct:/^(0[1-9]|1\d|2[0-2])/, need:'식품·식품첨가물이거나 식품에 직접 닿는 기구·용기·포장일 때만',
+    yes:/식품|식용|음식|주방|조리|식기|용기|포장재|병마개|빨대|도마|그릇|접시|쟁반|텀블러|컵|뚜껑|보틀|트레이|도시락|밀폐|젖병|(?<![a-z])(food|kitchen|tableware|cutlery|cups?|trays?|lids?|bottles?|containers?|straws?|tumblers?)(?![a-z])/i},
+  {re:/전기용품|생활용품\s*안전|어린이제품/, need:'전기용품·생활용품·어린이제품 안전관리 대상 품목일 때만', yes:/전기|전원|충전|어댑터|램프|조명|히터|완구|어린이|유아|(?<![a-z])(electric|charger|adapter|lamp|heater|toy|baby|kids?)(?![a-z])/i},
+  {re:/전파법/, need:'무선·방송통신기자재(전자파 적합성 대상)일 때만', yes:/무선|블루투스|와이파이|송수신|안테나|전자|(?<![a-z])(rf|wifi|wi-fi|radio|wireless|bluetooth|transmitter|module|electronic)(?![a-z])/i},
+  {re:/약사법|의약품/, need:'의약품·의약외품 용도일 때만', yes:/의약|약품|(?<![a-z])(medic\w*|pharm\w*|drugs?)(?![a-z])/i},
+  {re:/의료기기/, need:'의료기기 용도일 때만', yes:/의료|진단|수술|(?<![a-z])(medical|surgical|diagnos\w*)(?![a-z])/i},
+  {re:/화장품/, need:'화장품 용도일 때만', yes:/화장|크림|로션|세럼|(?<![a-z])(cosmetics?|skin\s*care|cream|lotion|serum)(?![a-z])/i},
+  {re:/화학물질|화평|화관|유해화학/, need:'등록·신고 대상이거나 유해화학물질을 함유할 때만', yes:/화학|용제|(?<![a-z])(chemical|solvent|reagent)(?![a-z])/i, cas:true},
+  {re:/사료/, need:'사료 용도일 때만', yes:/사료|(?<![a-z])(feed|fodder|pet\s*food)(?![a-z])/i},
+  {re:/비료/, need:'비료 용도일 때만', yes:/비료|(?<![a-z])fertili\w*/i},
+  {re:/농약/, need:'농약 용도일 때만', yes:/농약|살충|살균|제초|(?<![a-z])pesticide/i},
+  {re:/위생용품/, need:'위생용품(세척제·일회용품 등) 용도일 때만', yes:/세척|세제|일회용|물티슈|냅킨|기저귀|(?<![a-z])(wipes?|detergent|disposable|diapers?)(?![a-z])/i}
+];
+function ccctCond(x, it){
+  const rule = CCCT_COND.find(c => c.re.test([x.law, x.org, x.doc].join(' ')));
+  if(!rule) return null;
+  if(rule.direct && rule.direct.test(hsDigits(it.hs))) return null;
+  if((it.reqNA || []).includes(x.law)) return {need:rule.need, likely:'na'};
+  if(rule.cas && casList(it.cas).length) return null;                          // CAS가 있는 화학제품은 화학물질 확인으로 따로 봄 — 요건으로 둠
+  const text = [it.name, it.notes, it.reqs, it.raw, it.model, it.maker].join(' ');
+  return rule.yes.test(text) ? null : {need:rule.need, likely:'maybe'};
+}
+/* 실제로 챙길 요건(조건이 없거나 용도상 해당)과 조건부(해당 없을 가능성·해당 없음 확인)로 나눔 */
+function ccctSplit(list, it){
+  const rel = [], cond = [];
+  (list || []).forEach(x => { const c = ccctCond(x, it); if(c) cond.push({...x, cond:c}); else rel.push(x); });
+  return {rel, cond};
+}
+const ccctSig = xs => xs.map(x => x.law + '/' + x.org).sort().join('|');
 function itemAlerts(it, prev, cur){
   const nm = `${it.name} (${clientName(it.clientId)}${it.hs ? ', HS ' + it.hs : ''})`;
   const p0 = prev || {};
   if(cur.ccct && !cur.ccct.err){
-    const was = p0.ccct && !p0.ccct.err && p0.ccct.v === 2 ? p0.ccct.sig : null;   // 표시 형식이 바뀐 예전 결과와는 비교하지 않음
-    if(was !== null && was !== cur.ccct.sig) addAlert({key:`ccct|${it.id}|${cur.ccct.sig}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 요건 변경: ${nm}`, text:`이전: ${(p0.ccct.list || []).map(x => x.law + ' ' + x.org).join(', ') || '없음'}\n현재: ${cur.ccct.list.map(x => x.law + ' ' + x.org).join(', ') || '없음'}`});
-    else if(was === null && cur.ccct.n && !String(it.reqs || '').trim()) addAlert({key:`ccct|${it.id}|${cur.ccct.sig}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 대상인데 품목 요건이 비어 있음: ${nm}`, text:cur.ccct.list.map(x => `${x.law} · ${x.org}${x.doc ? ' · ' + x.doc : ''}${x.from ? ' (' + x.from + '부터)' : ''}`).join('\n')});
+    const prevOk = p0.ccct && !p0.ccct.err && p0.ccct.v === 2;                      // 표시 형식이 바뀐 예전 결과와는 비교하지 않음
+    const now = ccctSplit(cur.ccct.list, it), sigNow = ccctSig(now.rel), was = prevOk ? ccctSig(ccctSplit(p0.ccct.list, it).rel) : null;
+    const condTxt = now.cond.length ? `\n조건부(용도상 해당 없을 가능성): ${now.cond.map(x => `${x.law} — ${x.cond.need}`).join(' / ')}` : '';
+    if(was !== null && was !== sigNow) addAlert({key:`ccct|${it.id}|${sigNow}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 요건 변경: ${nm}`, text:`이전: ${was.replace(/\|/g, ', ').replace(/\//g, ' ') || '없음'}\n현재: ${now.rel.map(x => x.law + ' ' + x.org).join(', ') || '없음'}${condTxt}`});
+    else if(!p0.ccct && now.rel.length && !String(it.reqs || '').trim()) addAlert({key:`ccct|${it.id}|${sigNow}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 대상인데 품목 요건이 비어 있음: ${nm}`, text:now.rel.map(x => `${x.law} · ${x.org}${x.doc ? ' · ' + x.doc : ''}${x.from ? ' (' + x.from + '부터)' : ''}`).join('\n') + condTxt});
   }
   if(cur.trrt && !cur.trrt.err && p0.trrt && !p0.trrt.err && p0.trrt.v === 2 && p0.trrt.sig !== cur.trrt.sig) addAlert({key:`trrt|${it.id}|${cur.trrt.sig.slice(0, 200)}`, kind:'trrt', ttype:'item', tid:it.id, title:`관세율 변경: ${nm}`, text:`이전: ${(p0.trrt.rows || []).join(' / ')}\n현재: ${cur.trrt.rows.join(' / ')}`});
   (cur.chem || []).filter(c => !c.err && c.flags.length).forEach(c => {
@@ -136,6 +185,7 @@ async function checkItemsExt(items, silent){
     itemAlerts(it, it.ext, cur);
     it.ext = cur; it.updatedAt = nowIso();
   });
+  tidyCcctAlerts();
   extBusy = false;
   const setup = [...errs].every(e => /미저장|설정 필요/.test(e)) && errs.size;
   if(setup) db.settings.extPause = today();
@@ -146,7 +196,16 @@ async function checkItemsExt(items, silent){
 function extItemHTML(it, full){
   const e = it.ext; if(!e) return '';
   const out = [];
-  if(e.ccct) out.push(e.ccct.err ? `<span class="kc-chip bad" title="${esc(e.ccct.err)}">세관장확인 오류</span>` : e.ccct.n ? `<span class="kc-chip warn" title="${esc(e.ccct.list.map(x => x.raw).join('\n'))}">세관장확인 ${e.ccct.n}건: ${esc([...new Set(e.ccct.list.map(x => x.law).filter(Boolean))].join(', ') || '내용 보기')}</span>` : '<span class="kc-chip ok">세관장확인 대상 아님</span>');
+  if(e.ccct){
+    if(e.ccct.err) out.push(`<span class="kc-chip bad" title="${esc(e.ccct.err)}">세관장확인 오류</span>`);
+    else if(!e.ccct.n) out.push('<span class="kc-chip ok">세관장확인 대상 아님</span>');
+    else {
+      const sp = ccctSplit(e.ccct.list, it), laws = xs => [...new Set(xs.map(x => x.law).filter(Boolean))];
+      if(sp.rel.length) out.push(`<span class="kc-chip warn" title="${esc(sp.rel.map(x => x.raw).join('\n'))}">세관장확인 ${sp.rel.length}건: ${esc(laws(sp.rel).join(', ') || '내용 보기')}</span>`);
+      laws(sp.cond).forEach(l => { const x = sp.cond.find(y => y.law === l), na = x.cond.likely === 'na';
+        out.push(`<span class="kc-chip${na ? ' ok' : ''}" title="${esc(x.cond.need + '\n' + sp.cond.filter(y => y.law === l).map(y => y.raw).join('\n'))}">${na ? '해당 없음 확인' : '조건부'} · ${esc(l)}${na ? '' : ` — ${esc(x.cond.need)}`} <button type="button" class="mini" data-ccct-na="${esc(it.id)}|${esc(l)}" title="${na ? '다시 요건으로 봄' : '이 품목은 그 용도가 아니어서 요건이 아님'}">${na ? '되돌리기' : '해당 없음'}</button></span>`); });
+    }
+  }
   if(e.hs) out.push(e.hs.err ? `<span class="kc-chip bad" title="${esc(e.hs.err)}">HS 확인 오류</span>` : e.hs.found ? `<span class="kc-chip ok" title="${esc([e.hs.ko, e.hs.en, e.hs.qty && '수량단위 ' + e.hs.qty, e.hs.wt && '중량단위 ' + e.hs.wt].filter(Boolean).join('\n'))}">현행 HS${e.hs.ko ? ' · ' + esc(e.hs.ko.slice(0, 30)) : ''}</span>` : '<span class="kc-chip bad">현행 HS 아님</span>');
   if(e.trrt) out.push(e.trrt.err ? `<span class="kc-chip bad" title="${esc(e.trrt.err)}">관세율 ${/설정 필요/.test(e.trrt.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip" title="${esc(e.trrt.rows.join('\n'))}">관세율 ${esc((e.trrt.rows[0] || '없음').slice(0, 50))}</span>`);
   (e.chem || []).forEach(c => out.push(c.err ? `<span class="kc-chip bad" title="${esc(c.err)}">CAS ${esc(c.cas)} 오류</span>` : `<span class="kc-chip ${c.flags.length ? 'warn' : c.found ? 'ok' : ''}" title="${esc((c.raw || []).join('\n'))}">CAS ${esc(c.cas)}${c.name ? ' ' + esc(c.name) : ''}${c.flags.length ? ' · ' + esc(c.flags.slice(0, 3).join(', ')) : c.found ? '' : ' · 조회 안 됨'}</span>`));
@@ -280,6 +339,7 @@ async function openApiPing(){
     }});
 }
 function autoExtChecks(){
+  if(tidyCcctAlerts()) commit();                                            // 조건부 요건만 남은 세관장확인 알림 정리 (로그인할 때)
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token || db.settings.extPause === today()) return;
   const old = (iso, d) => !iso || daysLeft(String(iso).slice(0, 10)) < -d;
@@ -359,3 +419,13 @@ function snapLaws(rec){
   const laws = lawRefs(p).map(x => { const li = (db.lawInfo || {})[lawKey(x.name)] || {}; return {name:x.name, effect:li.err || li.miss ? '' : (li.effect || ''), promul:li.err || li.miss ? '' : (li.promul || '')}; });
   if(laws.length) rec.lawSnap = {at:today(), procId:p.id, laws};
 }
+
+/* 조건부 세관장확인 '해당 없음' 표시 (품목별 법령) */
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-ccct-na]'); if(!b || !db) return;
+  const [id, law] = b.dataset.ccctNa.split('|'), it = db.items.find(i => i.id === id); if(!it) return;
+  const on = (it.reqNA || []).includes(law);
+  it.reqNA = on ? it.reqNA.filter(x => x !== law) : [...(it.reqNA || []), law];
+  it.updatedAt = nowIso(); tidyCcctAlerts(); commit();
+  toast(on ? `${it.name}: ${law}을(를) 다시 요건으로 봅니다.` : `${it.name}: ${law}은(는) 해당 없음으로 표시했습니다.`);
+});

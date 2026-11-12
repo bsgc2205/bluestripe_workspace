@@ -526,13 +526,13 @@ function viewMail(){
         return `<article class="rec${over ? ' overdue' : ''}">
         <div class="rec-date">${esc(String(m.date).slice(0, 10))}<small>${t.ms.length > 1 ? `${t.ms.length}통 · ${esc(String(first.date).slice(5, 10))}~` : esc(String(m.date).slice(11, 16))}</small></div>
         <div class="rec-body"><h4>${esc(m.subject || '(제목 없음)')}</h4>
-          <div class="rec-meta">${t.f.request ? '<span class="tag new">새 의뢰 후보</span>' : ''}${t.ms.some(certMail) ? `<span class="tag new" title="직원이 필증을 보낸 대화입니다. 업체를 알아보면 다음 불러오기 때 자동 접수됩니다.">필증 송부됨${c ? '' : ' · 업체 지정 필요'}</span>` : ''}${over ? `<span class="tag warn">${Math.floor(t.f.ageH / 24) ? Math.floor(t.f.ageH / 24) + '일' : Math.floor(t.f.ageH) + '시간'} 미연결</span>` : ''}<span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>${cautionBadge(c)}` : '<span class="tag type">업체 미지정</span>'}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+          <div class="rec-meta">${t.f.request ? '<span class="tag new">새 의뢰 후보</span>' : ''}${t.ms.some(certMail) ? `<span class="tag new" title="직원이 필증을 보낸 대화입니다. 업체를 알아보면 다음 불러오기 때 자동 접수됩니다.">필증 송부됨${c ? '' : ' · 업체 지정 필요'}</span>` : ''}${over ? `<span class="tag warn">${Math.floor(t.f.ageH / 24) ? Math.floor(t.f.ageH / 24) + '일' : Math.floor(t.f.ageH) + '시간'} 미연결</span>` : ''}<span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>${cautionBadge(c)}` : '<span class="tag type">업체 미지정</span>'}${typeof threadReviewHTML === 'function' ? threadReviewHTML(t) : ''}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
           ${m.snippet ? `<p class="rec-sum">${esc(m.snippet)}</p>` : ''}
           ${files.length ? `<div class="hint">첨부 ${files.length}개: ${esc(files.slice(0, 6).join(', '))}${files.length > 6 ? ' …' : ''}</div>` : ''}
           ${openRecs.length ? `<div class="hint mail-to">진행 중인 ${esc(c.name)} 기록에 바로 붙이기: ${openRecs.map(r => `<button class="mini" data-mail-to="${esc(t.key)}|${esc(r.id)}" title="${esc(r.title || '')}">${esc(((r.caseNo ? r.caseNo + ' ' : '') + (r.bl ? r.bl + ' ' : '') + (r.title || '')).slice(0, 34))}</button>`).join(' ')}</div>` : ''}
           ${threadSimHTML(t)}
         </div>
-        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini${c ? '' : ' strong'}" data-mail-client="${esc(t.key)}" title="이 대화의 업체를 직접 정합니다. 의뢰·선적 서류·청구서·필증 근거가 있으면 바로 자동 접수합니다.">${c ? '업체 변경' : '업체 지정'}</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
+        <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button>${typeof threadKind === 'function' && (threadKind(t) === 'review' || reviewOf(t.key)) ? `<button class="mini${reviewOf(t.key) ? '' : ' strong'}" data-rv="${esc(t.key)}" title="관세사 검토의견이 필요한 문의 — AI 1차 검토 초안 만들기">1차 검토</button>` : ''}<button class="mini${c ? '' : ' strong'}" data-mail-client="${esc(t.key)}" title="이 대화의 업체를 직접 정합니다. 의뢰·선적 서류·청구서·필증 근거가 있으면 바로 자동 접수합니다.">${c ? '업체 변경' : '업체 지정'}</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
       </article>`; }).join('')
       : '<p class="empty">새로 연결할 메일이 없습니다.</p>'}
     ${olds.length ? `<details class="old-mails"><summary>기준일(${esc(mailWatchFrom())}) 이전 대화 ${olds.length}건 — 경고에서 제외됨</summary><p class="hint">처음 연결할 때 쌓인 과거 메일입니다. 필요한 것만 위 기준일을 앞당겨 처리하거나, 한 번에 정리하세요.</p><button class="mini" data-mail-old-clear>이전 대화 ${olds.length}건 모두 정리(무시)</button><ul>${olds.slice(0, 50).map(t => `<li><span class="rec-date">${esc(String(t.last.date).slice(0, 10))}</span> ${esc(t.last.subject || '')} <span class="hint">${t.ms.length}통</span></li>`).join('')}${olds.length > 50 ? `<li class="hint">외 ${olds.length - 50}건</li>` : ''}</ul></details>` : ''}
@@ -553,11 +553,12 @@ async function loadMail(manual = true){
   try{
     const j = await collectApi({mails:1, days:60});
     mailCache = j.items || []; mailCollectorAt = j.collectorAt || '';
-    const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages();
-    if(n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck){ pruneThreads(); commit(); }
+    if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
+    const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
+    if(n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu){ pruneThreads(); commit(); }
     if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
-    if(n || made.length || ln || cs || ev.done) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`].filter(Boolean).join(' · '));
+    if(n || made.length || ln || cs || ev.done || cu) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '));
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(manual) toast(mailErr);
@@ -608,6 +609,7 @@ function mailToRecord(key, rid){
   if(!t || !r) return;
   t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
   addHist(r, `메일 ${t.ms.length}통 연결: “${t.last.subject || ''}”`);
+  if(typeof applyCautions === 'function') applyCautions();
   commit(); toast(`${clientName(r.clientId)} 기록에 메일 ${t.ms.length}통을 붙였습니다.`);
 }
 function markMailDone(){}
