@@ -74,6 +74,8 @@ function openRecord(r, preset = {}){
         <label>B/L 번호<input name="bl" value="${esc(rec.bl || '')}" placeholder="예: HDMU1234567"></label>
         <label>신고번호<input name="refNo" value="${esc(rec.refNo)}" placeholder="수입·수출 신고번호"></label>
       </div>
+      <label>추가 식별번호 <span class="hint">분할 통관·정정 신고번호, 추가 B/L, 인보이스 번호 — 쉼표로 구분. 같은 화물·같은 의뢰면 한 케이스에 모읍니다(다른 화물은 별도 케이스).</span>
+        <input name="refsExtra" value="${esc((rec.refs || []).map(x => x.no).join(', '))}" placeholder="예: 13675-26-300778M, HDMU7654321"></label>
       <div class="row2">
         <label>담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], rec.assignee || (isNew ? (clientAssignee(rec.clientId) || (me ? me.id : '')) : ''))}</select></label>
         <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
@@ -137,7 +139,7 @@ function openRecord(r, preset = {}){
       Object.assign(rec, {
         clientId: fd.get('clientId'), type: fd.get('type'), status, itemId: fd.get('itemId') || '',
         startDate: fd.get('startDate') || fd.get('date') || today(), date: fd.get('date'),
-        refNo: fd.get('refNo').trim(), bl: String(fd.get('bl') || '').trim().toUpperCase(), fee: feeNum || null, title: fd.get('title').trim(), summary,
+        refNo: fd.get('refNo').trim(), bl: String(fd.get('bl') || '').trim().toUpperCase(), refs: parseRefs(fd.get('refsExtra'), rec.refs), fee: feeNum || null, title: fd.get('title').trim(), summary,
         special: fd.get('special') === 'on', specialNote: fd.get('specialNote').trim(), causes: fd.getAll('cause'),
         checklist, docs: keep(rec.docs || [], lines(fd.get('docs'))), deadlines: dls,
         tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t,

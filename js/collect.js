@@ -21,16 +21,21 @@ function caseFromItems(c, group){
     special: specials.length > 0,
     specialNote: specials.length ? `자동 수집에서 특이 절차로 보이는 자료가 확인됨: ${specials.join(', ')}. 내용을 확인해 무엇이 달랐는지 보완하세요.` : '',
     tags: ['자동수집', ...specials], links, checklist:[], docs:[], deadlines:[], reflected:[],
-    files: group.map(x => ({id:x.id, name:x.name, link:x.link || '', date:x.created || ''})),
+    files: group.map(x => ({id:x.id, name:x.name, link:x.link || '', date:x.created || '', ...(x.ver ? {ver:x.ver} : {})})),
     assignee: clientAssignee(c.id), history: [{at:nowIso(), by:'', text:'자동 수집으로 생성'}],
     createdAt: nowIso(), updatedAt: nowIso(), createdBy: 'auto'
   };
 }
 /* 신고번호·B/L로 기존 기록 찾기: 파일명이 '300777M.pdf'처럼 신고번호 뒷자리뿐이어도 UNI-PASS로 채워진 기록의 신고번호(13675-26-300777M)와 맞춤 */
 const refTail = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+/* 기록의 식별번호 전부(대표 B/L·신고번호 + 분할·정정으로 추가된 refs). kind: 'decl' | 'bl' | 없으면 전부 */
+function recKeys(r, kind){
+  const refs = (r.refs || []).filter(x => !kind || x.kind === kind || (kind === 'bl' && x.kind === 'etc')).map(x => x.no);
+  return (kind === 'decl' ? [r.refNo, ...refs] : kind === 'bl' ? [r.bl, ...refs] : [r.refNo, r.bl, ...refs]).filter(Boolean);
+}
 function refMatch(r, x){
-  const d = refTail(x.declNo), b = refTail(x.bl), rr = refTail(r.refNo), rb = refTail(r.bl);
-  return (d.length >= 7 && !!rr && (rr === d || rr.endsWith(d))) || (b.length >= 6 && !!rb && rb === b);
+  const d = refTail(x.declNo), b = refTail(x.bl);
+  return (d.length >= 7 && recKeys(r, 'decl').map(refTail).some(rr => rr === d || rr.endsWith(d))) || (b.length >= 6 && recKeys(r, 'bl').map(refTail).includes(b));
 }
 function recordByRef(x){
   const hits = db.records.filter(r => refMatch(r, x));
@@ -44,7 +49,7 @@ function clientByBiz(biz){ const b = bizDigits(biz); return b.length === 10 ? db
 /* 자료 묶음을 기록에 넣음: ① 신고번호·B/L이 같은 기록 → ② 파일명·폴더·연결 메일(보낸 사람 포함)로 업체 → ③ 못 찾으면 미분류 */
 function assignItems(list){
   db.collectPending = db.collectPending || [];
-  const groups = {}, attach = {};
+  const groups = {}, attach = {}, logs = {};
   let pend = 0;
   list.forEach(x => {
     const hit = recordByRef(x);
@@ -52,11 +57,15 @@ function assignItems(list){
     const c = clientByBiz(x.bizNo) || matchClientText(collectText(x));
     if(!c){ db.collectPending.push(x); pend++; return; }
     const weekly = !['수입','수출'].includes(x.kind);
-    const k = weekly ? c.id + '|' + x.kind + '|weekly|' + today() : c.id + '|' + x.kind + '|' + (x.bl || x.declNo || x.name);
+    if(weekly){ (logs[c.id + '|' + x.kind] = logs[c.id + '|' + x.kind] || {c, kind:x.kind, list:[]}).list.push(x); return; }   // BSGC-Backup = 백업: 케이스·실적 없이 업체 자료 갱신 이력만
+    if(!refTail(x.bl) && !refTail(x.declNo)){ x.sug = c.id; db.collectPending.push(x); pend++; return; }               // 신고번호·B/L 없는 자료는 케이스를 만들지 않음(필증 읽기 뒤 다시 맞춤)
+    const k = c.id + '|' + x.kind + '|' + (x.bl || x.declNo);
     (groups[k] = groups[k] || {c, list:[]}).list.push(x);
   });
-  let made = 0, sp = 0, upd = 0;
+  let made = 0, sp = 0, upd = 0, log = 0;
+  Object.values(logs).forEach(g => { log += addClientUpdate(g.c, g.kind, g.list); });
   const merge = (ex, c, lst) => {
+    markVersions(ex, lst);
     const nr = caseFromItems(c, lst);
     ex.links = [...new Set([...(ex.links || []), ...nr.links])];
     addFiles(ex, lst);
@@ -66,12 +75,11 @@ function assignItems(list){
   Object.values(attach).forEach(({r, list:lst}) => merge(r, db.clients.find(c => c.id === r.clientId) || {id:r.clientId, name:''}, lst));
   Object.values(groups).forEach(({c, list:lst}) => {
     const f = lst[0];
-    const weekly = !['수입','수출'].includes(f.kind);
-    const ex = weekly ? null : db.records.find(r => r.clientId === c.id && refMatch(r, f));
+    const ex = db.records.find(r => r.clientId === c.id && refMatch(r, f));
     if(ex) merge(ex, c, lst);
     else { const r = caseFromItems(c, lst); db.records.push(r); made++; if(r.special) sp++; }
   });
-  return {made, sp, upd, pend};
+  return {made, sp, upd, pend, log};
 }
 function applyCollected(items){
   db.collectSeen = db.collectSeen || [];
@@ -89,7 +97,7 @@ function rematchPending(){
   if(!p.length) return null;
   db.collectPending = [];
   const r = assignItems(p);
-  return r.made || r.upd ? r : (db.collectPending = p, null);
+  return r.made || r.upd || r.log ? r : (db.collectPending = p, null);
 }
 /* ---------- 필증 읽기 (목표 5): 기록·미분류 자료의 PDF를 Apps Script가 글자 인식으로 읽어 신고번호·B/L·품목(품명·HS·원산지·순중량)을 채운다 ----------
    한 번에 6개씩, 로그인 때와 '지금 확인' 때. 같은 파일은 다시 읽지 않는다(gs 캐시 + r.certRead). */
@@ -117,9 +125,11 @@ function itemFromLine(cid, ln, d){
   return {it, isNew:true};
 }
 function applyCert2Rec(r, d, fname){
-  const ch = [];
+  const ch = [], pc0 = certParty(d), mine = !pc0 || pc0.id === r.clientId;
   if(d.declNo && !r.refNo){ r.refNo = d.declNo; ch.push('신고번호'); }
+  else if(d.declNo && mine && addRef(r, d.declNo, 'decl', `필증 ${fname} — 분할·정정 신고번호`)) ch.push('추가 신고번호');   // 같은 케이스의 두 번째 신고번호는 버리지 않고 refs로
   if(d.bl && !r.bl){ r.bl = d.bl; ch.push('B/L'); }
+  else if(d.bl && mine && addRef(r, d.bl, 'bl', `필증 ${fname}`)) ch.push('추가 B/L');
   if(d.cargoNo && !r.cargoNo){ r.cargoNo = d.cargoNo; ch.push('화물관리번호'); }
   const cl = db.clients.find(c => c.id === r.clientId);                  // 필증의 수입자·수출화주가 이 업체면 사업자번호를 업체 정보에 채움
   if(cl && d.bizNo && !bizDigits(cl.bizNo) && (findClient(d.party || '') === cl || clientByBiz(d.bizNo) === null && nameKey(d.party || '').replace(/\s/g, '').includes(nameKey(cl.name).replace(/\s/g, '')))){ cl.bizNo = d.bizNo; cl.updatedAt = nowIso(); ch.push('업체 사업자번호'); setTimeout(() => checkClientsExt([cl], true), 1500); }
@@ -183,11 +193,11 @@ async function runCollect(manual){
     const j = await collectApi({inbox:1});
     lastCollectRun = j.lastRun || lastCollectRun;
     const r0 = rematchPending(), r1 = applyCollected(j.items || []);
-    const r = r0 || r1 ? {made:(r0 ? r0.made : 0) + (r1 ? r1.made : 0), sp:(r0 ? r0.sp : 0) + (r1 ? r1.sp : 0), upd:(r0 ? r0.upd : 0) + (r1 ? r1.upd : 0), pend:(db.collectPending || []).length} : null;
+    const r = r0 || r1 ? {made:(r0 ? r0.made : 0) + (r1 ? r1.made : 0), sp:(r0 ? r0.sp : 0) + (r1 ? r1.sp : 0), upd:(r0 ? r0.upd : 0) + (r1 ? r1.upd : 0), log:(r0 ? r0.log || 0 : 0) + (r1 ? r1.log || 0 : 0), pend:(db.collectPending || []).length} : null;
     const s2 = applyStatus(j.status);
     if(r || s2){
       commit();
-      const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건, 미분류 ${r.pend}건`, s2 && `주간 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
+      const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건${r.log ? `, 업체 자료 갱신 이력 ${r.log}개` : ''}, 미분류 ${r.pend}건`, s2 && `주간 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
       toast('자동 수집: ' + msg);
     } else if(manual) toast('새로 반영할 자료가 없습니다.');
     setTimeout(() => certRead(false), manual ? 2500 : 4000);
@@ -195,11 +205,12 @@ async function runCollect(manual){
 }
 function viewInbox(){
   const pend = db.collectPending || [];
-  return `<header class="client-head"><div><h2>자동 수집</h2><p class="client-meta">매일 08시 수입·수출 폴더, 매주 월요일 15시 BSGC-Backup 전체 변동사항과 업체 주간 진행현황을 확인해 업체 기록으로 넣습니다. 업체를 알아보지 못한 자료만 여기 남습니다.${db.settings.statusDate ? ` 진행현황 반영 기준일 ${esc(db.settings.statusDate)}.` : ''}</p></div>
+  return `<header class="client-head"><div><h2>자동 수집</h2><p class="client-meta">매일 08시 수입·수출 폴더의 새 자료를 신고번호·B/L이 같은 케이스에 근거 자료로 붙입니다(같은 이름의 수정 자료는 새 버전). 신고번호·B/L이 없거나 업체를 알아보지 못한 자료는 여기 남습니다(업체를 알아본 자료는 추천 업체가 미리 선택됨). 매주 월요일 15시 BSGC-Backup 변동사항은 케이스·실적을 만들지 않고 업체 화면의 ‘자료 갱신 이력’에만 남깁니다.${db.settings.statusDate ? ` 진행현황 반영 기준일 ${esc(db.settings.statusDate)}.` : ''}</p></div>
       <div class="client-act"><button class="ghost" data-mail-audit>업체 미인식 점검</button><button class="primary" data-collect-now>지금 확인</button></div></header>
+    ${updateRecsBanner()}
     ${pend.length ? `<div class="table-wrap" style="margin-top:1rem"><table class="grid"><thead><tr><th>자료</th><th>폴더</th><th>올린 날</th><th>메일</th><th>업체 지정</th></tr></thead><tbody>
       ${pend.map((x,i) => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}${(x.special || []).length ? ` <span class="stamp sm">특이</span>` : ''}</td><td>${esc(x.kind)} / ${esc(x.path)}</td><td>${esc(x.created)}</td><td>${x.mail ? esc(x.mail.subject) : ''}</td>
-        <td><div class="btn-row"><select data-pend-client="${i}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), '')}</select><button class="mini strong" data-pend-apply="${i}">반영</button><button class="mini" data-pend-drop="${i}">무시</button></div></td></tr>`).join('')}
+        <td><div class="btn-row"><select data-pend-client="${i}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), x.sug || '')}</select><button class="mini strong" data-pend-apply="${i}">반영</button><button class="mini" data-pend-drop="${i}">무시</button></div></td></tr>`).join('')}
     </tbody></table></div>` : '<p class="empty">미분류 자료가 없습니다.</p>'}
     <p class="hint">자료는 ① 신고번호·B/L이 같은 기록(파일명이 ‘300777M.pdf’처럼 신고번호 뒷자리뿐이어도 UNI-PASS로 채워진 신고번호와 맞춤) ② 파일명·폴더명·연결된 메일의 업체명·약칭·보낸 사람 메일 순으로 업체를 찾습니다. 업체 정보의 검색어에 약칭과 담당자 메일 주소를 넣고 ‘지금 확인’을 누르면 미분류 자료를 다시 맞춰 봅니다.</p>`;
 }
@@ -234,7 +245,7 @@ function applyPending(i, cid){
   const x = db.collectPending[i], c = db.clients.find(y => y.id === cid);
   if(!x || !c){toast('업체를 고르세요.'); return;}
   const ex = db.records.find(r => r.clientId === c.id && refMatch(r, x));
-  if(ex){ ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(ex, [x]); }
+  if(ex){ markVersions(ex, [x]); ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(ex, [x]); }
   else db.records.push(caseFromItems(c, [x]));
   db.collectPending.splice(i, 1); commit(); toast(`${c.name} 기록으로 넣었습니다.`);
 }

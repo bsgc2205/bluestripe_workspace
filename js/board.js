@@ -51,7 +51,7 @@ function boardCardHTML(r){
 }
 function boardHTML(rows){
   const cut = addPeriod(today(), -PH_DONE_DAYS, 'd');
-  const done = db.records.filter(r => r.status === '완료' && (r.date || '') >= cut && rows.mine(r)).sort(byDateDesc);
+  const done = db.records.filter(r => r.status === '완료' && (r.date || '') >= cut && rows.mine(r) && !isUpdateRec(r)).sort(byDateDesc);
   const by = Object.fromEntries(PHASES.map(([k]) => [k, []]));
   rows.list.forEach(r => by[recPhase(r).k].push(r));
   by.done = done;
@@ -118,7 +118,7 @@ function openWaitList(){
 /* ---------- 업체 업무 처리 내역서 (11/11 d): 업체·기간을 골라 PDF(인쇄)·메일 본문 표로 ----------
    내부 메모(특이 처리 내용·요약)는 넣지 않는다. 진행 상태는 보드 단계와 같고, 완료 건은 완료일. */
 function reportRows(cid, from, to, withOpen, withDone){
-  return db.records.filter(r => r.clientId === cid).filter(r => {
+  return db.records.filter(r => r.clientId === cid && !isUpdateRec(r)).filter(r => {
     if(r.status === '완료') return withDone && (r.date || '') >= from && (r.date || '') <= to;
     return withOpen && (r.startDate || '') <= to;
   }).sort((a, b) => (a.startDate || '').localeCompare(b.startDate || '') || (a.caseNo || '').localeCompare(b.caseNo || ''));

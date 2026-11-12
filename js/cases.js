@@ -69,12 +69,12 @@ function docsHTML(r){
 function filesHTML(r){
   const fs = (r.files || []).filter(f => f.name);
   if(!fs.length) return '';
-  return `<details class="rec-mails"><summary>자료 ${fs.length}개</summary><ul>${fs.map(f => `<li>${safeUrl(f.link) ? `<a href="${esc(f.link)}" target="_blank" rel="noopener noreferrer">${hl(f.name)}</a>` : hl(f.name)} <span class="hint">${esc(f.date || '')}${docType(f.name) ? ' · ' + esc(docType(f.name)) : ''}</span></li>`).join('')}</ul></details>`;
+  return `<details class="rec-mails"><summary>자료 ${fs.length}개</summary><ul>${fs.map(f => `<li>${safeUrl(f.link) ? `<a href="${esc(f.link)}" target="_blank" rel="noopener noreferrer">${hl(f.name)}</a>` : hl(f.name)} <span class="hint">${esc(f.date || '')}${docType(f.name) ? ' · ' + esc(docType(f.name)) : ''}</span>${f.ver ? ` <span class="tag chk" title="같은 이름 자료의 새 버전(정정·수정)">v${f.ver}</span>` : ''}</li>`).join('')}</ul></details>`;
 }
 function addFiles(r, items){
   r.files = r.files || [];
   let n = 0;
-  items.forEach(x => { if(x.name && !r.files.some(f => f.id === x.id || (f.name === x.name && f.link === x.link))){ r.files.push({id:x.id || uid(), name:x.name, link:x.link || '', date:x.created || x.date || ''}); n++; } });
+  items.forEach(x => { if(x.name && !r.files.some(f => f.id === x.id || (f.name === x.name && f.link === x.link))){ r.files.push({id:x.id || uid(), name:x.name, link:x.link || '', date:x.created || x.date || '', ...(x.ver ? {ver:x.ver} : {})}); n++; } });
   return n;
 }
 
@@ -98,18 +98,32 @@ function setLoadDue(r, base, due){
   if(!d) r.deadlines.push({id:uid(), kind:'수출물품 적재기한', base:base || null, due:val, done:false, auto:true});
   else if(d.auto && due && d.due !== due) d.due = due;
 }
-function setStage(r, k, date, by){
+/* lv: 'ok'(확정 — UNI-PASS·필증 파일 메일·정산서 메일·직원 표시) | 'chk'(메일 글만 근거 — 확인 필요, 자동 완료 안 함).
+   이미 'chk'로 표시된 단계에 확정 근거가 오면 등급만 올린다(UNI-PASS 날짜가 있으면 그 날짜로). */
+function setStage(r, k, date, by, lv){
   r.stage = r.stage || {};
-  if(r.stage[k]) return false;
+  lv = lv === 'chk' ? 'chk' : 'ok';
+  if(r.stage[k]){
+    if(r.stage[k + 'Lv'] !== 'chk' || lv !== 'ok') return false;
+    delete r.stage[k + 'Lv'];
+    if(/^UNI-PASS/.test(by) && date) r.stage[k] = String(date).slice(0, 10);
+    r.stage[k + 'By'] = `${r.stage[k + 'By'] || ''} → ${by}`;
+    addHist(r, `${stageName(r, k)} 확인됨 (${by})`);
+    r.updatedAt = nowIso();
+    return true;
+  }
   r.stage[k] = String(date || today()).slice(0, 10); r.stage[k + 'By'] = by;
-  addHist(r, `${stageName(r, k)} ${r.stage[k]} (${by})`);
+  if(lv === 'chk') r.stage[k + 'Lv'] = 'chk';
+  addHist(r, `${stageName(r, k)} ${r.stage[k]} (${by}${lv === 'chk' ? ' — 메일 글만 근거, 확인 필요' : ''})`);
   r.updatedAt = nowIso();
   return true;
 }
 function settleMode(r){ const c = db.clients.find(x => x.id === r.clientId); return (c && c.settleMode) || 'each'; }
 function stageHTML(r){
   const st = stageOf(r), u = r.unipass || {}, out = [];
-  const btn = (k, label) => `<button class="stg ok" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 잘못 표시했으면 눌러서 취소">${label} ${esc(st[k].slice(5))}</button>`;
+  const btn = (k, label) => st[k + 'Lv'] === 'chk'
+    ? `<button class="stg chk" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 메일 글만 근거입니다. UNI-PASS·필증으로 확인되면 자동으로 확정됩니다. 잘못 표시했으면 눌러서 취소">${label}? ${esc(st[k].slice(5))} · 확인 필요</button><button class="mini strong" data-stage-ok="${esc(r.id)}|${k}" title="필증·UNI-PASS로 직접 확인했으면 누르세요">확인 완료</button>`
+    : `<button class="stg ok" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 잘못 표시했으면 눌러서 취소">${label} ${esc(st[k].slice(5))}</button>`;
   if(isExp(r)){
     const ld = (r.deadlines || []).find(x => x.kind === '수출물품 적재기한');
     if(st.accept) out.push(btn('accept', '수리완료'));
@@ -142,6 +156,7 @@ function autoComplete(r, why){
   if(r.cond && r.cond.kind && !r.cond.zero) return false;            // 재수출·재수입 잔량 관리 건은 잔량이 0이 될 때까지 진행 중
   const st = stageOf(r);
   if(!st.customs || !(st.settle || settleMode(r) === 'monthly')) return false;
+  if(st.customsLv === 'chk') return false;                             // 메일 글만 근거인 통관·선적은 UNI-PASS·직원 확인 뒤에 완료
   r.status = '완료';
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
   const reason = [`${stageName(r, 'customs')} ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
@@ -216,7 +231,7 @@ function evalStages(){
 }
 function unsetStage(r, k){
   if(!r.stage) return;
-  delete r.stage[k]; delete r.stage[k + 'By'];
+  delete r.stage[k]; delete r.stage[k + 'By']; delete r.stage[k + 'Lv'];
   addHist(r, `${stageName(r, k)} 표시 취소`);
   if(r.autoDone) undoAuto(r);
   r.updatedAt = nowIso();
@@ -298,6 +313,7 @@ async function checkImport(r, u){
     } else if(j && j.err) u.err = j.err;
   }
   if(!r.refNo && u.dclrNo) r.refNo = u.dclrNo;                         // 신고번호는 관세청 값이므로 바로 넣음
+  else if(u.dclrNo && !hasRef(r, u.dclrNo)) addRef(r, u.dclrNo, 'decl', 'UNI-PASS — 같은 B/L의 다른 신고번호(분할·정정)');
   const decl = kDecl(r.refNo || u.dclrNo);
   if(decl && (u.cleared || !r.bl) && !u.paid){
     try{ const j = await uni('API049', {impDclrNo:decl}); if(pick(j, 'fpayYn') === 'Y'){ u.paid = true; u.paidAt = fmtYmd(pick(j, 'fpayDt')); } else if(pick(j, 'fpayYn')) u.paid = false; }
@@ -398,6 +414,7 @@ async function refreshCustoms(force){
     if(caseCode(r.type) === 'E') await checkExport(r, u); else await checkImport(r, u);
     await checkExtra(r, u);
     r.unipass = u;
+    ledgerCheck(r, u);
     if(before !== JSON.stringify(r.stage || {}) + [u.last, u.mdfy, u.reqRqst, u.condTxt, u.ldp].join('|')) r.updatedAt = nowIso();
   }
   const ev = evalStages();
@@ -450,7 +467,7 @@ function homeWidgetsHTML(){
   const act = db.records.filter(r => r.status !== '완료' && r.status !== '보류');
   const waitP = act.filter(r => isExp(r) && stageOf(r).accept && !stageOf(r).customs).length;
   const waitC = act.filter(r => !stageOf(r).customs).length - waitP, waitS = act.filter(r => stageOf(r).customs && !stageOf(r).settle && settleMode(r) === 'each').length;
-  const ws = weekStart(), doneW = db.records.filter(r => r.status === '완료' && (r.date || '') >= ws).length;
+  const ws = weekStart(), doneW = perfDedupe(db.records.filter(r => r.status === '완료' && (r.date || '') >= ws)).length;
   const auto7 = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).length;
   const ma = mailAlerts(), dls = openDeadlines(), soon = dls.filter(x => { const n = daysLeft(x.d.due); return n >= 0 && n <= 7; }).length, over = dls.filter(x => daysLeft(x.d.due) < 0).length;
   const tile = (go, n, label, sub, warn) => `<button class="tile${warn ? ' warn' : ''}" ${go}><span class="t-n">${n}</span><span class="t-l">${label}</span><span class="t-s">${sub}</span></button>`;

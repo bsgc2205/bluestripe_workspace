@@ -494,3 +494,9 @@ td.num.bad{color:var(--act);font-weight:600}
 .tag.ok-tag{background:var(--settle);color:var(--surface)}
 .tag.chk{color:var(--chk);border-color:var(--chk);background:var(--chk-bg)}
 .tag.ok-tag{border-color:var(--settle)}
+/* 원장·번호 정리 (11/12 e) */
+.notice{margin:.6rem 0;padding:.5rem .7rem;border-left:3px solid var(--chk);background:var(--chk-bg);font-size:.86rem}
+.notice .mini{margin-left:.4rem}
+.stg.chk{color:var(--chk);border-color:var(--chk);border-style:dashed;background:var(--chk-bg)}
+.tag.link-chip{cursor:pointer;color:var(--prog);border-color:var(--prog);background:none;font:inherit;font-size:.74rem}
+.client-updates{margin:.8rem 0}

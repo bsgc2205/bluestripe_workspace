@@ -145,7 +145,8 @@ function viewSearch(){
 
 function monthLabel(ym){const [y,m] = ym.split('-'); return `${y}년 ${Number(m)}월`;}
 function shiftMonth(ym, n){const [y,m] = ym.split('-').map(Number); const t = (m-1) + n; return `${y + Math.floor(t/12)}-${String(((t%12)+12)%12 + 1).padStart(2,'0')}`;}
-function doneIn(ym){return db.records.filter(r => r.status === '완료' && (r.date || '').startsWith(ym));}
+/* 실적 (11/12 e): 완료 기록 중 BSGC-Backup '자료 갱신' 기록은 빼고, 같은 신고번호는 1건 */
+function doneIn(ym){return perfDedupe(db.records.filter(r => r.status === '완료' && (r.date || '').startsWith(ym)));}
 function viewReport(){
   const mon = rptMonth || today().slice(0,7);
   const done = doneIn(mon).sort(byDateDesc);
@@ -263,7 +264,7 @@ function threadBLs(t){
 function recordByBL(b){
   const k = refKey(b);
   if(k.length < 6) return null;
-  const hits = db.records.filter(r => refKey(r.bl) === k);
+  const hits = db.records.filter(r => recKeys(r, 'bl').some(x => refKey(x) === k));
   if(hits.length <= 1) return hits[0] || null;
   const open = hits.filter(r => r.status !== '완료');
   return open.length === 1 ? open[0] : null;
@@ -302,16 +303,18 @@ function certMail(m){
   const byText = /필증|면장/.test(head) && /송부|드립니다|드려요|첨부|보내/.test(head) && !/요청|부탁|주시/.test(String(m.snippet || '').slice(0, 80));
   if(!f && !byText) return null;
   const kind = f ? (f[1].toUpperCase() === 'EXP' ? 'E' : 'I') : /수출|export/i.test(head) ? 'E' : /수입|import/i.test(head) ? 'I' : '';
-  return {kind, decl:mailDecl(m), date:String(m.date || '').slice(0, 10), who:m.fromName || from, fix:/정정/.test(head)};
+  return {kind, decl:mailDecl(m), date:String(m.date || '').slice(0, 10), who:m.fromName || from, fix:/정정/.test(head), byFile:!!f};   // byFile: 필증 파일 첨부(확정) / 글만(확인 필요)
 }
 function applyCert(r, cm){
   const code = caseCode(r.type);
   if(code !== 'E' && code !== 'I') return false;
   let ch = false;
-  if(code === 'E'){ if(setStage(r, 'accept', cm.date, `메일: 필증 송부 (${cm.who})`)){ setLoadDue(r, r.stage.accept); ch = true; } }
-  else if(setStage(r, 'customs', cm.date, `메일: 수입필증 송부 (${cm.who})`)) ch = true;
+  const lv = cm.byFile ? 'ok' : 'chk', how = cm.byFile ? '필증 파일 첨부' : '글만 — 첨부 확인 필요';
+  if(code === 'E'){ if(setStage(r, 'accept', cm.date, `메일: 필증 송부 (${cm.who}, ${how})`, lv)){ setLoadDue(r, r.stage.accept); ch = true; } }
+  else if(setStage(r, 'customs', cm.date, `메일: 수입필증 송부 (${cm.who}, ${how})`, lv)) ch = true;
   if(cm.fix && !(r.tags || []).includes('정정필증')){ r.tags = [...(r.tags || []), '정정필증']; addHist(r, `정정된 필증 송부 메일 (${cm.who}, ${cm.date})`); ch = true; }
   if(!r.refNo && cm.decl){ r.refNo = cm.decl; ch = true; }
+  else if(cm.decl && addRef(r, cm.decl, 'decl', `필증 송부 메일 (${cm.date})${cm.fix ? ' — 정정' : ' — 분할·추가'}`)) ch = true;
   if(ch) r.updatedAt = nowIso();
   return ch;
 }
@@ -458,13 +461,13 @@ function mailRecord(m){
     const r = db.records.find(x => x.id === th);
     if(r){                                                                  // 한 대화에서 B/L별로 기록을 나눈 경우: 메일의 B/L이 그 기록과 다르면 B/L 쪽을 따름
       const bls = mailBLs(m).map(refKey);
-      if(bls.length && r.bl && !bls.includes(refKey(r.bl))){ const rb = recordByBL(bls[0]); if(rb) return rb; }
+      if(bls.length && r.bl && !recKeys(r, 'bl').some(x => bls.includes(refKey(x)))){ const rb = recordByBL(bls[0]); if(rb) return rb; }
       return r;
     }
   }
   const keys = [...new Set([m.bl, ...mailBLs(m), mailDecl(m)].map(refKey).filter(k => k.length >= 6))];
   if(!keys.length) return null;
-  const hits = db.records.filter(r => keys.includes(refKey(r.bl)) || keys.includes(refKey(r.refNo)));
+  const hits = db.records.filter(r => recKeys(r).some(x => keys.includes(refKey(x))));
   if(hits.length <= 1) return hits[0] || null;
   const open = hits.filter(r => r.status !== '완료');
   return open.length === 1 ? open[0] : null;            // 여러 건이면 추측하지 않음
