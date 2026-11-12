@@ -114,6 +114,8 @@ function rvPrompt(ms, rec, c){
   if(c){
     L.push(`- 업체: ${c.name}${c.industry ? ' / ' + c.industry : ''}${cau && cau.level !== '보통' ? ` / 주의 등급 ${cau.level}: ${cau.reasons.join(', ')}` : ''}`);
     if(cc && cc.list.length) L.push(`- 이 업체에서 자주 나온 정정·보완 원인: ${cc.list.map(([k, n]) => `${k} ${n}건`).join(', ')}`);
+    const ins = typeof clientInsights === 'function' ? clientInsights(c) : [];
+    if(ins.length) L.push(`- 업체 특이사항 요약: ${ins.map(x => x.t).join(' / ').slice(0, 600)}`);
     if(c.notes) L.push(`- 업체 메모: ${String(c.notes).replace(/\n/g, ' ').slice(0, 400)}`);
   }
   if(items.length){ L.push('- 이 업체 품목·요건:'); items.forEach(i => L.push(`  · ${i.name}${i.hs ? ' / HS ' + i.hs : ''}${i.reqs ? ' / 요건 ' + String(i.reqs).replace(/\n/g, ' ').slice(0, 120) : ''}${i.tariff ? ' / 세율 ' + i.tariff : ''}`)); }
@@ -145,6 +147,7 @@ function openReview(key, recId){
   const c = rec ? db.clients.find(x => x.id === rec.clientId) : t ? threadClient(t) : null;
   const rv = reviewOf(k) || (rec ? recReview(rec) : null) || {};
   const prompt = rvPrompt(t ? t.ms : [], rec, c), full = t ? t.ms.some(m => reviewStore && reviewStore.get(m.id)) : false;
+  let goDb = false;                                                        // '확인 완료 + DB에 반영' (11/13 d)
   openDialog({title:'1차 검토 초안', saveLabel:'저장',
     body:`<p class="hint">${esc(t ? t.last.subject || '' : rec.title)}${c ? ' · ' + esc(c.name) : ''}${rec && rec.caseNo ? ' · ' + esc(rec.caseNo) : ''}</p>
       <ol class="rv-steps">
@@ -153,7 +156,7 @@ function openReview(key, recId){
           <details><summary class="hint">검토 요청문 보기 (${prompt.length.toLocaleString()}자)</summary><textarea readonly rows="8" class="rv-prompt">${esc(prompt)}</textarea></details></li>
         <li><b>받은 초안 붙여 넣기</b><textarea name="draft" rows="14" placeholder="Claude가 쓴 답을 그대로 붙여 넣으세요. '### 4. 회신 메일 초안' 부분은 아래 버튼으로 따로 복사할 수 있습니다.">${esc(rv.draft || '')}</textarea></li>
         <li><b>관세사 확인 후 회신</b> — 내용을 고친 뒤 회신 초안을 복사해 한비로 메일에 붙여 넣습니다.
-          <div class="rv-act"><button type="button" class="ghost" data-x-rv-reply>회신 초안 복사</button>${isAdmin() ? `<label class="inline"><input type="checkbox" name="done"${rv.status === 'done' ? ' checked' : ''}> 관세사 확인 완료</label>` : (rv.status === 'done' ? '<span class="tag ok-tag">관세사 확인 완료</span>' : '<span class="hint">확인 완료 표시는 관리자(관세사)만 합니다.</span>')}</div></li>
+          <div class="rv-act"><button type="button" class="ghost" data-x-rv-reply>회신 초안 복사</button>${isAdmin() ? `<label class="inline"><input type="checkbox" name="done"${rv.status === 'done' ? ' checked' : ''}> 관세사 확인 완료</label><button type="button" class="ghost" data-x-rv-db title="확인 완료로 저장하고 결론을 세관 질의 DB·품목 DB에 남깁니다">${rv.dbAt && rv.dbAt !== 'skip' ? `DB 반영함(${esc(rv.dbAt)}) · 다시` : '확인 완료 + DB에 반영'}</button>` : (rv.status === 'done' ? '<span class="tag ok-tag">관세사 확인 완료</span>' : '<span class="hint">확인 완료 표시는 관리자(관세사)만 합니다.</span>')}</div></li>
       </ol>
       <p class="hint">AI 초안은 참고용입니다. 품목분류·요건 판단과 회신은 관세사 확인을 거쳐 보내세요. 세관에 질의한 내용이 생기면 ‘세관 질의 DB’에 남겨 다음 검토에 쓰입니다.</p>`,
     onSave(fd){
@@ -172,10 +175,12 @@ function openReview(key, recId){
         rec.updatedAt = nowIso();
       }
       toast(done ? '관세사 확인 완료로 저장했습니다.' : '1차 검토 초안을 저장했습니다.');
+      if(goDb && typeof openReviewDb === 'function') setTimeout(() => openReviewDb(k), 120);
     },
     onOpen(f){
       f.addEventListener('click', async e => {
         if(e.target.closest('[data-x-rv-copy]')){ rvCopy(prompt, '검토 요청문'); return; }
+        if(e.target.closest('[data-x-rv-db]')){ if(!f.elements.namedItem('draft').value.trim()){ toast('초안이 없습니다.'); return; } const d = f.elements.namedItem('done'); if(d) d.checked = true; goDb = true; f.requestSubmit(); return; }
         if(e.target.closest('[data-x-rv-reply]')){ const d = f.elements.namedItem('draft').value, r4 = rvSection(d, 4); if(!d.trim()){ toast('초안이 없습니다.'); return; } rvCopy(r4 || d, r4 ? '회신 메일 초안' : '초안 전체'); return; }
         const ai = e.target.closest('[data-x-rv-ai]');
         if(ai){

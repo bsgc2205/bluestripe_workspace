@@ -263,12 +263,13 @@ function viewClient(){
     </header>
     ${c.address || c.openDate ? `<p class="client-meta">${[c.address, c.openDate && '개업 ' + c.openDate].filter(Boolean).map(esc).join(' / ')}</p>` : ''}
     ${c.notes ? `<p class="client-notes">${esc(c.notes)}</p>` : ''}
+    ${typeof clientInsightHTML === 'function' ? clientInsightHTML(c) : ''}
     ${clientContactsSection(c)}
     ${kcSection(c)}
     <section class="items">
       <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개</span></h3><button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></div>
       ${items.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th><th>요건 기관</th><th></th></tr></thead><tbody>
-        ${items.map(i => `<tr><td><strong>${esc(i.name)}</strong>${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`).join('')}
+        ${items.map(i => `<tr><td><strong>${esc(i.name)}</strong>${typeof itemRiskHTML === 'function' ? itemRiskHTML(i) : ''}${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`).join('')}
       </tbody></table></div>` : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}
     </section>
     ${amendSection(c)}

@@ -58,7 +58,7 @@ function openRecord(r, preset = {}){
   let usedProc = rec.procId || '', procLoaded = '';
   openDialog({
     title: isNew ? (status === '진행중' ? '업무 시작' : '업무 기록 남기기') : `업무 기록 수정${rec.caseNo ? ' · ' + rec.caseNo : ''}`,
-    body: `<div class="row2">
+    body: `<div data-x="cautBox"></div><div class="row2">
         <label>업체<select name="clientId">${opts(sortedClients().map(c => [c.id, c.name]), rec.clientId)}</select></label>
         <label>업무 유형<select name="type">${opts(typeList(rec.type), rec.type)}</select></label>
       </div>
@@ -251,6 +251,9 @@ function openRecord(r, preset = {}){
       };
       dlList.onclick = e => {const b = e.target.closest('[data-x-del]'); if(b){dls.splice(Number(b.dataset.xDel), 1); renderDls();}};
       fillItems(rec.itemId); fillProcs(); upd(); tog(); prev(); renderDls();
+      const caut = () => { const box = X('cautBox'); if(box && typeof cautionBoxHTML === 'function') box.innerHTML = N('status').value === '완료' && !isNew && rec.status === '완료' ? '' : cautionBoxHTML(N('clientId').value, itemSel.value, {...rec, checklist:lines(N('checklist').value).map(text => ({text}))}); };   // 주의 업체·품목 경고 (11/13 d)
+      N('clientId').addEventListener('change', caut); itemSel.addEventListener('change', caut); caut();
+      f.addEventListener('click', e => { if(e.target.closest('[data-x="cautAddCheck"]')){ X('addCheck').click(); caut(); } });
       if(preset.procId){loadProc(preset.procId, false); procPick.value = preset.procId;}
       if(preset.complete){N('status').value = '완료'; stat(); N('summary').focus();}
       else if(isNew) N('title').focus();

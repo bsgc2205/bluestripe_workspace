@@ -546,3 +546,17 @@ li.own{color:var(--prog)}
 .chk-grp .todo{grid-template-columns:minmax(0,1fr) auto}
 .chk-grp .sec-head{flex-wrap:wrap;gap:.2rem .8rem}
 @media (max-width:640px){.chk-grp .todo{grid-template-columns:1fr}}
+/* 주의 경고·업체 특이사항·품목 위험도 (11/13 d) */
+.insight{margin:.8rem 0 1rem;padding:.6rem .8rem;border:1px solid var(--line);border-left:3px solid var(--prog);border-radius:6px;background:var(--surface)}
+.insight ul{margin:.3rem 0 0;padding-left:1.1rem}
+.insight li{margin:.15rem 0;font-size:.88rem}
+.insight li.warn{color:var(--chk)}
+.caut-box{margin:0 0 .8rem;padding:.55rem .75rem;border-radius:6px;border:1px solid var(--chk);background:var(--chk-bg);font-size:.86rem}
+.caut-box.hi{border-color:var(--act)}
+.caut-box.hi strong{color:var(--act)}
+.caut-box ul{margin:.25rem 0;padding-left:1.1rem}
+.caut-box .btn-row{margin-top:.3rem;align-items:center}
+.risk{font-size:.78rem;letter-spacing:-1px;color:var(--muted);white-space:nowrap}
+.risk.r2{color:var(--chk)}
+.risk.r3{color:var(--act)}
+.me-row td{background:var(--surface)}
