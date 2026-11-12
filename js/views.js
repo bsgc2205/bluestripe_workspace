@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- render ---------- */
-function render(){renderSidebar(); renderView(); updateSaveState(); $('#who').textContent = me ? `${me.name} (${me.id})` : ''; $('.side-link[data-go=accounts]').hidden = !isAdmin();}
+function render(){renderSidebar(); renderView(); updateSaveState(); $('#who').textContent = me ? `${me.name} (${me.id})` : ''; const al = $('.side-link[data-go=accounts]'); if(al) al.hidden = !isAdmin();}
 function renderSidebar(){
   document.querySelectorAll('.side-link').forEach(b => b.classList.toggle('on', b.dataset.go === route.name));
   if(['report', 'inbox', 'accounts'].includes(route.name) && $('#navAdmin')) $('#navAdmin').open = true;
@@ -36,8 +36,8 @@ function renderView(){
 }
 function go(name, id){route = {name, id:id || null}; typeFilter = '전체'; render(); window.scrollTo(0,0);}
 
-function ckItem(rid, kind, i, x){
-  return `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${x.done && x.doneAt ? `<small${x.auto ? ` title="자동 체크: ${esc(x.auto)}"` : ''}>${esc(x.doneAt)}${x.auto ? ' · 자동' : ''}</small>` : ''}</span></label></li>`;
+function ckItem(rid, kind, i, x, meta){
+  return `<li class="${x.done ? 'done' : ''}"${meta ? ` title="${esc(stepMetaTitle(meta))}"` : ''}><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${meta && meta.done && !x.done ? ` <small class="hint">완료: ${esc(meta.done)}</small>` : ''}${x.done && x.doneAt ? `<small${x.auto ? ` title="자동 체크: ${esc(x.auto)}"` : ''}>${esc(x.doneAt)}${x.auto ? ' · 자동' : ''}</small>` : ''}</span></label></li>`;
 }
 /* 기록 단계 색 띠: 조치 필요(빨강) · 진행(파랑) · 선적 대기(청록, 수출 수리 후) · 정산 대기(초록) · 보류(회색) */
 function recBand(r){
@@ -62,7 +62,7 @@ function recordHTML(r, o = {}){
   const linkHtml = links.length ? `<div class="links">${links.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(u))}</a>`).join('')}</div>` : '';
   const ckHtml = total && !o.compact ? `<div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
     <details class="ck" data-ck-rec="${esc(r.id)}"${openCk.has(r.id) ? ' open' : ''}><summary>${ck.length ? `단계 ${ckDone}/${ck.length}` : ''}${ck.length && dc.length ? ', ' : ''}${dc.length ? `서류 ${dcDone}/${dc.length}` : ''}</summary>
-      ${ck.length ? `<ul>${ck.map((x,i) => ckItem(r.id,'c',i,x)).join('')}</ul>` : ''}
+      ${ck.length ? `<ul>${ck.map((x,i) => ckItem(r.id,'c',i,x, stepMetaOf(r, x.text))).join('')}</ul>` : ''}
       ${dc.length ? `<p class="ck-sub">필요 서류</p><ul>${dc.map((x,i) => ckItem(r.id,'d',i,x)).join('')}</ul>` : ''}
     </details>` : '';
   const dateCol = active
@@ -79,7 +79,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
       ${active && !o.compact && typeof caseSumHTML === 'function' ? caseSumHTML(r) : ''}
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
@@ -100,11 +100,13 @@ function recordHTML(r, o = {}){
 }
 function procHTML(p, o = {}){
   return `<section class="proc${o.common ? ' is-common' : ''}">
-    <header><span class="tag type">${esc(p.type)}</span><h4>${hl(p.title)}</h4>${o.common ? '<span class="note">공통 절차</span>' : ''}${o.showClient ? `<span class="note">${esc(clientName(p.clientId))}</span>` : ''}
+    <header><span class="tag type">${esc(p.type)}</span><h4>${hl(p.title)}</h4>${o.common ? '<span class="note">공통 절차</span>' : ''}${isOverlay(p) ? '<span class="note">업체 특이사항</span>' : ''}${o.showClient ? `<span class="note">${esc(clientName(p.clientId))}</span>` : ''}<span class="tag">${esc(procVerStr(p))}</span>
       <span class="p-act"><button class="mini" data-start-proc="${esc(p.id)}">이 절차로 시작</button><button class="mini" data-edit-proc="${esc(p.id)}">수정</button></span></header>
-    ${(p.steps || []).length ? `<ol>${p.steps.map(s => `<li>${hl(s)}</li>`).join('')}</ol>` : ''}
+    ${overlayHeadHTML(p)}
+    ${(p.steps || []).length ? procStepsHTML(p, hl) : ''}
     ${p.docs ? `<div class="proc-docs"><strong>필요 서류</strong><p>${hl(p.docs)}</p></div>` : ''}
-    ${p.cautions ? `<div class="proc-caution"><strong>주의</strong><p>${hl(p.cautions)}</p></div>` : ''}
+    ${isOverlay(p) ? (p.ownCautions ? `<div class="proc-caution"><strong>업체 주의</strong><p>${hl(p.ownCautions)}</p></div>` : '') + ((procBase(p) || {}).cautions ? `<div class="proc-caution common"><strong>공통 주의</strong><p>${hl(procBase(p).cautions)}</p></div>` : '')
+      : p.cautions ? `<div class="proc-caution"><strong>주의</strong><p>${hl(p.cautions)}</p></div>` : ''}
     <div class="upd">최종 수정 ${esc((p.updatedAt || '').slice(0,10))}</div>
   </section>`;
 }
@@ -275,7 +277,7 @@ function viewClient(){
     <div class="chips" role="group" aria-label="업무 유형">${['전체', ...types].map(t => `<button class="chip${t === typeFilter ? ' on' : ''}" data-chip="${esc(t)}">${esc(t)}</button>`).join('')}</div>
     <div class="client-grid">
       <section>
-        <div class="sec-head"><h3>처리 절차</h3><button class="mini" data-new-proc data-client="${esc(c.id)}">절차 추가</button></div>
+        <div class="sec-head"><h3>처리 절차</h3><span class="btn-row"><button class="mini" data-new-ov data-client="${esc(c.id)}" title="공통 절차 위에 이 업체만 다른 점을 덧붙임">업체 특이사항 추가</button><button class="mini" data-new-proc data-client="${esc(c.id)}">절차 추가</button></span></div>
         ${fp.length || common.length
           ? fp.map(p => procHTML(p)).join('') + common.map(p => procHTML(p, {common:true})).join('')
           : '<p class="empty">이 업체만의 처리 순서를 정리해 두면 다음 건을 진행할 때 체크리스트로 바로 불러올 수 있습니다.</p>'}

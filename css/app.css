@@ -514,3 +514,35 @@ td.num.bad{color:var(--act);font-weight:600}
 .timeline .tl-at{display:inline-block;min-width:8.5rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .tl-chips{margin:0}
 @media (max-width:640px){.case-sum .cs-act{margin-left:0}.timeline .tl-at{display:block;min-width:0}}
+/* 매뉴얼 3단 (11/13 b) */
+.tag.own{color:var(--prog);border-color:var(--prog);font-size:.7rem;padding:0 .3rem}
+li.own{color:var(--prog)}
+.step-meta{display:flex;flex-wrap:wrap;gap:.1rem .7rem;font-size:.76rem;margin:.05rem 0 .2rem}
+.ov-base{margin:.2rem 0 .4rem}
+.ov-steps{margin:.3rem 0;padding-left:1.4rem}
+.ov-steps li{display:flex;justify-content:space-between;gap:.6rem;align-items:center;padding:.15rem 0;border-bottom:1px solid var(--line)}
+.ov-steps li select{width:auto;flex:none}
+.proc-caution.common{opacity:.85}
+.cv-sec{margin:1rem 0}
+.cv-sec summary{cursor:pointer}
+.cv-sec select{max-width:22rem}
+/* 메뉴 5개·탭·확인함·수집 상태 (11/13 c) */
+.nav-main .side-link{font-weight:500}
+.nav-main .side-link .cnt + .cnt{margin-left:.25rem}
+.nav-tabs{display:flex;flex-wrap:wrap;gap:.25rem;margin:0 0 1rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}
+.nav-tabs.sub{border-bottom:0;margin:-.6rem 0 1rem;padding:0}
+.nav-tab{background:none;border:1px solid transparent;border-radius:6px;padding:.3rem .7rem;font:inherit;font-size:.88rem;color:var(--muted);cursor:pointer}
+.nav-tab:hover{color:var(--ink,inherit);border-color:var(--line)}
+.nav-tab.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+.nav-tab.sm{font-size:.8rem;padding:.2rem .55rem}
+.nav-tab .cnt{font-size:.72rem;margin-left:.2rem}
+.tool-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.8rem}
+.tool-card{display:flex;flex-direction:column;gap:.3rem;text-align:left;padding:1rem;border:1px solid var(--line);border-radius:8px;background:var(--surface);font:inherit;cursor:pointer}
+.tool-card:hover{border-color:var(--accent)}
+.chk-grp{margin:0 0 1.4rem}
+.chk-grp .sec-head .hint{font-size:.8rem}
+.chk-grp .t-act select{max-width:11rem}
+.status-grid .bad-row td{background:var(--chk-bg)}
+.chk-grp .todo{grid-template-columns:minmax(0,1fr) auto}
+.chk-grp .sec-head{flex-wrap:wrap;gap:.2rem .8rem}
+@media (max-width:640px){.chk-grp .todo{grid-template-columns:1fr}}

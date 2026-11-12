@@ -170,7 +170,7 @@ async function certRead(manual){
   if(!q.length){ if(manual) toast('새로 읽을 필증이 없습니다.'); return null; }
   let j;
   try{ j = await collectApi({certread:q.map(x => x.id).join(',')}); }
-  catch(e){ if(manual || !/허용|알 수 없/.test(e.message)) console.warn('필증 읽기', e.message); if(manual) toast('필증을 읽지 못했습니다: ' + e.message); return null; }
+  catch(e){ typeof markRun === 'function' && markRun('cert', false, e.message); if(manual || !/허용|알 수 없/.test(e.message)) console.warn('필증 읽기', e.message); if(manual) toast('필증을 읽지 못했습니다: ' + e.message); return null; }
   let recs = 0, items = 0, pend = 0;
   (j.items || []).forEach(res => {
     if(res.later || res.err) return;                                     // 오류는 다음에 다시 시도
@@ -182,6 +182,7 @@ async function certRead(manual){
     });
   });
   const rm = pend ? rematchPending() : null;
+  typeof markRun === 'function' && markRun('cert', true);
   commit();
   if(recs || items || (rm && (rm.made || rm.upd)) || manual) toast(`필증 읽기: 기록 ${recs}건 반영, 품목 DB ${items}개 추가${rm && (rm.made || rm.upd) ? `, 미분류 자료 ${rm.made + rm.upd}건 업체 확인` : ''}`);
   return {recs, items};
@@ -200,8 +201,9 @@ async function runCollect(manual){
       const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건${r.log ? `, 업체 자료 갱신 이력 ${r.log}개` : ''}, 미분류 ${r.pend}건`, s2 && `주간 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
       toast('자동 수집: ' + msg);
     } else if(manual) toast('새로 반영할 자료가 없습니다.');
+    typeof markRun === 'function' && markRun('drive', true);
     setTimeout(() => certRead(false), manual ? 2500 : 4000);
-  }catch(e){ if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
+  }catch(e){ typeof markRun === 'function' && markRun('drive', false, e.message); if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
 }
 function viewInbox(){
   const pend = db.collectPending || [];

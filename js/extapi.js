@@ -198,7 +198,7 @@ async function checkItemsExt(items, silent){
   if(!silent) toast(`공공데이터 확인 중… 품목 ${plan.length}개`);
   let res;
   try{ res = await extCall(plan.flatMap(x => x.reqs.map(r => ({svc:r.svc, p:r.p})))); }
-  catch(e){ extBusy = false; if(!silent) toast('확인하지 못했습니다: ' + e.message); return; }
+  catch(e){ extBusy = false; typeof markRun === 'function' && markRun('ext', false, e.message); if(!silent) toast('확인하지 못했습니다: ' + e.message); return; }
   let k = 0, nAlert = (db.alerts || []).length, errs = new Set();
   plan.forEach(({it, reqs}) => {
     const cur = {at:nowIso(), chem:[], food:[]};
@@ -214,6 +214,7 @@ async function checkItemsExt(items, silent){
   });
   tidyCcctAlerts();
   extBusy = false;
+  typeof markRun === 'function' && markRun('ext', !(errs.size && errs.size >= plan.length), errs.size ? [...errs][0] : '');
   const setup = [...errs].every(e => /미저장|설정 필요/.test(e)) && errs.size;
   if(setup) db.settings.extPause = today();
   commit();
@@ -279,9 +280,10 @@ async function checkLaws(silent){
   lawBusy = true; if(!silent) toast(`법령 ${list.length}개의 시행일을 확인하는 중…`);
   let res;
   try{ res = await extCall(list.map(r => ({svc:'law', p:{query:r.name, target:r.target}}))); }
-  catch(e){ lawBusy = false; if(!silent) toast('확인하지 못했습니다: ' + e.message); return; }
+  catch(e){ lawBusy = false; typeof markRun === 'function' && markRun('law', false, e.message); if(!silent) toast('확인하지 못했습니다: ' + e.message); return; }
   db.lawInfo = db.lawInfo || {};
   let errs = 0, miss = 0;
+  typeof markRun === 'function' && markRun('law', true);
   list.forEach((r, i) => {
     const x = res[i];
     if(!x || !x.ok){ errs++; db.lawInfo[lawKey(r.name)] = {...(db.lawInfo[lawKey(r.name)] || {}), name:r.name, err:(x && x.error) || '응답 없음', at:nowIso()}; return; }

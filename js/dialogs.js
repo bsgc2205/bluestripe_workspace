@@ -55,7 +55,7 @@ function openRecord(r, preset = {}){
   if(isNew && preset.prefill) Object.assign(rec, preset.prefill);
   if(!db.clients.some(c => c.id === rec.clientId)) rec.clientId = first;
   const dls = (rec.deadlines || []).map(d => ({...d}));
-  let usedProc = rec.procId || '';
+  let usedProc = rec.procId || '', procLoaded = '';
   openDialog({
     title: isNew ? (status === '진행중' ? '업무 시작' : '업무 기록 남기기') : `업무 기록 수정${rec.caseNo ? ' · ' + rec.caseNo : ''}`,
     body: `<div class="row2">
@@ -153,6 +153,7 @@ function openRecord(r, preset = {}){
       });
       rec.updatedBy = me ? me.id : '';
       if(usedProc) rec.procId = usedProc;
+      if(procLoaded) setProcVer(rec, db.procedures.find(x => x.id === procLoaded));
       if(!rec.lawSnap && status !== '완료') snapLaws(rec);
       if(isNew) addHist(rec, '기록 생성' + (preset.thread || preset.mail ? ' (customs@ 메일에서)' : '')); else { const ch = histDiff(before, histSnap(rec)); if(ch) addHist(rec, ch + (status !== oldStatus && stReason ? ` — 사유: ${stReason}` : '')); }
       if(status === '완료' && rec.wait){ addHist(rec, '대기 해제 (완료)'); delete rec.wait; }                // 업무 시작 시점의 근거 법령 시행일 기록 (사후 검증용)
@@ -182,7 +183,7 @@ function openRecord(r, preset = {}){
         const cid = N('clientId').value, ty = N('type').value;
         const ps = db.procedures.filter(p => !p.clientId || p.clientId === cid)
           .sort((a,b) => ((b.type === ty) - (a.type === ty)) || ((!!b.clientId) - (!!a.clientId)));
-        procPick.innerHTML = ps.length ? opts(ps.map(p => [p.id, `${p.title} (${p.clientId ? '업체 전용' : '공통'}, ${p.type})`]), ps[0].id) : '<option value="">불러올 절차가 없습니다</option>';
+        procPick.innerHTML = ps.length ? opts(ps.map(p => [p.id, `${p.title} (${isOverlay(p) ? '업체 특이사항' : p.clientId ? '업체 전용' : '공통'}, ${p.type}, ${procVerStr(p)})`]), ps[0].id) : '<option value="">불러올 절차가 없습니다</option>';
       };
       const upd = () => {rel.innerHTML = relatedHTML({id:rec.id, clientId:N('clientId').value, type:N('type').value, itemId:itemSel.value, title:N('title').value, summary:N('summary').value, bl:N('bl').value, causes:[...f.querySelectorAll('[name=cause]:checked')].map(x => x.value)});
         const sl = rel.querySelector('[data-sims]'), h = X('simHint');
@@ -206,6 +207,7 @@ function openRecord(r, preset = {}){
         const p = db.procedures.find(x => x.id === id); if(!p) return;
         usedProc = p.id;
         if(ask && (N('checklist').value.trim() || N('docs').value.trim()) && !confirm('체크리스트를 이 절차 내용으로 바꿀까요?')) return;
+        procLoaded = p.id;                                                // 저장 때 적용한 매뉴얼 버전을 남김 (11/13 b)
         N('checklist').value = (p.steps || []).join('\n'); N('docs').value = splitDocs(p.docs).join('\n');
         if(p.assignee && accounts.some(a => a.id === p.assignee)) N('assignee').value = p.assignee;
         if((p.dlKinds || []).length){ X('dlKind').value = p.dlKinds[0]; prev(); X('dlPrev').textContent = `이 절차의 기한: ${p.dlKinds.join(', ')} — 기준일이 정해지면 위에서 추가하세요.`; }
@@ -390,6 +392,7 @@ function openLetter(clientId){
 }
 
 function openProc(p, preset = {}){
+  if(isOverlay(p) || preset.overlay) return openOverlay(p, preset);        // 업체 특이사항(공통 위에 덧붙임)은 전용 창 (11/13 b)
   const isNew = !p;
   const pr = p || {id:uid(), clientId:preset.clientId || null, type:preset.type || db.settings.taskTypes[0], title:'', steps:[], docs:'', cautions:''};
   openDialog({
@@ -399,7 +402,8 @@ function openProc(p, preset = {}){
         <label>업무 유형<select name="type">${opts(typeList(pr.type), pr.type)}</select></label>
       </div>
       <label>절차명<input name="title" required value="${esc(pr.title)}" placeholder="예: 수입 사료원료 통관"></label>
-      <label>처리 단계 (한 줄에 한 단계)<textarea name="steps" rows="8" placeholder="선적서류 수령&#10;HS 분류 및 요건 확인&#10;…">${esc((pr.steps || []).join('\n'))}</textarea></label>
+      <p class="hint" data-x="ovHint" hidden>이 업체만 다른 점이 있는 경우라면 공통 절차를 복사하지 말고 <button type="button" class="linkish" data-x="toOv">업체 특이사항으로 만들기</button>(공통 절차 위에 덧붙임 — 공통이 고쳐지면 함께 반영)를 쓰세요.</p>
+      <label>처리 단계 <span class="hint">(한 줄에 한 단계. 단계 조건은 뒤에 ‘ | 완료: … | 자료: … | 담당: … | 예외: … | 시작: …’)</span><textarea name="steps" rows="8" placeholder="선적서류 수령 | 완료: Invoice·PL·B/L 모두 받음 | 자료: Invoice, PL, B/L&#10;HS 분류 및 요건 확인&#10;…">${esc((pr.steps || []).map(x => stepLine(x, pr.stepMeta)).join('\n'))}</textarea></label>
       <label>필요 서류 (쉼표나 줄바꿈으로 구분)<textarea name="docs" rows="3">${esc(pr.docs)}</textarea></label>
       <label>주의사항<textarea name="cautions" rows="4" placeholder="이 업체·업무에서 자주 걸리는 부분">${esc(pr.cautions)}</textarea></label>
       <div class="row2"><label>근거 법령 (한 줄에 하나: 법령명 제00조, 고시명)<textarea name="laws" rows="3" placeholder="관세법 제241조&#10;수입통관 사무처리에 관한 고시">${esc(pr.laws || '')}</textarea></label><label>최종 법령 검토일<input type="date" name="reviewedAt" value="${esc(pr.reviewedAt || '')}"></label></div>
@@ -408,28 +412,92 @@ function openProc(p, preset = {}){
         <div><span class="lbl">챙길 기한</span><div class="cause-grid">${DL_RULES.filter(x => x.base).map(x => `<label class="check"><input type="checkbox" name="dlKinds" value="${esc(x.kind)}"${(pr.dlKinds || []).includes(x.kind) ? ' checked' : ''}> ${esc(x.kind)}</label>`).join('')}</div></div>
       </div>`,
     onSave(fd){
-      const t = nowIso();
-      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: lines(fd.get('steps')), docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), laws: String(fd.get('laws') || '').trim(), reviewedAt: fd.get('reviewedAt') || pr.reviewedAt || '', assignee: fd.get('assignee') || '', dlKinds: fd.getAll('dlKinds'), updatedAt: t});
-      if(isNew){pr.createdAt = t; db.procedures.push(pr); toast('절차를 저장했습니다.');}
-      else toast('절차를 수정했습니다.');
+      const t = nowIso(), ps = parseStepLines(fd.get('steps'));
+      const snap = x => JSON.stringify([x.steps || [], x.docs || '', x.cautions || '', x.laws || '', x.stepMeta || {}, x.clientId || '', x.type]);
+      const before = isNew ? '' : snap(pr);
+      Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: ps.steps, stepMeta: ps.meta, docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), laws: String(fd.get('laws') || '').trim(), reviewedAt: fd.get('reviewedAt') || pr.reviewedAt || '', assignee: fd.get('assignee') || '', dlKinds: fd.getAll('dlKinds'), updatedAt: t});
+      if(isNew){pr.createdAt = t; pr.ver = 1; pr.history = [{at:t, by:me ? me.id : '', text:'작성', ver:1}]; db.procedures.push(pr); toast('절차를 저장했습니다.');}
+      else { if(before !== snap(pr)) bumpProc(pr, '직접 수정'); toast(`절차를 수정했습니다 (${procVerStr(pr)}).`); }
+      if(!pr.clientId) refreshOverlays();
     },
     onDelete: isNew ? null : () => {
       if(!confirm(`‘${pr.title}’ 절차를 삭제할까요?`)) return false;
       db.procedures = db.procedures.filter(x => x.id !== pr.id); toast('절차를 삭제했습니다.');
     },
-    onOpen(f){ if(isNew) f.elements.namedItem('title').focus(); }
+    onOpen(f){
+      const N = n => f.elements.namedItem(n), X = n => f.querySelector(`[data-x="${n}"]`);
+      const sync = () => { X('ovHint').hidden = !N('clientId').value || !db.procedures.some(x => !x.clientId && !isOverlay(x)); };
+      N('clientId').addEventListener('change', sync); sync();
+      X('toOv').onclick = () => { const cid = N('clientId').value, ty = N('type').value; $('#dlg').close(); openOverlay(null, {clientId:cid, type:ty}); };
+      if(isNew) N('title').focus();
+    }
   });
+}
+/* 업체 특이사항 창: 공통 절차 고르기 → 공통 단계마다 '함·필요 시·안 함' → 업체 추가 단계(@번호 = 그 공통 단계 뒤) → 추가 서류·업체 주의 */
+function openOverlay(p, preset = {}){
+  const commons = db.procedures.filter(x => !x.clientId && !isOverlay(x)).sort((a, b) => typeOrder(a.type) - typeOrder(b.type) || a.title.localeCompare(b.title, 'ko'));
+  if(!commons.length){ toast('공통 절차가 없습니다. 공통 절차를 먼저 만드세요.'); return; }
+  const isNew = !p;
+  const ov = p || {id:uid(), clientId:preset.clientId || (sortedClients()[0] || {}).id, overlay:true, baseId:(commons.find(x => x.type === preset.type) || commons[0]).id, addSteps:[], skipSteps:[], optSteps:[], xdocs:'', ownCautions:'', ownMeta:{}, ver:1};
+  const b0 = db.procedures.find(x => x.id === ov.baseId) || commons[0];
+  const addLine = a => { const bs = b0.steps || [], i = bs.findIndex(s => stepKey(s) === a.after); return stepLine(a.text, ov.ownMeta) + (a.after === '^' ? ' @0' : i >= 0 ? ` @${i + 1}` : ''); };
+  openDialog({title:isNew ? '업체 특이사항 추가' : `업체 특이사항 수정 (${procVerStr(ov)})`,
+    body:`<p class="hint">공통 절차를 복사하지 않고, 이 업체만 다른 점(추가 단계·안 하는 단계·추가 서류·주의사항)만 덧붙입니다. 공통 절차가 고쳐지면 이 업체 절차에도 그대로 반영됩니다.</p>
+      <div class="row2"><label>업체<select name="clientId">${opts(sortedClients().map(c => [c.id, c.name]), ov.clientId)}</select></label>
+        <label>공통 절차<select name="baseId">${opts(commons.map(x => [x.id, `${x.type} · ${x.title}`]), b0.id)}</select></label></div>
+      <label>이름 <span class="hint">(비우면 ‘업체명 — 공통 절차명’)</span><input name="title" value="${esc(isNew ? '' : ov.title || '')}"></label>
+      <div class="dlg-section"><h4>공통 단계 — 이 업체에서</h4><div data-x="baseSteps"></div></div>
+      <label>이 업체 추가 단계 <span class="hint">(한 줄에 하나. 끝에 ‘@번호’ = 위 공통 단계 그 번호 뒤, ‘@0’ = 맨 앞, 없으면 맨 끝. 조건은 ‘ | 완료: … | 자료: …’)</span>
+        <textarea name="addSteps" rows="4" placeholder="식품 접촉 부분 시험성적서 확인 @2">${esc((ov.addSteps || []).map(addLine).join('\n'))}</textarea></label>
+      <label>이 업체 추가 서류 <span class="hint">(쉼표로 구분)</span><input name="xdocs" value="${esc(ov.xdocs || '')}"></label>
+      <label>업체 주의사항<textarea name="ownCautions" rows="4" placeholder="이 업체에서 자주 걸리는 부분">${esc(ov.ownCautions || '')}</textarea></label>
+      <label>기본 담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], ov.assignee || '')}</select></label>`,
+    onSave(fd){
+      const b = db.procedures.find(x => x.id === fd.get('baseId')); if(!b){ toast('공통 절차를 고르세요.'); return false; }
+      const bs = b.steps || [], skip = [], opt = [];
+      bs.forEach((s, i) => { const v = fd.get('bs_' + i); if(v === 'skip') skip.push(stepKey(s)); else if(v === 'opt') opt.push(stepKey(s)); });
+      const adds = [], meta = {};
+      lines(fd.get('addSteps')).forEach(l => {
+        const m = /\s*@(\d+)\s*$/.exec(l), ps = parseStepLines(m ? l.slice(0, m.index) : l), t = ps.steps[0];
+        if(!t) return;
+        const n = m ? Number(m[1]) : -1;
+        adds.push({text:t, after:n === 0 ? '^' : n > 0 && bs[n - 1] ? stepKey(bs[n - 1]) : ''});
+        Object.assign(meta, ps.meta);
+      });
+      const cid = fd.get('clientId');
+      const snap = x => JSON.stringify([x.clientId, x.baseId, x.addSteps || [], x.skipSteps || [], x.optSteps || [], x.xdocs || '', x.ownCautions || '', x.ownMeta || {}]);
+      const before = isNew ? '' : snap(ov);
+      Object.assign(ov, {clientId:cid, baseId:b.id, type:b.type, title:String(fd.get('title') || '').trim() || `${clientName(cid)} — ${b.title}`, addSteps:adds, skipSteps:skip, optSteps:opt,
+        xdocs:String(fd.get('xdocs') || '').trim(), ownCautions:String(fd.get('ownCautions') || '').trim(), ownMeta:meta, assignee:fd.get('assignee') || ''});
+      materialize(ov);
+      if(isNew){ const t = nowIso(); Object.assign(ov, {createdAt:t, updatedAt:t, ver:1, history:[{at:t, by:me ? me.id : '', text:`작성 (공통 ‘${b.title}’ 위에)`, ver:1}]}); db.procedures.push(ov); toast('업체 특이사항을 저장했습니다.'); }
+      else { if(before !== snap(ov)) bumpProc(ov, '직접 수정'); toast(`업체 특이사항을 수정했습니다 (${procVerStr(ov)}).`); }
+    },
+    onDelete:isNew ? null : () => {
+      if(!confirm(`‘${ov.title}’ 업체 특이사항을 삭제할까요? (공통 절차는 그대로)`)) return false;
+      db.procedures = db.procedures.filter(x => x.id !== ov.id); toast('업체 특이사항을 삭제했습니다.');
+    },
+    onOpen(f){
+      const N = n => f.elements.namedItem(n), box = f.querySelector('[data-x="baseSteps"]');
+      const draw = () => {
+        const b = db.procedures.find(x => x.id === N('baseId').value), same = b && b.id === ov.baseId;
+        box.innerHTML = b && (b.steps || []).length ? `<ol class="ov-steps">${b.steps.map((s, i) => { const k = stepKey(s), v = same && (ov.skipSteps || []).includes(k) ? 'skip' : same && (ov.optSteps || []).includes(k) ? 'opt' : 'use';
+          return `<li><span>${esc(s)}</span><select name="bs_${i}">${opts([['use', '함'], ['opt', '필요 시'], ['skip', '이 업체는 안 함']], v)}</select></li>`; }).join('')}</ol>` : '<p class="hint">공통 절차에 단계가 없습니다.</p>';
+      };
+      N('baseId').addEventListener('change', draw); draw();
+    }});
 }
 
 function openReflect(rec){
   const targets = db.procedures.filter(p => p.type === rec.type && (p.clientId === rec.clientId || !p.clientId))
     .sort((a,b) => (!!b.clientId) - (!!a.clientId));
   const lastLine = lines(rec.specialNote).slice(-1)[0] || '';
+  const cm = targets.find(p => !p.clientId), ovNew = cm && !overlayFor(rec.clientId, cm) ? cm : null;   // 공통 절차는 있는데 이 업체 특이사항이 없으면 새로 만들 수 있게
   openDialog({
     title: '특이 사례를 절차에 반영',
     saveLabel: '반영',
     body: `<p class="hint">‘${esc(rec.title)}’에서 다음에 적용할 점을 절차의 주의사항에 덧붙입니다. 날짜와 함께 기록되어 어느 사례에서 나온 내용인지 남습니다.</p>
-      <label>반영할 절차<select name="target">${opts([...targets.map(p => [p.id, `${p.title} (${p.clientId ? '업체 전용' : '공통'})`]), ['__new', `새 절차 만들기 (${clientName(rec.clientId)} 전용)`]], targets.find(p => p.clientId)?.id || targets[0]?.id || '__new')}</select></label>
+      <label>반영할 절차<select name="target">${opts([...targets.map(p => [p.id, `${p.title} (${isOverlay(p) ? '업체 특이사항' : p.clientId ? '업체 전용' : '공통'})`]), ...(ovNew ? [['__ov', `업체 특이사항 새로 (${clientName(rec.clientId)} — 공통 ‘${ovNew.title}’ 위에)`]] : []), ['__new', `새 절차 만들기 (${clientName(rec.clientId)} 전용)`]], targets.find(p => p.clientId)?.id || (ovNew ? '__ov' : '') || targets[0]?.id || '__new')}</select></label>
       <label>덧붙일 내용<textarea name="text" rows="4">${esc(lastLine)}</textarea></label>
       <details><summary class="hint">특이 처리 내용 전체 보기</summary><p style="white-space:pre-wrap">${esc(rec.specialNote)}</p></details>`,
     onSave(fd){
@@ -438,11 +506,14 @@ function openReflect(rec){
       const line = `- ${text} (${rec.date || rec.startDate || today()} 사례)`;
       const t = nowIso(); let p;
       if(fd.get('target') === '__new'){
-        p = {id:uid(), clientId:rec.clientId, type:rec.type, title:`${rec.type} 처리 절차`, steps:[], docs:'', cautions:line, createdAt:t, updatedAt:t};
+        p = {id:uid(), clientId:rec.clientId, type:rec.type, title:`${rec.type} 처리 절차`, steps:[], docs:'', cautions:line, ver:1, history:[{at:t, by:me ? me.id : '', text:'특이 사례로 작성', from:rec.caseNo || '', ver:1}], createdAt:t, updatedAt:t};
         db.procedures.push(p);
       } else {
-        p = db.procedures.find(x => x.id === fd.get('target'));
-        p.cautions = (p.cautions ? p.cautions + '\n' : '') + line; p.updatedAt = t;
+        p = fd.get('target') === '__ov' ? newOverlay(rec.clientId, ovNew) : db.procedures.find(x => x.id === fd.get('target'));
+        if(isOverlay(p)){ p.ownCautions = (p.ownCautions ? p.ownCautions + '\n' : '') + line; materialize(p); }
+        else p.cautions = (p.cautions ? p.cautions + '\n' : '') + line;
+        bumpProc(p, `특이 사례를 ${isOverlay(p) ? '업체 ' : ''}주의사항에 추가`, rec.caseNo || '');
+        if(!p.clientId) refreshOverlays();
       }
       rec.reflected = [...new Set([...(rec.reflected || []), p.id])];
       toast(`‘${p.title}’ 주의사항에 반영했습니다.`);

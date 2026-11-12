@@ -122,7 +122,7 @@ function caseSumHTML(r){
     <span class="cs-i cs-next">다음 <b>${esc(nx.t)}</b>${nx.auto ? '' : ' <i>직접</i>'}</span>
     ${waitTxt}${rep ? `<span class="cs-i ok">회신 옴 ${mmdd(rep.date)}</span>` : ''}
     ${la ? `<span class="cs-i hint" title="${esc(la.t)}">최근 ${esc(mmdd(la.at))} ${esc(la.t.slice(0, 30))}</span>` : ''}
-    <span class="cs-act"><button class="linkish" data-cs-wait="${esc(r.id)}" title="누구를 기다리는지·재확인일·다음 조치를 적습니다">대기·다음 조치</button><button class="linkish" data-cs-tl="${esc(r.id)}">타임라인</button></span>
+    <span class="cs-act">${typeof caseToolLinks === 'function' ? caseToolLinks(r) : ''}<button class="linkish" data-cs-wait="${esc(r.id)}" title="누구를 기다리는지·재확인일·다음 조치를 적습니다">대기·다음 조치</button><button class="linkish" data-cs-tl="${esc(r.id)}">타임라인</button></span>
   </div>`;
 }
 function caseNextLine(r){

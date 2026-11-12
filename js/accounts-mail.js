@@ -340,7 +340,7 @@ function applyProcAuto(r){
   const p = procFor(r);
   if(!p) return;
   r.procId = p.id;
-  if(!(r.checklist || []).length) r.checklist = (p.steps || []).map(text => ({text, done:false}));
+  if(!(r.checklist || []).length){ r.checklist = (p.steps || []).map(text => ({text, done:false})); if(typeof setProcVer === 'function') setProcVer(r, p); }
   if(!(r.docs || []).length) r.docs = splitDocs(p.docs).map(text => ({text, done:false}));
   if(!r.assignee && p.assignee && accounts.some(a => a.id === p.assignee)) r.assignee = p.assignee;
 }
@@ -556,6 +556,7 @@ async function loadMail(manual = true){
   try{
     const j = await collectApi({mails:1, days:60});
     mailCache = j.items || []; mailCollectorAt = j.collectorAt || '';
+    if(typeof markRun === 'function') markRun('mail', true);
     if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
     if(n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu){ pruneThreads(); commit(); }
@@ -564,6 +565,7 @@ async function loadMail(manual = true){
     if(n || made.length || ln || cs || ev.done || cu) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '));
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
+    if(typeof markRun === 'function') markRun('mail', false, e.message);
     if(manual) toast(mailErr);
   }
   mailLoading = false; renderSidebar(); if(route.name === 'mail') renderView();

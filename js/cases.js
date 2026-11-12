@@ -418,6 +418,10 @@ async function refreshCustoms(force){
     ledgerCheck(r, u);
     if(before !== JSON.stringify(r.stage || {}) + [u.last, u.mdfy, u.reqRqst, u.condTxt, u.ldp].join('|')) r.updatedAt = nowIso();
   }
+  if(list.length && typeof markRun === 'function'){                         // 수집 상태 (11/13 c): 이번에 확인한 건이 모두 오류면 실패
+    const errs = list.map(r => (r.unipass || {}).err).filter(Boolean);
+    if(errs.length === list.length) markRun('uni', false, errs[0]); else markRun('uni', true);
+  }
   const ev = evalStages();
   if(list.length || ev.n || ev.done || ev.ck){ commit(); if(ev.done) toast(`통관·정산이 확인된 ${ev.done}건을 자동으로 완료했습니다.`); }
 }
