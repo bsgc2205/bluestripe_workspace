@@ -45,6 +45,12 @@ function alertTargetHTML(a){
 /* 조건부 요건만 남은 품목의 세관장확인 알림은 자동으로 정리 (11/12 이전에 쌓인 알림 포함) */
 function tidyCcctAlerts(){
   let n = 0;
+  openAlerts().filter(a => ['ccct', 'trrt', 'food'].includes(a.kind) && a.ttype === 'item').forEach(a => {   // 수출 품목에 수입 기준으로 띄운 알림 (11/12)
+    const it = db.items.find(i => i.id === a.tid);
+    if(!it || itemDir(it) !== 'E' || a.imex === '1') return;
+    a.status = 'done'; a.doneAt = nowIso(); a.doneBy = 'auto'; a.doneNote = '수출 품목이라 수입 요건·관세율·식품원재료 알림을 정리했습니다(수출 세관장확인으로 다시 확인).'; n++;
+    if(it.ext && it.ext.ccct && it.ext.ccct.imex !== '1') it.ext.at = '';    // 다음 자동 확인 때 수출 기준으로 다시 조회
+  });
   openAlerts().filter(a => a.kind === 'ccct' && a.ttype === 'item').forEach(a => {
     const it = db.items.find(i => i.id === a.tid), e = it && it.ext && it.ext.ccct;
     if(!e || e.err) return;
@@ -65,11 +71,31 @@ function viewAlerts(){
 }
 
 /* ---------- 품목: 관세율·세관장확인·화학물질·식품원재료 (P2-D) ---------- */
+/* 품목 수출입 구분 (11/12): 수출만 하는 품목에 수입 세관장확인·관세율·식품원재료를 확인해 엉뚱한 수입요건 알림이 뜨던 문제.
+   직접 지정(it.dir: I·E·IE) → 필증에서 등록될 때의 구분(it.dirs) → 이 품목을 쓴 기록의 유형 → 업체 기록이 수출뿐이면 수출. 모르면 수입. */
+let dirCache = {stamp:'', byItem:new Map(), byClient:new Map()};
+function itemDir(it){
+  if(it.dir) return it.dir;
+  const stamp = (db.meta.updatedAt || '') + '|' + db.records.length;
+  if(dirCache.stamp !== stamp){
+    const byItem = new Map(), byClient = new Map(), add = (m, k, v) => { if(!m.has(k)) m.set(k, new Set()); m.get(k).add(v); };
+    db.records.forEach(r => { const k = caseCode(r.type); if(k !== 'I' && k !== 'E') return; if(r.itemId) add(byItem, r.itemId, k); add(byClient, r.clientId, k); });
+    dirCache = {stamp, byItem, byClient};
+  }
+  const s = new Set([...(it.dirs || []), ...(dirCache.byItem.get(it.id) || [])]);
+  if(!s.size){ const cs = dirCache.byClient.get(it.clientId); if(cs && cs.size === 1) cs.forEach(k => s.add(k)); }
+  return s.has('I') && s.has('E') ? 'IE' : s.has('E') ? 'E' : 'I';
+}
+const DIR_LABEL = {I:'수입', E:'수출', IE:'수출입'};
 function itemReqs(it){
-  const hs = hsDigits(it.hs), out = [];
-  if(hs.length === 10){ out.push({svc:'ccct', key:'ccct', p:{hs, imex:'2'}}); out.push({svc:'trrt', key:'trrt', p:{hs}}); out.push({svc:'hs', key:'hs', p:{hs}}); }
+  const hs = hsDigits(it.hs), out = [], exp = itemDir(it) === 'E';
+  if(hs.length === 10){
+    out.push({svc:'ccct', key:'ccct', p:{hs, imex:exp ? '1' : '2'}});                    // 수출 품목은 수출 세관장확인(수출 요건)만
+    if(!exp) out.push({svc:'trrt', key:'trrt', p:{hs}});
+    out.push({svc:'hs', key:'hs', p:{hs}});
+  }
   casList(it.cas).forEach(c => out.push({svc:'chem', key:'chem:' + c, p:{by:'2', q:c}}));
-  lines(it.raw).map(x => x.replace(/\s*\(.*?\)\s*/g, ' ').trim()).filter(x => x.length >= 2).slice(0, 10).forEach(n => out.push({svc:'food', key:'food:' + n, p:{name:n}}));
+  if(!exp) lines(it.raw).map(x => x.replace(/\s*\(.*?\)\s*/g, ' ').trim()).filter(x => x.length >= 2).slice(0, 10).forEach(n => out.push({svc:'food', key:'food:' + n, p:{name:n}}));
   return out;
 }
 function summarize(svc, res, p){
@@ -148,11 +174,12 @@ function itemAlerts(it, prev, cur){
   const nm = `${it.name} (${clientName(it.clientId)}${it.hs ? ', HS ' + it.hs : ''})`;
   const p0 = prev || {};
   if(cur.ccct && !cur.ccct.err){
-    const prevOk = p0.ccct && !p0.ccct.err && p0.ccct.v === 2;                      // 표시 형식이 바뀐 예전 결과와는 비교하지 않음
+    const prevOk = p0.ccct && !p0.ccct.err && p0.ccct.v === 2 && (p0.ccct.imex || '2') === (cur.ccct.imex || '2');   // 표시 형식·수출입 구분이 바뀐 예전 결과와는 비교하지 않음
+    const ie = cur.ccct.imex === '1' ? '수출 ' : '';
     const now = ccctSplit(cur.ccct.list, it), sigNow = ccctSig(now.rel), was = prevOk ? ccctSig(ccctSplit(p0.ccct.list, it).rel) : null;
     const condTxt = now.cond.length ? `\n조건부(용도상 해당 없을 가능성): ${now.cond.map(x => `${x.law} — ${x.cond.need}`).join(' / ')}` : '';
-    if(was !== null && was !== sigNow) addAlert({key:`ccct|${it.id}|${sigNow}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 요건 변경: ${nm}`, text:`이전: ${was.replace(/\|/g, ', ').replace(/\//g, ' ') || '없음'}\n현재: ${now.rel.map(x => x.law + ' ' + x.org).join(', ') || '없음'}${condTxt}`});
-    else if(!p0.ccct && now.rel.length && !String(it.reqs || '').trim()) addAlert({key:`ccct|${it.id}|${sigNow}`, kind:'ccct', ttype:'item', tid:it.id, title:`세관장확인 대상인데 품목 요건이 비어 있음: ${nm}`, text:now.rel.map(x => `${x.law} · ${x.org}${x.doc ? ' · ' + x.doc : ''}${x.from ? ' (' + x.from + '부터)' : ''}`).join('\n') + condTxt});
+    if(was !== null && was !== sigNow) addAlert({key:`ccct|${it.id}|${sigNow}`, kind:'ccct', imex:cur.ccct.imex || '2', ttype:'item', tid:it.id, title:`${ie}세관장확인 요건 변경: ${nm}`, text:`이전: ${was.replace(/\|/g, ', ').replace(/\//g, ' ') || '없음'}\n현재: ${now.rel.map(x => x.law + ' ' + x.org).join(', ') || '없음'}${condTxt}`});
+    else if(!p0.ccct && now.rel.length && !String(it.reqs || '').trim()) addAlert({key:`ccct|${it.id}|${sigNow}`, kind:'ccct', imex:cur.ccct.imex || '2', ttype:'item', tid:it.id, title:`${ie}세관장확인 대상인데 품목 요건이 비어 있음: ${nm}`, text:now.rel.map(x => `${x.law} · ${x.org}${x.doc ? ' · ' + x.doc : ''}${x.from ? ' (' + x.from + '부터)' : ''}`).join('\n') + condTxt});
   }
   if(cur.trrt && !cur.trrt.err && p0.trrt && !p0.trrt.err && p0.trrt.v === 2 && p0.trrt.sig !== cur.trrt.sig) addAlert({key:`trrt|${it.id}|${cur.trrt.sig.slice(0, 200)}`, kind:'trrt', ttype:'item', tid:it.id, title:`관세율 변경: ${nm}`, text:`이전: ${(p0.trrt.rows || []).join(' / ')}\n현재: ${cur.trrt.rows.join(' / ')}`});
   (cur.chem || []).filter(c => !c.err && c.flags.length).forEach(c => {
@@ -180,7 +207,7 @@ async function checkItemsExt(items, silent){
       if(s.err) errs.add(`${EXT_NAMES[r.svc]}: ${s.err}`);
       if(r.svc === 'chem') cur.chem.push(s.err ? {cas:r.p.q, err:s.err} : s);
       else if(r.svc === 'food') cur.food.push(s.err ? {name:r.p.name, err:s.err} : s);
-      else cur[r.svc] = s;
+      else cur[r.svc] = r.svc === 'ccct' ? {...s, imex:r.p.imex} : s;
     });
     itemAlerts(it, it.ext, cur);
     it.ext = cur; it.updatedAt = nowIso();
@@ -196,7 +223,11 @@ async function checkItemsExt(items, silent){
 function extItemHTML(it, full){
   const e = it.ext; if(!e) return '';
   const out = [];
-  if(e.ccct){
+  const dir = itemDir(it), stale = dir === 'E' && e.ccct && e.ccct.imex !== '1';     // 수출 품목인데 예전 수입 기준 결과
+  out.push(`<span class="kc-chip" title="${esc(it.dir ? '직접 지정' : '필증·기록 유형으로 자동 판정 — 품목 수정에서 바꿀 수 있음')}">${DIR_LABEL[dir]}${it.dir ? '' : ' (자동)'}</span>`);
+  if(stale) out.push('<span class="kc-chip">수출 품목 — 수출 기준으로 다시 확인 예정</span>');
+  else if(e.ccct){
+    if(e.ccct.imex === '1') out.push('<span class="kc-chip" title="수출 세관장확인(수출 요건) 기준">수출 기준</span>');
     if(e.ccct.err) out.push(`<span class="kc-chip bad" title="${esc(e.ccct.err)}">세관장확인 오류</span>`);
     else if(!e.ccct.n) out.push('<span class="kc-chip ok">세관장확인 대상 아님</span>');
     else {
@@ -207,9 +238,9 @@ function extItemHTML(it, full){
     }
   }
   if(e.hs) out.push(e.hs.err ? `<span class="kc-chip bad" title="${esc(e.hs.err)}">HS 확인 오류</span>` : e.hs.found ? `<span class="kc-chip ok" title="${esc([e.hs.ko, e.hs.en, e.hs.qty && '수량단위 ' + e.hs.qty, e.hs.wt && '중량단위 ' + e.hs.wt].filter(Boolean).join('\n'))}">현행 HS${e.hs.ko ? ' · ' + esc(e.hs.ko.slice(0, 30)) : ''}</span>` : '<span class="kc-chip bad">현행 HS 아님</span>');
-  if(e.trrt) out.push(e.trrt.err ? `<span class="kc-chip bad" title="${esc(e.trrt.err)}">관세율 ${/설정 필요/.test(e.trrt.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip" title="${esc(e.trrt.rows.join('\n'))}">관세율 ${esc((e.trrt.rows[0] || '없음').slice(0, 50))}</span>`);
+  if(e.trrt && dir !== 'E') out.push(e.trrt.err ? `<span class="kc-chip bad" title="${esc(e.trrt.err)}">관세율 ${/설정 필요/.test(e.trrt.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip" title="${esc(e.trrt.rows.join('\n'))}">관세율 ${esc((e.trrt.rows[0] || '없음').slice(0, 50))}</span>`);
   (e.chem || []).forEach(c => out.push(c.err ? `<span class="kc-chip bad" title="${esc(c.err)}">CAS ${esc(c.cas)} 오류</span>` : `<span class="kc-chip ${c.flags.length ? 'warn' : c.found ? 'ok' : ''}" title="${esc((c.raw || []).join('\n'))}">CAS ${esc(c.cas)}${c.name ? ' ' + esc(c.name) : ''}${c.flags.length ? ' · ' + esc(c.flags.slice(0, 3).join(', ')) : c.found ? '' : ' · 조회 안 됨'}</span>`));
-  (e.food || []).forEach(f => out.push(f.err ? `<span class="kc-chip bad" title="${esc(f.err)}">${esc(f.name)} ${/설정 필요/.test(f.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip ${f.limited ? 'bad' : f.n ? 'ok' : ''}" title="${esc((f.raw || []).join('\n'))}">${esc(f.name)}${f.verdict.length ? ' · ' + esc(f.verdict.join(' · ')) : f.n ? '' : ' · 조회 안 됨'}${f.n && !f.exact ? ' (이름 일부 일치)' : ''}</span>`));
+  (stale ? [] : e.food || []).forEach(f => out.push(f.err ? `<span class="kc-chip bad" title="${esc(f.err)}">${esc(f.name)} ${/설정 필요/.test(f.err) ? '설정 필요' : '오류'}</span>` : `<span class="kc-chip ${f.limited ? 'bad' : f.n ? 'ok' : ''}" title="${esc((f.raw || []).join('\n'))}">${esc(f.name)}${f.verdict.length ? ' · ' + esc(f.verdict.join(' · ')) : f.n ? '' : ' · 조회 안 됨'}${f.n && !f.exact ? ' (이름 일부 일치)' : ''}</span>`));
   if(!out.length) return '';
   return `<div class="ext-row">${out.join(' ')}<span class="hint">${esc(e.at.slice(0, 10))} 확인</span></div>${full ? extDetailHTML(e) : ''}`;
 }
@@ -346,7 +377,7 @@ function autoExtChecks(){
   (async () => {
     if(old(db.settings.lawCheckedAt, 7)) await checkLaws(true);
     if(db.settings.extPause === today()) return;
-    const due = db.items.filter(it => itemReqs(it).length && old((it.ext || {}).at, 30)).slice(0, 15);
+    const due = db.items.filter(it => itemReqs(it).length && (old((it.ext || {}).at, 30) || (itemDir(it) === 'E' && it.ext && it.ext.ccct && it.ext.ccct.imex !== '1'))).slice(0, 15);   // 수출 품목은 수출 기준으로 다시
     if(due.length) await checkItemsExt(due, true);
     const cd = db.clients.filter(c => (bizDigits(c.bizNo).length === 10 || c.name) && old((c.ext || {}).at, 30)).slice(0, 20);
     if(cd.length) await checkClientsExt(cd, true);

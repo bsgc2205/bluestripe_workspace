@@ -453,6 +453,8 @@ function openItem(it, clientId){
         <label>HS 코드<input name="hs" value="${esc(item.hs)}" placeholder="예: 3402.42-0000"></label>
       </div>
       <div class="btn-row"><button type="button" class="mini" data-x="hscand">HS 후보 찾기 (품목명으로, 참고용)</button><span class="hint" data-x="hsmsg"></span></div><div data-x="hslist"></div>
+      <div class="row2"><label>업체<select name="clientId">${opts(sortedClients().map(c => [c.id, c.name]), item.clientId || clientId || '')}</select></label>
+        <label>수출입 구분<select name="dir">${opts([['', `자동 (지금: ${DIR_LABEL[itemDir(item)]})`], ['I', '수입'], ['E', '수출 — 수출 세관장확인만 확인'], ['IE', '수출입 모두']], item.dir || '')}</select></label></div>
       <label>세율·FTA<input name="tariff" value="${esc(item.tariff)}" placeholder="기본세율, 적용 협정과 협정세율"></label>
       <div class="row2">
         <label>수입요건 (한 줄에 하나)<textarea name="reqs" rows="4">${esc(item.reqs)}</textarea></label>
@@ -466,6 +468,10 @@ function openItem(it, clientId){
     onSave(fd){
       const bad = lines(fd.get('cas')).flatMap(l => (l.match(/\b\d{2,7}-\d{2}-\d\b/g) || []).filter(c => !casValid(c)));
       if(bad.length && !confirm(`CAS 번호 검증 숫자가 맞지 않습니다: ${bad.join(', ')}\n그대로 저장할까요? (틀린 번호는 조회하지 않습니다)`)) return false;
+      const ncid = fd.get('clientId') || item.clientId, ndir = fd.get('dir') || '';
+      if(!isNew && (ncid !== item.clientId || ndir !== (item.dir || ''))){ item.ext = null; openAlerts().filter(a => a.tid === item.id).forEach(a => { a.status = 'done'; a.doneAt = nowIso(); a.doneBy = me ? me.id : ''; a.doneNote = '품목 업체·수출입 구분을 바꿔 다시 확인합니다.'; }); }
+      if(ncid !== item.clientId) db.records.forEach(r => { if(r.itemId === item.id && r.clientId !== ncid) r.itemId = ''; });
+      item.clientId = ncid; item.dir = ndir;
       Object.assign(item, {name: fd.get('name').trim(), hs: fd.get('hs').trim(), tariff: fd.get('tariff').trim(), reqs: fd.get('reqs').trim(), agency: fd.get('agency').trim(), notes: fd.get('notes').trim(), cas: fd.get('cas').trim(), raw: fd.get('raw').trim(), maker: fd.get('maker').trim(), country: fd.get('country').trim(), model: fd.get('model').trim(), updatedAt: nowIso()});
       if(isNew){item.createdAt = nowIso(); db.items.push(item); toast('품목을 추가했습니다.');}
       else toast('품목을 수정했습니다.');

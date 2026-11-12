@@ -102,13 +102,16 @@ function certQueue(){
   }));
   return q.sort((a, b) => b.hint - a.hint).slice(0, 6);
 }
+/* 필증의 수입자·수출화주 업체 (11/12): 사업자번호 → 이름. 기록의 업체와 다르면 품목은 필증 쪽 업체에 넣는다(다른 업체 필증이 잘못 붙은 경우) */
+function certParty(d){ return (d.bizNo && clientByBiz(d.bizNo)) || (d.party ? findClient(d.party) : null); }
 function itemFromLine(cid, ln, d){
   const nm = ln.trade || ln.name, hs = hsDigits(ln.hs);
   if(!nm && !hs) return null;
   const nk = nameKey(nm).replace(/\s/g, '');
   let it = db.items.find(i => i.clientId === cid && ((hs && hsDigits(i.hs) === hs && (!nk || nameKey(i.name).replace(/\s/g, '') === nk)) || (nk && nameKey(i.name).replace(/\s/g, '') === nk)));
-  if(it){ if(!it.hs && ln.hs){ it.hs = ln.hs; it.updatedAt = nowIso(); } if(!it.country && ln.origin) it.country = ln.origin; return {it, isNew:false}; }
-  it = {id:uid(), clientId:cid, name:nm, hs:ln.hs || '', tariff:'', reqs:'', agency:'', model:ln.model || '', country:ln.origin || '', maker:'',
+  const k = d.kind === 'E' || d.kind === 'I' ? d.kind : '';
+  if(it){ if(!it.hs && ln.hs){ it.hs = ln.hs; it.updatedAt = nowIso(); } if(!it.country && ln.origin) it.country = ln.origin; if(k && !(it.dirs || []).includes(k)){ it.dirs = [...(it.dirs || []), k]; it.updatedAt = nowIso(); } return {it, isNew:false}; }
+  it = {id:uid(), clientId:cid, name:nm, hs:ln.hs || '', tariff:'', reqs:'', agency:'', model:ln.model || '', country:ln.origin || '', maker:'', dirs:k ? [k] : [],
     notes:`필증 ${d.declNo || ''}에서 자동 등록${ln.name && ln.name !== nm ? ` (품명 ${ln.name})` : ''}`, createdAt:nowIso(), updatedAt:nowIso(), createdBy:'auto'};
   db.items.push(it);
   return {it, isNew:true};
@@ -123,10 +126,34 @@ function applyCert2Rec(r, d, fname){
   if(d.kind && caseCode(r.type) === 'X'){ r.type = d.kind === 'E' ? '수출신고' : '수입통관'; ch.push('유형'); }
   r.certs = [...(r.certs || []).filter(x => x.declNo !== d.declNo), {file:fname, declNo:d.declNo, declDate:d.declDate, kind:d.kind, party:d.party, partner:d.partner, country:d.country, terms:d.terms, lines:(d.lines || []).slice(0, 12)}].slice(-10);
   let made = 0;
-  (d.lines || []).forEach((ln, i) => { const x = itemFromLine(r.clientId, ln, d); if(!x) return; if(x.isNew) made++; if(i === 0 && !r.itemId) { r.itemId = x.it.id; ch.push('품목'); } });
+  const pc = certParty(d), other = pc && pc.id !== r.clientId ? pc : null;
+  (d.lines || []).forEach((ln, i) => { const x = itemFromLine(other ? other.id : r.clientId, ln, d); if(!x) return; if(x.isNew) made++; if(i === 0 && !r.itemId && !other) { r.itemId = x.it.id; ch.push('품목'); } });
+  if(other){ r.certMismatch = {file:fname, declNo:d.declNo || '', party:other.name, at:today()}; addHist(r, `확인 필요: 필증(${fname})의 ${d.kind === 'E' ? '수출화주' : '수입자'}가 ‘${d.party || other.name}’(${other.name})로 이 업체와 다릅니다. 품목은 ${other.name}에 넣었습니다 — 자료가 다른 기록에 잘못 붙었는지 확인하세요.`); }
   addHist(r, `필증 읽기(${fname}): 신고 ${d.declNo || '-'}${(d.lines || []).length ? `, 품목 ${d.lines.length}란(HS ${[...new Set(d.lines.map(l => l.hs).filter(Boolean))].slice(0, 4).join(', ')})` : ''}${ch.length ? ` → ${ch.join('·')} 채움` : ''}${made ? `, 품목 DB ${made}개 추가` : ''}`);
   r.updatedAt = nowIso();
   return {ch:ch.length, made};
+}
+/* 필증에서 자동 등록된 품목의 업체·수출입 구분 바로잡기 (11/12, 한 번): 그 필증의 수입자·수출화주가 다른 업체면 그 업체로 옮김 */
+function fixCertItems(){
+  if(db.settings.fixCertItems === '20261112') return 0;
+  const certs = new Map();
+  db.records.forEach(r => (r.certs || []).forEach(c => { if(c.declNo) certs.set(c.declNo, {r, c}); }));
+  let n = 0;
+  db.items.filter(it => it.createdBy === 'auto').forEach(it => {
+    const m = /필증\s+(\S+)에서 자동 등록/.exec(it.notes || ''), hit = m && certs.get(m[1]);
+    if(!hit) return;
+    const k = hit.c.kind === 'E' || hit.c.kind === 'I' ? hit.c.kind : '';
+    if(k && !(it.dirs || []).includes(k)) it.dirs = [...(it.dirs || []), k];
+    const pc = hit.c.party ? findClient(hit.c.party) : null;
+    if(!pc || pc.id === it.clientId) return;
+    const was = clientName(it.clientId);
+    db.records.forEach(r => { if(r.itemId === it.id && r.clientId !== pc.id) r.itemId = ''; });
+    it.clientId = pc.id; it.notes = `${it.notes} · 업체 바로잡음(${was} → ${pc.name}, 필증 ${hit.c.kind === 'E' ? '수출화주' : '수입자'} 기준)`; it.ext = null; it.updatedAt = nowIso();
+    openAlerts().filter(a => a.tid === it.id).forEach(a => { a.status = 'done'; a.doneAt = nowIso(); a.doneBy = 'auto'; a.doneNote = `품목 업체를 ${pc.name}(으)로 바로잡아 다시 확인합니다.`; });
+    n++;
+  });
+  db.settings.fixCertItems = '20261112';
+  return n;
 }
 async function certRead(manual){
   const q = certQueue();
@@ -152,6 +179,7 @@ async function certRead(manual){
 async function runCollect(manual){
   try{
     if(manual){ toast('수입·수출 폴더와 BSGC-Backup 변동사항을 확인하는 중입니다…'); await collectApi({collect:1}); await collectApi({weekly:1}); }
+    const fx = fixCertItems(); if(fx) toast(`필증에서 등록된 품목 ${fx}개의 업체를 바로잡았습니다(필증의 수입자·수출화주 기준).`);
     const j = await collectApi({inbox:1});
     lastCollectRun = j.lastRun || lastCollectRun;
     const r0 = rematchPending(), r1 = applyCollected(j.items || []);
