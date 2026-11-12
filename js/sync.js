@@ -155,7 +155,7 @@ async function syncStart(pre){
     let srv = null;
     if(blob){
       try{ srv = migrate(await decryptServer(blob)); }
-      catch{ sync.on = false; sync.state = 'mismatch'; updateSaveState(); toast('Drive의 Workspace 파일이 지금 연 Workspace와 달라 자동 저장을 멈췄습니다. 관리자에게 확인하세요.'); return; }
+      catch{ sync.on = false; sync.state = 'mismatch'; sync.mis = blob; updateSaveState(); toast('Drive의 Workspace 파일이 이 PC의 Workspace와 달라 자동 저장을 멈췄습니다. 오른쪽 위 ‘Drive 자동 저장 꺼짐’을 눌러 정리하세요.'); return; }
     }
     let base = null, baseAcc = null, baseRev = -1;
     try{ const bb = JSON.parse(localStorage.getItem(LS_KEY + '-base') || 'null'); if(bb && bb.ct){ base = migrate(await decryptServer(bb)); baseAcc = bb.accounts; baseRev = bb.rev || 0; } }catch{ base = null; }
@@ -207,6 +207,7 @@ async function syncNow(){
 /* 화면을 보고 있는 동안 90초마다 다른 계정의 저장을 확인 */
 async function pollSync(){
   const cfg = syncCfg();
+  if(!sync.on && cfg && db && !sync.busy && sync.state !== 'mismatch' && !$('#dlg').open){ syncStart(); return; }   // 로그인 때 주소·토큰이 없어 꺼져 있던 자동 저장을 다시 켬 (11/12)
   if(!sync.on || !cfg || sync.busy || document.hidden || $('#dlg').open) return;
   try{
     const h = await syncGet(cfg, {head:1});
@@ -221,3 +222,53 @@ async function pollSync(){
 setInterval(pollSync, SYNC_POLL);
 document.addEventListener('visibilitychange', () => { if(!db || !sync.on) return; if(document.hidden){ if(isDirty()) syncNow(); } else pollSync(); });
 window.addEventListener('beforeunload', e => { if(db && sync.on && (sync.busy || isDirty())){ e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------- 다른 Workspace 합치기 (11/12) ----------
+   'Drive 자동 저장 꺼짐'(mismatch) = 이 PC의 Workspace와 Drive의 data.enc.json이 서로 다른 데이터 열쇠로 만들어져 있음
+   (다른 PC에서 '새 대장 만들기'를 했거나, 이 PC가 예전 비밀번호 방식 파일을 열어 새 열쇠가 생긴 경우).
+   Drive 쪽 계정·비밀번호로 Drive 파일을 열고, 이 PC에만 있는 내용을 합친 뒤 Drive 쪽 열쇠·계정으로 계속 저장한다.
+   합치기 전에 이 PC 내용을 암호화 백업 파일로 내려받는다. 같은 이름의 업체는 Drive 쪽 업체로 합친다. */
+function openAdopt(){
+  const blob = sync.mis, cfg = syncCfg();
+  if(!blob || !cfg){ toast('Drive 파일 정보를 다시 받는 중입니다. 잠시 뒤 다시 누르세요.'); if(cfg) syncStart(); return; }
+  const accs = (blob.accounts || []).map(a => `${a.name || a.id}(${a.id})`), mine = accounts.map(a => `${a.name || a.id}(${a.id})`);
+  const at = blob.savedAt ? String(blob.savedAt).replace('T', ' ').slice(0, 16) : '';
+  openDialog({title:'Drive 자동 저장 꺼짐 — Workspace 합치기', saveLabel:'Drive 쪽으로 합치기',
+    body:`<p>이 PC의 Workspace와 Drive의 Workspace가 <b>서로 다른 열쇠</b>로 만들어져 있어 자동으로 합칠 수 없습니다. 다른 PC에서 ‘새 대장 만들기’를 했거나, 이 PC가 예전 파일을 열었을 때 생깁니다.</p>
+      <div class="table-wrap"><table class="grid"><thead><tr><th></th><th>계정</th><th>마지막 저장</th></tr></thead><tbody>
+        <tr><td><b>Drive</b> (직원들이 쓰는 쪽)</td><td>${esc(accs.join(', ') || '-')}</td><td>${esc(at)}${blob.savedBy ? ' · ' + esc(blob.savedBy) : ''}</td></tr>
+        <tr><td><b>이 PC</b></td><td>${esc(mine.join(', '))}</td><td>${esc(String(db.meta.updatedAt || '').replace('T', ' ').slice(0, 16))}</td></tr></tbody></table></div>
+      <p class="hint">‘Drive 쪽으로 합치기’를 누르면 ① 이 PC 내용을 암호화 백업 파일로 내려받고 ② Drive 파일을 아래 계정으로 열어 ③ 이 PC에만 있는 업체·기록·품목 등을 합친 뒤 Drive에 저장합니다. 같은 이름의 업체는 하나로 합칩니다. 이후 이 PC도 <b>Drive 쪽 계정·비밀번호</b>로 로그인합니다.</p>
+      <div class="row2"><label>Drive 쪽 아이디<input name="aid" value="${esc(me ? me.id : '')}" autocomplete="username"></label><label>Drive 쪽 비밀번호<input type="password" name="apw" autocomplete="current-password"></label></div>
+      <p class="hint">Drive 쪽이 아니라 이 PC 쪽이 맞는 Workspace라면 합치지 말고 관리자에게 알리세요(Drive 파일을 이 PC 내용으로 바꾸는 일은 직원 PC 전체에 영향이 있습니다).</p>`,
+    onSave(fd){
+      const id = String(fd.get('aid') || '').trim(), pw = String(fd.get('apw') || '');
+      if(!id || !pw){ toast('Drive 쪽 아이디와 비밀번호를 넣으세요.'); return false; }
+      adoptServer(blob, id, pw);
+      return false;
+    }});
+}
+async function adoptServer(blob, id, pw){
+  let o;
+  try{ o = await openBlob(blob, id, pw); }
+  catch{ toast('Drive 파일이 이 아이디·비밀번호로 열리지 않습니다. Drive 쪽 계정(위 표)과 그 비밀번호인지 확인하세요.'); return; }
+  try{ const bak = await encryptDb(); download(`Workspace-이PC-백업-${today()}.enc.json`, JSON.stringify(bak)); }catch{}
+  const srv = migrate(o.data), mine = clone(db);
+  const key = n => nameKey(n || '').replace(/\s/g, ''), byName = new Map(srv.clients.map(c => [key(c.name), c.id])), remap = {};
+  mine.clients.forEach(c => { const sid = byName.get(key(c.name)); if(sid && sid !== c.id) remap[c.id] = sid; });
+  if(Object.keys(remap).length){
+    mine.clients = mine.clients.filter(c => !remap[c.id]);
+    ['records', 'procedures', 'items', 'inquiries', 'quoteJobs'].forEach(k => (mine[k] || []).forEach(x => { if(remap[x.clientId]) x.clientId = remap[x.clientId]; }));
+    (mine.kc || []).forEach(x => { if(remap[x.c]) x.c = remap[x.c]; });
+  }
+  const before = {r:srv.records.length, c:srv.clients.length};
+  db = tidyMerged(mergeNoBase(mine, srv));
+  dekRaw = o.raw; dataKey = o.key; accounts = clone(o.accounts); me = o.me;
+  try{ localStorage.setItem(LS_KEY + '-uid', me.id); }catch{}
+  setBase(blob, srv);
+  sync.on = true; sync.state = 'ok'; sync.err = ''; sync.mis = null;
+  await persistLocal();
+  $('#dlg').close(); render(); updateSaveState();
+  await syncNow();
+  toast(`Drive 쪽 Workspace로 합쳤습니다 — 업체 ${db.clients.length - before.c}곳·기록 ${db.records.length - before.r}건이 이 PC에서 더해졌습니다. 이 PC 백업 파일을 내려받았습니다. 다음부터 이 PC도 Drive 쪽 비밀번호로 로그인합니다.`);
+}

@@ -72,7 +72,7 @@ function openDataMenu(){
       if(ep !== db.settings.mail.endpoint) mailCache = null;
       const tk = fd.get('mailToken').trim(), syncChanged = ep !== (db.settings.mail.endpoint || '') || tk !== (db.settings.mail.token || '');
       db.settings.mail.endpoint = ep; db.settings.mail.token = tk;          // 토큰은 이 PC에만 저장(숨은 속성)
-      if(syncChanged) setTimeout(() => syncStart(), 50);   // 주소만 바뀐 것이므로 마지막으로 맞춘 기준(base)은 그대로 두고 합친다
+      if(syncChanged || (!sync.on && ep && tk)) setTimeout(() => syncStart(), 50);   // 값이 그대로여도 자동 저장이 꺼져 있으면 다시 켬 (11/12)   // 주소만 바뀐 것이므로 마지막으로 맞춘 기준(base)은 그대로 두고 합친다
       const np = fd.get('npw'), np2 = fd.get('npw2');
       if(np){
         if(np.length < 10){toast('비밀번호는 10자 이상이어야 합니다.'); return false;}

@@ -322,6 +322,12 @@ let mineOnly = false;
 function updateSaveState(){
   const el = $('#saveState'); let text, dirty = false;
   const bx = $('#btnExport');
+  if(!el.dataset.rs){ el.dataset.rs = '1'; el.addEventListener('click', () => {               // 저장 상태 글자 누르기: 꺼진 자동 저장 복구 (11/12)
+    if(sync.state === 'mismatch'){ openAdopt(); return; }
+    if(!sync.on && syncCfg()){ toast('Drive 자동 저장을 다시 연결합니다…'); syncStart(); }
+    else if(!sync.on) toast('데이터 → Apps Script 연동에서 웹 앱 주소와 이 PC의 토큰을 확인하세요.');
+  }); }
+  el.style.cursor = sync.state === 'mismatch' || !sync.on ? 'pointer' : '';
   if(bx){ bx.textContent = '암호화 파일 받기'; bx.className = 'primary'; bx.hidden = !!sync.on; }   // Drive 자동 저장 중이면 데이터 메뉴의 '백업'으로 충분
   if(sync.on || sync.state === 'mismatch'){
     const d = sync.at ? new Date(sync.at) : null, p2 = n => String(n).padStart(2, '0');
@@ -330,13 +336,14 @@ function updateSaveState(){
     const map = {busy:'저장 중…', wait:'저장 대기 중', fail:'Drive 저장 실패, 잠시 뒤 다시 시도', offline:'서버 연결 안 됨 (이 PC에 보관 중)', mismatch:'Drive 자동 저장 꺼짐'};
     text = map[sync.state] || `Drive 저장됨${at ? ' ' + at : ''}${by}`;
     dirty = ['fail','offline','mismatch'].includes(sync.state);
-    el.textContent = text; el.classList.toggle('dirty', dirty); el.title = sync.err || '';
+    el.textContent = text; el.classList.toggle('dirty', dirty); el.title = sync.state === 'mismatch' ? '이 PC와 Drive의 Workspace가 서로 다른 열쇠로 만들어져 있습니다. 눌러서 Drive 쪽으로 합치세요.' : (sync.err || '');
     return;
   }
   if(remoteUpdatedAt && db.meta.updatedAt === remoteUpdatedAt) text = '연 파일과 같습니다';
   else if(exportedAt === db.meta.updatedAt) text = '최신 파일을 받아 두었습니다';
   else {text = 'Drive에 저장할 변경이 있습니다'; dirty = true;}
   el.textContent = text; el.classList.toggle('dirty', dirty);
+  el.title = syncCfg() ? '자동 저장이 꺼져 있습니다. 눌러서 다시 연결합니다.' : 'Drive 자동 저장이 연결되지 않았습니다. 데이터 → Apps Script 연동에서 웹 앱 주소와 이 PC의 토큰을 확인하세요.';
 }
 async function exportEnc(){
   const b = await encryptDb();
