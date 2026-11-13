@@ -266,12 +266,7 @@ function viewClient(){
     ${typeof clientInsightHTML === 'function' ? clientInsightHTML(c) : ''}
     ${clientContactsSection(c)}
     ${kcSection(c)}
-    <section class="items">
-      <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개</span></h3><button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></div>
-      ${items.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th><th>요건 기관</th><th></th></tr></thead><tbody>
-        ${items.map(i => `<tr><td><strong>${esc(i.name)}</strong>${typeof itemRiskHTML === 'function' ? itemRiskHTML(i) : ''}${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`).join('')}
-      </tbody></table></div>` : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}
-    </section>
+    ${clientItemsSection(c, items)}
     ${amendSection(c)}
     ${clientInqSection(c)}
     ${typeof clientUpdatesSection === 'function' ? clientUpdatesSection(c) : ''}
@@ -289,6 +284,29 @@ function viewClient(){
         ${fr.length ? fr.map(r => recordHTML(r)).join('') : '<p class="empty">이 조건의 기록이 없습니다.</p>'}
       </section>
     </div>`;
+}
+
+/* ---------- 업체 품목·요건 (11/13 g): 대표 품목 7개만 먼저 보이고, 나머지는 펼치기·검색 — 품목이 많은 업체의 긴 스크롤 방지 ----------
+   대표 순서: 이 품목으로 처리한 기록 수(최근 24개월 가중) → 위험도(정정·검사·요건) → 최근 처리일 → 이름. 검색은 품목·HS·세율·요건·기관·메모 글자. */
+const ITEM_TOP = 7;
+let itemMoreOpen = new Set(), clientItemQ = {cid:'', q:''};
+function clientItemsSection(c, items){
+  const since = addPeriod(today(), -24, 'm'), use = new Map();
+  db.records.forEach(r => { if(!r.itemId) return; const u = use.get(r.itemId) || {n:0, last:''}; u.n += recDate(r) >= since ? 2 : 1; if(recDate(r) > u.last) u.last = recDate(r); use.set(r.itemId, u); });
+  const risk = i => typeof itemRisk === 'function' ? itemRisk(i).score : 0;
+  const ranked = items.map(i => ({i, u:use.get(i.id) || {n:0, last:''}, k:risk(i)})).sort((a, b) => b.u.n - a.u.n || b.k - a.k || (b.u.last > a.u.last ? 1 : b.u.last < a.u.last ? -1 : 0) || a.i.name.localeCompare(b.i.name, 'ko'));
+  const split = items.length > ITEM_TOP, top = split ? ranked.slice(0, ITEM_TOP) : ranked, rest = split ? ranked.slice(ITEM_TOP).sort((a, b) => a.i.name.localeCompare(b.i.name, 'ko')) : [];
+  const q = clientItemQ.cid === c.id ? clientItemQ.q.trim().toLowerCase() : '';
+  const hay = i => [i.name, i.hs, i.tariff, i.reqs, i.agency, i.notes].join(' ').toLowerCase();
+  const row = ({i, u}) => `<tr data-q="${esc(hay(i))}"${q && !hay(i).includes(q) ? ' hidden' : ''}><td><strong>${esc(i.name)}</strong>${typeof itemRiskHTML === 'function' ? itemRiskHTML(i) : ''}${u.n ? `<span class="hint"> · 처리 ${esc(String(db.records.filter(r => r.itemId === i.id).length))}건</span>` : ''}${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`;
+  const head = '<thead><tr><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th><th>요건 기관</th><th></th></tr></thead>';
+  const hits = q ? ranked.filter(x => hay(x.i).includes(q)).length : 0;
+  return `<section class="items">
+      <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개${split ? ` · 대표 ${ITEM_TOP}개 먼저` : ''}</span></h3><span class="btn-row">${split ? `<input type="search" id="cItemQ" data-cid="${esc(c.id)}" class="item-q" placeholder="품목·HS·요건 검색" value="${esc(clientItemQ.cid === c.id ? clientItemQ.q : '')}"><span class="hint" data-item-n>${q ? `${hits}개 찾음` : ''}</span>` : ''}<button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></span></div>
+      ${items.length ? `<div class="table-wrap"><table class="grid">${head}<tbody>${top.map(row).join('')}</tbody></table></div>
+        ${rest.length ? `<details class="items-more" data-items-more="${esc(c.id)}"${itemMoreOpen.has(c.id) || q ? ' open' : ''}><summary>나머지 품목 ${rest.length}개 펼치기 (가나다순)</summary><div class="table-wrap"><table class="grid">${head}<tbody>${rest.map(row).join('')}</tbody></table></div></details>` : ''}`
+      : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}
+    </section>`;
 }
 
 /* ---------- 업체 주의 등급 (최근 12개월) ----------
@@ -487,11 +505,21 @@ async function bizImport(){
     saveLabel: '선택 항목 반영',
     body: `<p class="hint">폴더의 파일 ${j.total}개 중 ${items.length}건을 읽었습니다${j.failed ? `(읽기 실패 ${j.failed}건)` : ''}. 반영할 업체를 고르세요. 기존 업체는 등록번호나 상호가 같으면 합칩니다.</p>
       <label class="check"><input type="checkbox" name="mail" checked> 메일에서 업무담당자와 관련업무도 찾기 (업체당 몇 초씩 걸립니다)</label>
-      <div class="table-wrap"><table class="grid"><thead><tr><th></th><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>반영</th></tr></thead><tbody>
-      ${items.map((it, i) => { const m = match(it); return `<tr><td><input type="checkbox" name="pick" value="${i}" checked></td><td>${esc(it.name || '(상호 미인식)')}<div class="hint">${esc(it.biz || '')} ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">원본</a>` : ''}</div></td><td>${esc(it.rep)}</td><td class="pre">${esc(it.addr)}</td><td>${m ? `기존: ${esc(m.name)}` : '새 업체'}</td></tr>`; }).join('')}
+      <div class="pick-bar"><button type="button" class="mini" data-x-pick="all">전체 선택</button><button type="button" class="mini" data-x-pick="none">전체 해제</button><button type="button" class="mini" data-x-pick="new">새 업체만</button><button type="button" class="mini" data-x-pick="old">기존 업체만</button><span class="hint" data-x-pick-n>${items.length} / ${items.length}건 선택</span></div>
+      <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-x-pick-all checked title="전체 선택 / 해제"></th><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>반영</th></tr></thead><tbody>
+      ${items.map((it, i) => { const m = match(it); return `<tr><td><input type="checkbox" name="pick" value="${i}" data-old="${m ? 1 : 0}" checked></td><td>${esc(it.name || '(상호 미인식)')}<div class="hint">${esc(it.biz || '')} ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">원본</a>` : ''}</div></td><td>${esc(it.rep)}</td><td class="pre">${esc(it.addr)}</td><td>${m ? `기존: ${esc(m.name)}` : '새 업체'}</td></tr>`; }).join('')}
       </tbody></table></div>`,
+    onOpen(f){                                                              // 전체 선택·해제 (11/13 g)
+      const boxes = () => [...f.querySelectorAll('input[name="pick"]')];
+      const sync = () => { const b = boxes(), n = b.filter(x => x.checked).length, all = f.querySelector('[data-x-pick-all]'), lab = f.querySelector('[data-x-pick-n]');
+        if(all){ all.checked = n === b.length && n > 0; all.indeterminate = n > 0 && n < b.length; } if(lab) lab.textContent = `${n} / ${b.length}건 선택`; };
+      f.addEventListener('click', e => { const b = e.target.closest('[data-x-pick]'); if(!b) return; e.preventDefault(); const k = b.dataset.xPick;
+        boxes().forEach(x => { x.checked = k === 'all' || (k === 'new' && x.dataset.old === '0') || (k === 'old' && x.dataset.old === '1'); }); sync(); });
+      f.addEventListener('change', e => { if(e.target.matches('[data-x-pick-all]')){ boxes().forEach(x => { x.checked = e.target.checked; }); } sync(); });
+    },
     onSave(fd){
       const picks = fd.getAll('pick').map(Number), withMail = fd.get('mail') === 'on';
+      if(!picks.length){ toast('반영할 업체를 하나 이상 고르세요.'); return false; }
       const touched = [];
       picks.forEach(i => {
         const it = items[i]; let c = match(it);

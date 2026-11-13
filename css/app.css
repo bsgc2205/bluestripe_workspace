@@ -560,3 +560,9 @@ li.own{color:var(--prog)}
 .risk.r2{color:var(--chk)}
 .risk.r3{color:var(--act)}
 .me-row td{background:var(--surface)}
+
+/* 11/13 g: 사업자등록증 반영 전체 선택, 업체 품목 대표 7개·펼치기·검색 */
+.pick-bar{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:.5rem 0}
+.items-more{margin-top:.5rem}
+.items-more>summary{cursor:pointer;color:var(--muted, #667);font-size:.9rem;padding:.35rem 0}
+.item-q{width:13rem;max-width:45vw;padding:.25rem .5rem;font-size:.85rem}

@@ -91,6 +91,14 @@ document.addEventListener('click', e => {
 $('#view').addEventListener('input', e => {
   const el = e.target;
   if(el.id === 'contactQ'){ $('#contactTable').innerHTML = contactTable(); return; }
+  if(el.id === 'cItemQ'){                                                   // 업체 품목 검색 (11/13 g): 다시 그리지 않고 줄만 숨김
+    clientItemQ = {cid:el.dataset.cid || '', q:el.value};
+    const q = el.value.trim().toLowerCase(), sec = el.closest('section'); let n = 0;
+    sec.querySelectorAll('tr[data-q]').forEach(tr => { const hit = !q || tr.dataset.q.includes(q); tr.hidden = !hit; if(hit) n++; });
+    const d = sec.querySelector('details[data-items-more]'); if(d && q) d.open = true;
+    const lab = sec.querySelector('[data-item-n]'); if(lab) lab.textContent = q ? `${n}개 찾음` : '';
+    return;
+  }
   if(el.id === 'inqQ' || el.id === 'itemQ'){ const id = el.id; if(id === 'inqQ') inqQ = el.value; else itemQ = el.value; clearTimeout(window._gq); window._gq = setTimeout(() => { renderView(); const q = $('#' + id); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'manQ'){ manualQ = el.value; clearTimeout(window._manT); window._manT = setTimeout(() => { renderView(); const q = $('#manQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'kcQ'){ $('#kcTable').innerHTML = kcTableHTML(kcRowsFor(el.dataset.kcClient, el.value), false, el.value.trim() ? 10 : 5); return; }
@@ -125,6 +133,7 @@ document.addEventListener('toggle', e => {
   const el = e.target;
   if(el.matches && el.matches('details[data-ck-rec]')){const id = el.dataset.ckRec; el.open ? openCk.add(id) : openCk.delete(id);}
   if(el.matches && el.matches('details[data-more-rec]')){const id = el.dataset.moreRec; el.open ? moreOpen.add(id) : moreOpen.delete(id);}
+  if(el.matches && el.matches('details[data-items-more]')){const id = el.dataset.itemsMore; el.open ? itemMoreOpen.add(id) : itemMoreOpen.delete(id);}
   if(el.matches && el.matches('details[data-sim-rec]')){const id = el.dataset.simRec; if(el.open){ simOpen.add(id); simOpen.delete('x' + id); } else { simOpen.delete(id); simOpen.add('x' + id); }}
   if(el.matches && el.matches('details[data-folder]')) folderOpen[el.dataset.folder] = el.open;
 }, true);

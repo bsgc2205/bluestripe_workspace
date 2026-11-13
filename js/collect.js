@@ -184,7 +184,20 @@ function splitPending(x, docs){
 }
 function applyCertDocs(r, docs, file){
   const fname = file.name, out = {made:0};
-  const mine = [], others = [];
+  const mine = [], others = [], listed = [];
+  /* 색인표에만 있고 본문을 못 읽은 필증 (11/13 g): 같은 신고번호 기록이 있으면 파일만 붙이고, 이 기록 번호면 그대로, 없으면 미분류(업체 선택) */
+  docs.filter(d => d.idx).forEach(d => {
+    if(d.declNo && recKeys(r, 'decl').map(refTail).includes(refTail(d.declNo))) return;
+    const t = recordByRef({declNo:d.declNo});
+    if(t && t.id !== r.id){ addFiles(t, [{id:file.id, name:fname, link:file.link || '', created:file.date || ''}]); t.certRead = {...(t.certRead || {}), [file.id]:today()}; listed.push(`${clientName(t.clientId)} ${d.declNo}`); return; }
+    if(t) return;
+    db.collectPending = db.collectPending || [];
+    if(!db.collectPending.some(x => x.id === file.id && x.declNo === d.declNo)) db.collectPending.push({id:file.id, name:fname, link:file.link || '', created:file.date || '', kind:d.kind === 'I' ? '수입' : '수출', path:'(같은 파일 색인표에만 있는 필증 — 본문을 못 읽음)', declNo:d.declNo || '', bl:'', party:'', bizNo:'', certTried:true, splitOf:file.id});
+    listed.push(`미분류 ${d.declNo}`);
+  });
+  if(listed.length) addHist(r, `필증 읽기(${fname}): 색인표에만 있는 신고번호 ${listed.length}건 — ${listed.join(', ')}`.slice(0, 280));
+  docs = docs.filter(d => !d.idx);
+  if(!docs.length){ r.updatedAt = nowIso(); return out; }
   docs.forEach(d => {
     const pc = certParty(d);
     const isMine = pc ? pc.id === r.clientId : (!d.party || partyIsClient(d.party, r.clientId) || (docs.length === 1 && !(d.lines || []).length));
@@ -242,8 +255,9 @@ function fixMisplacedItems(r, mineDocs, others){
   return n;
 }
 /* 한 번만: 예전에 한 장짜리로 읽은 '날짜 이름' 같은 묶음 PDF(파일명에 신고번호·EXP/IMP 없음)를 다시 읽게 함 */
+/* 11/13 g: 견본 필증('견본(수출)'로 시작, '수출신고필증' 제목 없음)과 색인표 신고번호를 잘못 나누던 것을 고쳐(Apps Script cert3_) 한 번 더 다시 읽음 */
 function recheckCombined(){
-  if(db.settings.certMulti === '20261113') return 0;
+  if(db.settings.certMulti === '20261113g') return 0;
   let n = 0;
   db.records.forEach(r => {
     const fs = (r.files || []).filter(f => /\.pdf$/i.test(f.name || '') && !CERT_HINT.test(f.name || '') && (r.certRead || {})[f.id]);
@@ -251,7 +265,7 @@ function recheckCombined(){
     fs.forEach(f => { delete r.certRead[f.id]; }); r.certAgain = true; n += fs.length;
   });
   (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !CERT_HINT.test(x.name || '') && x.certTried && !x.splitOf){ x.certTried = false; n++; } });
-  db.settings.certMulti = '20261113';
+  db.settings.certMulti = '20261113g';
   return n;
 }
 async function certRead(manual){
