@@ -566,3 +566,9 @@ li.own{color:var(--prog)}
 .items-more{margin-top:.5rem}
 .items-more>summary{cursor:pointer;color:var(--muted, #667);font-size:.9rem;padding:.35rem 0}
 .item-q{width:13rem;max-width:45vw;padding:.25rem .5rem;font-size:.85rem}
+/* 11/14: 업체 중복 점검 */
+.warn-btn{border-color:var(--act);color:var(--act)}
+.merged-from{margin:.25rem 0 .5rem}
+.tag.lv-act{border:1px solid var(--act);color:var(--act);background:transparent}
+.tag.lv-prog{border:1px solid var(--prog);color:var(--prog);background:transparent}
+.tag.lv-chk{border:1px solid var(--chk);color:var(--chk);background:var(--chk-bg)}

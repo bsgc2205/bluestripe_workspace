@@ -261,6 +261,7 @@ function viewClient(){
         <button class="ghost" data-edit-client="${esc(c.id)}">업체 정보 수정</button>
       </div>
     </header>
+    ${typeof clientMergedHTML === 'function' ? clientMergedHTML(c) : ''}
     ${c.address || c.openDate ? `<p class="client-meta">${[c.address, c.openDate && '개업 ' + c.openDate].filter(Boolean).map(esc).join(' / ')}</p>` : ''}
     ${c.notes ? `<p class="client-notes">${esc(c.notes)}</p>` : ''}
     ${typeof clientInsightHTML === 'function' ? clientInsightHTML(c) : ''}
@@ -479,7 +480,7 @@ function viewClientList(){
   const list = sortedClients();
   const types = c => [...new Set(db.records.filter(r => r.clientId === c.id).map(r => r.type))];
   return `<header class="client-head"><div><h2>거래업체 리스트</h2><p class="client-meta">업체 ${list.length}곳. 사업자등록증과 메일 기준으로 채웁니다.</p></div>
-      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button><button class="ghost" data-new-client>업체 추가</button></div></header>
+      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button></div></header>
     ${list.length ? `<div class="table-wrap" style="margin-top:1.25rem"><table class="grid"><thead><tr><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>업무담당자</th><th>관련업무</th></tr></thead><tbody>
       ${list.map(c => { const cc = (c.contacts || []).slice(0,2), ty = types(c), rw = (c.recentWork || []).slice(0,2); return `<tr>
         <td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong></button>${cautionBadge(c)}${c.bizNo ? `<div class="hint">${esc(c.bizNo)}</div>` : ''}</td>
@@ -507,7 +508,11 @@ async function bizImport(){
       <label class="check"><input type="checkbox" name="mail" checked> 메일에서 업무담당자와 관련업무도 찾기 (업체당 몇 초씩 걸립니다)</label>
       <div class="pick-bar"><button type="button" class="mini" data-x-pick="all">전체 선택</button><button type="button" class="mini" data-x-pick="none">전체 해제</button><button type="button" class="mini" data-x-pick="new">새 업체만</button><button type="button" class="mini" data-x-pick="old">기존 업체만</button><span class="hint" data-x-pick-n>${items.length} / ${items.length}건 선택</span></div>
       <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-x-pick-all checked title="전체 선택 / 해제"></th><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>반영</th></tr></thead><tbody>
-      ${items.map((it, i) => { const m = match(it); return `<tr><td><input type="checkbox" name="pick" value="${i}" data-old="${m ? 1 : 0}" checked></td><td>${esc(it.name || '(상호 미인식)')}<div class="hint">${esc(it.biz || '')} ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">원본</a>` : ''}</div></td><td>${esc(it.rep)}</td><td class="pre">${esc(it.addr)}</td><td>${m ? `기존: ${esc(m.name)}` : '새 업체'}</td></tr>`; }).join('')}
+      ${items.map((it, i) => { const m = match(it);
+        const sim = !m && typeof similarClients === 'function' ? similarClients(it.name || '', it.biz || '') : [];   // 비슷한 기존 업체 (11/14): 약칭으로 먼저 만든 업체가 있으면 거기에 반영 추천
+        const def = sim.length && !bizDigits(sim[0].c.bizNo) ? sim[0].c.id : '';
+        const to = m ? `기존: ${esc(m.name)}` : sim.length ? `<select name="to${i}" title="비슷한 기존 업체가 있습니다. 같은 회사면 그 업체에 반영하세요.">${opts([['', '새 업체로 추가'], ...sim.slice(0, 3).map(x => [x.c.id, `기존 ‘${x.c.name}’에 반영 (${x.why})`])], def)}</select>` : '새 업체';
+        return `<tr><td><input type="checkbox" name="pick" value="${i}" data-old="${m || def ? 1 : 0}" checked></td><td>${esc(it.name || '(상호 미인식)')}<div class="hint">${esc(it.biz || '')} ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">원본</a>` : ''}</div></td><td>${esc(it.rep)}</td><td class="pre">${esc(it.addr)}</td><td>${to}</td></tr>`; }).join('')}
       </tbody></table></div>`,
     onOpen(f){                                                              // 전체 선택·해제 (11/13 g)
       const boxes = () => [...f.querySelectorAll('input[name="pick"]')];
@@ -523,6 +528,10 @@ async function bizImport(){
       const touched = [];
       picks.forEach(i => {
         const it = items[i]; let c = match(it);
+        if(!c && fd.get('to' + i)){                                         // 비슷한 기존 업체에 반영: 상호는 등록증 정식 상호로, 예전 이름은 검색어로 (11/14)
+          c = db.clients.find(x => x.id === fd.get('to' + i)) || null;
+          if(c && it.name && dupNameKey(it.name) !== dupNameKey(c.name)){ const old = c.name; c.name = it.name; c.keyword = [...new Set([...String(c.keyword || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean), old])].join(', '); c.updatedAt = nowIso(); }
+        }
         if(!c){ c = {id:uid(), name: it.name || it.fileName, bizNo:'', industry:'', contact:'', keyword:'', notes:'', createdAt:nowIso()}; db.clients.push(c); }
         if(it.biz) c.bizNo = it.biz;
         if(it.rep) c.rep = it.rep;

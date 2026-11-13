@@ -958,6 +958,8 @@ function openAudit(){
           finish(`${c.name} 검색어에 추가`); return;
         }
         const c = {id:uid(), name:g.name.startsWith('@') ? g.name.slice(1).split('.')[0] : g.name, bizNo:'', industry:'', contact:'', keyword:words.join(', '), notes:'업체 미인식 점검에서 추가', createdAt:nowIso()};
+        const sim = typeof similarClients === 'function' ? similarClients(c.name, '') : [];        // 중복 등록 방지 (11/14)
+        if(sim.length && !confirm(`비슷한 업체가 이미 있습니다: ${sim.slice(0, 3).map(x => `‘${x.c.name}’(${x.why})`).join(', ')}\n그래도 새 업체로 만들까요? (같은 회사면 ‘취소’ 후 ‘○○에 추가’나 ‘다른 업체에 추가…’를 쓰세요)`)) return;
         db.clients.push(c); finish('새 업체 추가'); $('#dlg').close(); openClient(c);
       });
     }});

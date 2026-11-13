@@ -623,7 +623,11 @@ function openClient(c){
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim(); cl.ecm = String(fd.get('ecm') || '').trim(); cl.tel = String(fd.get('tel') || '').trim();
       if((bizChanged || isNew) && (db.settings.mail || {}).endpoint) setTimeout(() => checkClientsExt([cl], true), 600);   // 사업자번호가 바뀌면 통관고유부호·국세청 상태 바로 확인
       cl.cautionLevel = fd.get('cautionLevel') || ''; cl.defaultAssignee = fd.get('defaultAssignee') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
-      if(isNew){cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');}
+      if(isNew){
+        const sim = typeof similarClients === 'function' ? similarClients(cl.name, cl.bizNo) : [];    // 중복 등록 방지 (11/14)
+        if(sim.length && !confirm(`비슷한 업체가 이미 있습니다: ${sim.slice(0, 3).map(x => `‘${x.c.name}’(${x.why})`).join(', ')}\n같은 회사면 ‘취소’하고 그 업체 정보를 고치세요. 그래도 새 업체로 만들까요?`)) return false;
+        cl.createdAt = nowIso(); db.clients.push(cl); toast('업체를 추가했습니다.');
+      }
       else toast('업체 정보를 수정했습니다.');
       route = {name:'client', id:cl.id}; $('#q').value = '';
     },

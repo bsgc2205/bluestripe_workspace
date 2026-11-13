@@ -113,6 +113,7 @@ function mergeAccounts(baseAcc, mine, theirs){
 }
 function tidyMerged(d){
   d = migrate(d);
+  if(typeof applyClientMerged === 'function') applyClientMerged(d);       // 합친 업체의 옛 id로 다른 PC가 만든 자료 → 남은 업체로 (11/14, 아래 업체 없는 자료 정리보다 먼저)
   purgeSamples(d);
   dedupeCaseNos(d);
   const ids = new Set(d.clients.map(c => c.id));
