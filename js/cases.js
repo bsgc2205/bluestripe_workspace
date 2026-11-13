@@ -149,7 +149,8 @@ function stageActsHTML(r){
   if(!st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|customs">${stageName(r, 'customs')}</button>`);
   if(!st.settle && settleMode(r) === 'each') b.push(`<button class="mini" data-stage="${esc(r.id)}|settle">정산완료</button>`);
   if((r.tags || []).includes('자동접수') && (r.history || []).length <= 6) b.push(`<button class="mini" data-intake-undo="${esc(r.id)}" title="업무가 아닌 메일이 자동 접수됐으면 취소하세요. 메일은 다시 접수되지 않습니다.">접수 취소</button>`);
-  return b.join('');
+  if(b.length <= 1) return b.join('');                                     // 11/14 P3: 다음 단계 버튼 하나만 보이고 나머지는 '단계 ▾'
+  return b[0] + `<details class="stage-more"><summary class="mini">단계 ▾</summary>${b.slice(1).join('')}</details>`;
 }
 function autoComplete(r, why){
   if(r.status === '완료' || r.autoDoneOff) return false;

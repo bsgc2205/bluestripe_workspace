@@ -199,8 +199,8 @@ function viewReport(){
 function exportCsv(mon){
   const rows = doneIn(mon).sort((a,b) => (a.date||'').localeCompare(b.date||''));
   const cell = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
-  const head = ['완료일','업체','업무 유형','참조번호','제목','특이 처리','대행 수수료'];
-  const body = rows.map(r => [r.date, clientName(r.clientId), r.type, r.refNo, r.title, r.special ? 'Y' : '', r.fee || ''].map(cell).join(','));
+  const head = ['완료일','업체','업무 유형','참조번호','제목','특이 처리','대행 수수료','의뢰처','청구처'];
+  const body = rows.map(r => [r.date, clientName(r.clientId), r.type, r.refNo, r.title, r.special ? 'Y' : '', r.fee || '', r.via ? clientName(r.via) : '', r.via ? (r.billTo === 'via' ? clientName(r.via) : r.billTo === 'self' ? clientName(r.clientId) : '미정') : clientName(r.clientId)].map(cell).join(','));
   download(`BSGC-Workspace-${mon}.csv`, '\uFEFF' + [head.map(cell).join(','), ...body].join('\r\n'), 'text/csv;charset=utf-8');
 }
 
@@ -468,6 +468,7 @@ function intakeRecord(t, c, why, bl, bls, ci){
     title:(intakeTitle(first.subject, why) || `[${type}] ${cm ? cm.decl : bl}`) + (multi ? ` (B/L ${bl})` : ''), summary:String(first.snippet || '').slice(0, 300), special:false, specialNote:'', tags:['자동접수'], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[],
     assignee:(cm ? staffAccount(ci[0].m) : '') || t.ms.filter(x => isOwn(x.from)).map(staffAccount).find(Boolean) || '', history:[], createdAt:nowIso(), updatedAt:nowIso(), createdBy:'auto'};
   const gi = guessItem(txt, c.id); if(gi) r.itemId = gi.id;
+  if(typeof forwarderOf === 'function' && !isFwd(c)){ const f = forwarderOf(t.ms, c.id); if(f) r.via = f.id; }   // 의뢰처(포워더) (11/14 P2)
   applyProcAuto(r);
   if(!r.assignee) r.assignee = clientAssignee(c.id);
   const who = src.fromName || src.fwdFrom || src.from, at = String(src.date).slice(0, 16);
@@ -546,7 +547,7 @@ function attachMail(r, m){
   const k = threadKey(m.subject);
   if(k.length >= 4) db.mailThreads[k] = r.id;
   if(r.mails.some(x => x.id === m.id)) return false;
-  r.mails.push({id:m.id, date:m.date || '', from:m.fwdFrom || (m.fromName ? `${m.fromName} <${m.from}>` : m.from), subject:m.subject || '', files:(m.attachments || []).slice(0, 10)});
+  r.mails.push({id:m.id, date:m.date || '', from:m.fwdFrom || (m.fromName ? `${m.fromName} <${m.from}>` : m.from), subject:m.subject || '', files:realFiles(m).slice(0, 6)});   // 서명 이미지 빼고 6개까지 (11/14 데이터 줄이기)
   r.mails.sort((a, b) => a.date < b.date ? -1 : 1);
   if(!r.bl){ const b = mailBLs(m); if(b.length === 1) r.bl = b[0]; else if(!b.length && m.bl) r.bl = m.bl; }   // B/L이 여러 개인 메일은 기록의 B/L을 함부로 정하지 않음
   if(!r.refNo && mailDecl(m)) r.refNo = mailDecl(m);
@@ -705,6 +706,14 @@ function threadTokenRecord(t){
 }
 /* 서명 이미지 B/L 오류 바로잡기 (11/13 f, 한 번): 기록의 B/L·식별번호가 'LW000000'·해시 꼴이면 지우고,
    그 번호로 잘못 붙은 메일(같은 번호·같은 대화가 아닌 것)을 떼어 다시 연결되게 한다. 뗀 기록은 확인 알림으로 알린다. */
+/* 데이터 줄이기 (11/14, 한 번): 기록에 붙은 메일의 첨부 이름에서 서명 이미지를 빼고 6개까지 */
+function trimMailFiles(){
+  if(db.settings.mailTrim === '20261114') return 0;
+  let n = 0;
+  db.records.forEach(r => (r.mails || []).forEach(x => { const f = x.files || []; const g = f.filter(v => !INLINE_IMG.test(String(v).trim())).slice(0, 6); if(g.length !== f.length){ x.files = g; n++; } }));
+  db.settings.mailTrim = '20261114';
+  return n;
+}
 function fixBogusLinks(){
   if(!mailCache || db.settings.mailFix === '20261113f') return 0;
   db.settings.mailFix = '20261113f';
@@ -802,11 +811,12 @@ async function loadMail(manual = true){
   try{
     const j = await collectApi({mails:1, days:60});
     mailCache = (j.items || []).map(cleanMailBL); mailCollectorAt = j.collectorAt || '';
-    const fx = fixBogusLinks();
+    const fx = fixBogusLinks(); trimMailFiles();
     if(typeof markRun === 'function') markRun('mail', true);
     if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
-    if(fx || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu){ pruneThreads(); commit(); }
+    const rt = typeof routeRecords === 'function' ? routeRecords() : 0;      // 의뢰처·청구처 (11/14 P2)
+    if(fx || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu || rt){ pruneThreads(); commit(); }
     if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
     if(fx || n || made.length || ln || cs || ev.done || cu) toast([fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '));

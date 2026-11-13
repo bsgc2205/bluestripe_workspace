@@ -16,15 +16,24 @@ function renderSidebar(){
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
   if(!list.length){$('#clientList').innerHTML = '<p class="hint side-empty">업체를 추가하세요</p>'; return;}
-  const groups = {long:[], other:[]};
-  list.forEach(c => groups[relationOf(c).longTerm ? 'long' : 'other'].push(c));
+  /* 11/14 P3: 업체 전체 목록 대신 검색 + 최근 본 업체 6 + 주의 업체 — 전체는 '③ 업체' 화면 */
   const cur = route.name === 'client' ? route.id : null;
   const li = c => `<li><button data-go="client" data-id="${esc(c.id)}" class="${cur === c.id ? 'on' : ''}"><span>${esc(c.name)}${cautionBadge(c)}</span><span class="cnt">${counts[c.id]||0}</span></button></li>`;
-  const folder = (key, name, arr) => {
-    const open = folderOpen[key] || arr.some(c => c.id === cur);
-    return `<details class="folder" data-folder="${key}"${open ? ' open' : ''}><summary><span class="f-name">${name}</span><span class="cnt">${arr.length}</span></summary><ul>${arr.map(li).join('') || '<li class="hint side-empty">없음</li>'}</ul></details>`;
-  };
-  $('#clientList').innerHTML = folder('long', '1년 이상 거래 유지', groups.long) + folder('other', '그 외 업체', groups.other);
+  let rec = recentClients().map(id => db.clients.find(c => c.id === id)).filter(Boolean).slice(0, 6), recLab = '최근 본 업체';
+  if(!rec.length){ const cut = addPeriod(today(), -90, 'd'), n = {}; db.records.forEach(r => { if(recDate(r) >= cut) n[r.clientId] = (n[r.clientId] || 0) + 1; }); rec = list.filter(c => n[c.id]).sort((a, b) => n[b.id] - n[a.id]).slice(0, 6); recLab = '최근 3개월 많은 업체'; }
+  const caut = list.filter(c => !rec.includes(c) && clientCaution(c).level === '주의').slice(0, 5);
+  const sec = (t, arr) => arr.length ? `<p class="side-sub">${t}</p><ul>${arr.map(li).join('')}</ul>` : '';
+  $('#clientList').innerHTML = `<input type="search" id="sideQ" class="side-q" placeholder="업체 검색 (${list.length}곳)" value="${esc(sideQ)}" autocomplete="off"><ul id="sideHits">${sideHitsHTML(sideQ)}</ul>`
+    + (sideQ ? '' : sec(recLab, rec) + sec('주의 업체', caut)) + `<button class="side-all" data-go="clientlist">전체 업체 ${list.length}곳 →</button>`;
+}
+let sideQ = '';
+const RECENT_LS = 'bsgc-recent-clients';
+function recentClients(){ try{ return JSON.parse(localStorage.getItem(RECENT_LS) || '[]'); }catch(e){ return []; } }
+function pushRecent(id){ try{ const a = [id, ...recentClients().filter(x => x !== id)].slice(0, 10); localStorage.setItem(RECENT_LS, JSON.stringify(a)); }catch(e){} }
+function sideHitsHTML(q){
+  q = String(q || '').trim().toLowerCase(); if(!q) return '';
+  const hits = db.clients.filter(c => [c.name, c.keyword, c.bizNo].join(' ').toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, 'ko')).slice(0, 12);
+  return hits.map(c => `<li><button data-go="client" data-id="${esc(c.id)}"><span>${esc(c.name)}${cautionBadge(c)}</span></button></li>`).join('') || '<li class="hint side-empty">없음</li>';
 }
 function renderView(){
   hlRe = null;
@@ -34,7 +43,7 @@ function renderView(){
   else if(views[route.name]) v.innerHTML = views[route.name]();
   else {route = {name:'home', id:null}; v.innerHTML = viewHome();}
 }
-function go(name, id){route = {name, id:id || null}; typeFilter = '전체'; render(); window.scrollTo(0,0);}
+function go(name, id){route = {name, id:id || null}; typeFilter = '전체'; if(name === 'client' && id){ pushRecent(id); sideQ = ''; } render(); window.scrollTo(0,0);}
 
 function ckItem(rid, kind, i, x, meta){
   return `<li class="${x.done ? 'done' : ''}"${meta ? ` title="${esc(stepMetaTitle(meta))}"` : ''}><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${meta && meta.done && !x.done ? ` <small class="hint">완료: ${esc(meta.done)}</small>` : ''}${x.done && x.doneAt ? `<small${x.auto ? ` title="자동 체크: ${esc(x.auto)}"` : ''}>${esc(x.doneAt)}${x.auto ? ' · 자동' : ''}</small>` : ''}</span></label></li>`;
@@ -79,7 +88,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
       ${active && !o.compact && typeof caseSumHTML === 'function' ? caseSumHTML(r) : ''}
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
@@ -145,13 +154,19 @@ function todayItems(){
   return out.sort((a, b) => a.pri - b.pri);
 }
 function todayHTML(){
-  const items = todayItems(), show = items.slice(0, 20), rest = items.slice(20);
+  /* 11/14 P3: 종류별로 묶어 건수만 먼저 — 조치 필요(빨강) 묶음만 펼치고 한 묶음에 8건까지, 나머지는 해당 화면·검색으로 */
+  const items = todayItems(), nAct = items.filter(x => x.lvl === 'act').length;
   const row = x => `<div class="todo lv-${x.lvl}"><span class="t-kind">${esc(x.kind)}</span><div class="t-main"><strong>${esc(x.title)}</strong><span class="hint">${esc(x.sub)}</span></div><div class="t-act">${x.acts}</div></div>`;
-  return `<section class="today"><div class="sec-head"><h3>오늘 할 일 <span class="cnt">${items.length}건${items.filter(x => x.lvl === 'act').length ? ` · 조치 필요 ${items.filter(x => x.lvl === 'act').length}` : ''}</span></h3>${accounts.length > 1 ? `<button class="mini" data-today-mine>${todayMine ? '전체 보기' : '내 담당만'}</button>` : ''}</div>
-    ${items.length ? show.map(row).join('') + (rest.length ? `<details class="home-more"><summary>나머지 ${rest.length}건</summary>${rest.map(row).join('')}</details>` : '') : '<p class="empty">오늘 처리할 항목이 없습니다.</p>'}
+  const groups = new Map(); items.forEach(x => { if(!groups.has(x.kind)) groups.set(x.kind, []); groups.get(x.kind).push(x); });
+  const goTo = {'미연결 메일':'mail', '새 의뢰':'mail', '확인 알림':'check', '제안':'active', '무변동':'active', '지난 기한':'active', '기한 임박':'active'};
+  const grp = ([k, xs]) => { const lv = xs[0].lvl, open = lv === 'act' && todayOpen[k] !== false || todayOpen[k] === true;
+    return `<details class="today-grp lv-${lv}" data-today-grp="${esc(k)}"${open ? ' open' : ''}><summary><span class="t-kind">${esc(k)}</span> <strong>${xs.length}건</strong></summary>${xs.slice(0, 8).map(row).join('')}${xs.length > 8 ? `<p class="hint more-row">외 ${xs.length - 8}건 — ${goTo[k] ? `<button class="mini" data-go="${goTo[k]}">${goTo[k] === 'mail' ? '메일 화면' : goTo[k] === 'check' ? '확인함' : '진행 중 화면'}에서 보기</button>` : ''}</p>` : ''}</details>`; };
+  return `<section class="today"><div class="sec-head"><h3>오늘 할 일 <span class="cnt">${items.length}건${nAct ? ` · 조치 필요 ${nAct}` : ''}</span></h3>${accounts.length > 1 ? `<button class="mini" data-today-mine>${todayMine ? '전체 보기' : '내 담당만'}</button>` : ''}</div>
+    ${items.length ? [...groups.entries()].map(grp).join('') : '<p class="empty">오늘 처리할 항목이 없습니다.</p>'}
     ${todayMine ? '<p class="hint">기한·제안·무변동은 내 담당 건만, 메일·확인 알림은 함께 보는 항목이라 모두 보입니다.</p>' : ''}
   </section>`;
 }
+let todayOpen = {};
 function viewHome(){
   const recs = [...db.records].sort(byDateDesc);
   const active = db.records.filter(r => r.status !== '완료').sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
@@ -174,14 +189,14 @@ function viewHome(){
   <div class="home-grid">
     <div class="main-col">
       ${todayHTML()}
-      <section><div class="sec-head"><h3>진행 중 업무</h3>${active.length > 6 ? `<button class="mini" data-go="active">전체 ${active.length}건 보기</button>` : ''}</div>
-        <div class="rec-grid wide">${act.length ? act.slice(0, 8).map(r => recordHTML(r, {showClient:true})).join('') : '<p class="empty">진행 중인 업무가 없습니다. 새 건을 받으면 ‘업무 시작’으로 등록하고 단계를 체크해 가세요.</p>'}</div>
+      <section><div class="sec-head"><h3>급한 업무 <span class="cnt">진행 중 ${active.length}건 중 5건</span></h3>${active.length > 5 ? `<button class="mini" data-go="active">진행 중 전체·검색</button>` : ''}</div>
+        <div class="rec-grid wide">${act.length ? act.slice(0, 5).map(r => recordHTML(r, {showClient:true, compact:true})).join('') : '<p class="empty">진행 중인 업무가 없습니다. 새 건을 받으면 ‘업무 시작’으로 등록하고 단계를 체크해 가세요.</p>'}</div>
       </section>
     </div>
     <aside class="side-col">
-      <section><div class="sec-head"><h3>챙길 기한</h3></div>
-        ${dls.length ? dls.slice(0,12).map(deadlineRow).join('') : '<p class="empty">등록된 기한이 없습니다. 기록에 FTA 사후적용, 적재기한 같은 기한을 넣으면 여기서 날짜순으로 챙길 수 있습니다.</p>'}
-      </section>
+      ${(() => { const up = dls.filter(x => daysLeft(x.d.due) > 3); return `<section><div class="sec-head"><h3>다가오는 기한 <span class="cnt">${up.length}건</span></h3>${up.length > 8 ? '<button class="mini" data-go="active">전체 보기</button>' : ''}</div>
+        ${up.length ? up.slice(0, 8).map(deadlineRow).join('') : '<p class="empty">4일 이후 기한이 없습니다. 지난 기한·3일 안 기한은 왼쪽 오늘 할 일에 있습니다.</p>'}
+      </section>`; })()}
       ${autoDone.length ? `<section style="margin-top:1.5rem"><div class="sec-head"><h3>최근 7일 자동 완료 <span class="cnt">${autoDone.length}건</span></h3></div><ul class="plain">${autoDone.map(r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(clientName(r.clientId))} · ${esc(r.autoDone.reason)}</span> <button class="mini" data-undo-auto="${esc(r.id)}">되돌리기</button></li>`).join('')}</ul></section>` : ''}
       <details class="home-more"><summary>최근 완료 기록 ${Math.min(done.length, 8)}건</summary>${done.length ? done.slice(0,8).map(r => recordHTML(r, {showClient:true, compact:true})).join('') : '<p class="empty">아직 완료 기록이 없습니다.</p>'}</details>
       <details class="home-more"><summary>특이 처리 사례 ${Math.min(sp.length, 8)}건</summary>${sp.length ? sp.slice(0,8).map(r => recordHTML(r, {showClient:true, compact:true})).join('') : '<p class="empty">일반 절차와 다르게 처리한 건을 기록하면 여기에 모입니다.</p>'}</details>
@@ -189,7 +204,7 @@ function viewHome(){
   </div>`;
 }
 
-let activeMode = 'list', activeSort = {k:'band', dir:1};
+let activeMode = 'list', activeSort = {k:'band', dir:1}, activeLimit = 30, activeQ = '';
 function activeTableHTML(rows){
   const order = {act:0, prog:1, ship:2, settle:3, hold:4};
   const nextDl = r => (r.deadlines || []).filter(d => !d.done).sort((a, b) => a.due.localeCompare(b.due))[0];
@@ -209,6 +224,12 @@ function viewActive(){
   const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id);
   const stale = staleRecords().filter(x => mine(x.r));
   const act = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
+  /* 11/14 P1·P3: 목록 보기는 급한 순(조치 필요 → 가까운 기한 → 오래된 접수)으로 30건씩, 나머지는 '더 보기'·검색 — 수백 건을 한 번에 그리지 않음 */
+  const urg = r => { const b = recBand(r).k, d = (r.deadlines || []).filter(x => !x.done).map(x => x.due).sort()[0] || '9999'; return [b === 'act' ? 0 : 1, d, r.startDate || '']; };
+  const actQl = activeQ.trim().toLowerCase();
+  const actHit = actQl ? act.filter(r => [r.title, clientName(r.clientId), r.bl, r.refNo, r.caseNo, ...(r.refs || []).map(x => x.no), r.type, r.summary].join(' ').toLowerCase().includes(actQl)) : act;
+  const actSorted = actHit.map(r => [urg(r), r]).sort((x, y) => x[0][0] - y[0][0] || x[0][1].localeCompare(y[0][1]) || x[0][2].localeCompare(y[0][2])).map(x => x[1]);
+  const actShow = actSorted.slice(0, activeLimit);
   const hold = db.records.filter(r => r.status === '보류' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
   const dls = openDeadlines();
   const head = `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
@@ -221,8 +242,9 @@ function viewActive(){
   ${stale.length ? `<section class="stale"><div class="sec-head"><h3>확인 필요 — ${STALE_DAYS}영업일 넘게 변화 없음</h3></div><ul>${stale.map(x => `<li><button class="linkish" data-edit-rec="${esc(x.r.id)}">${x.r.caseNo ? esc(x.r.caseNo) + ' ' : ''}${esc(x.r.title)}</button> <span class="hint">${esc(clientName(x.r.clientId))} · ${x.n}영업일${x.r.assignee ? ' · 담당 ' + esc(assigneeName(x.r.assignee)) : ''}</span></li>`).join('')}</ul></section>` : ''}
   <div class="act-layout">
     <section>
-      <div class="sec-head"><h3>진행중 <span class="cnt">${act.length}건</span></h3></div>
-      <div class="rec-grid wide">${act.length ? act.map(r => recordHTML(r, {showClient:true})).join('') : '<p class="empty">진행중인 업무가 없습니다.</p>'}</div>
+      <div class="sec-head"><h3>진행중 <span class="cnt">${act.length}건${actQl ? ` · 찾음 ${actHit.length}` : ''} · 급한 순</span></h3><input type="search" id="actQ" class="item-q" placeholder="업체·제목·B/L·신고번호 검색" value="${esc(activeQ)}"></div>
+      <div class="rec-grid wide">${actShow.length ? actShow.map(r => recordHTML(r, {showClient:true})).join('') : `<p class="empty">${actQl ? '찾는 업무가 없습니다.' : '진행중인 업무가 없습니다.'}</p>`}</div>
+      ${actSorted.length > actShow.length ? `<p class="more-row"><button class="ghost" data-act-more>${Math.min(30, actSorted.length - actShow.length)}건 더 보기</button> <span class="hint">남은 ${actSorted.length - actShow.length}건 — 검색하면 바로 찾습니다</span></p>` : ''}
       ${hold.length ? `<div class="sec-head" style="margin-top:2rem"><h3>보류 <span class="cnt">${hold.length}건</span></h3></div><div class="rec-grid wide">${hold.map(r => recordHTML(r, {showClient:true})).join('')}</div>` : ''}
     </section>
     <aside class="side-col"><section><div class="sec-head"><h3>전체 기한</h3></div>
@@ -231,6 +253,7 @@ function viewActive(){
   </div>`;
 }
 
+let clientRecQ = {cid:'', q:''}, clientRecLimit = {};
 function viewClient(){
   const c = db.clients.find(x => x.id === route.id);
   const recs = db.records.filter(r => r.clientId === c.id).sort(byDateDesc);
@@ -262,6 +285,7 @@ function viewClient(){
       </div>
     </header>
     ${typeof clientMergedHTML === 'function' ? clientMergedHTML(c) : ''}
+    ${typeof clientRouteHTML === 'function' ? clientRouteHTML(c) : ''}
     ${c.address || c.openDate ? `<p class="client-meta">${[c.address, c.openDate && '개업 ' + c.openDate].filter(Boolean).map(esc).join(' / ')}</p>` : ''}
     ${c.notes ? `<p class="client-notes">${esc(c.notes)}</p>` : ''}
     ${typeof clientInsightHTML === 'function' ? clientInsightHTML(c) : ''}
@@ -282,7 +306,14 @@ function viewClient(){
       </section>
       <section>
         <div class="sec-head"><h3>업무 히스토리 <span class="cnt">${fr.length}건${actCount ? `, 진행 ${actCount}건` : ''}${spCount ? `, 특이 ${spCount}건` : ''}</span></h3><button class="mini" data-new-rec data-client="${esc(c.id)}">기록 추가</button></div>
-        ${fr.length ? fr.map(r => recordHTML(r)).join('') : '<p class="empty">이 조건의 기록이 없습니다.</p>'}
+        ${(() => {                                                          // 11/14 P3: 최근 10건 + 검색 + 더 보기
+          if(!fr.length) return '<p class="empty">이 조건의 기록이 없습니다.</p>';
+          const q = (clientRecQ.cid === c.id ? clientRecQ.q : '').trim().toLowerCase(), lim = clientRecLimit[c.id] || 10;
+          const hit = q ? fr.filter(r => [r.title, r.bl, r.refNo, r.caseNo, ...(r.refs || []).map(x => x.no), r.summary, r.specialNote, (r.tags || []).join(' ')].join(' ').toLowerCase().includes(q)) : fr;
+          return `${fr.length > 10 ? `<div class="rec-q"><input type="search" id="cRecQ" data-cid="${esc(c.id)}" class="item-q" placeholder="이 업체 기록 검색 (제목·B/L·신고번호·태그)" value="${esc(clientRecQ.cid === c.id ? clientRecQ.q : '')}">${q ? ` <span class="hint">${hit.length}건 찾음</span>` : ''}</div>` : ''}
+            ${hit.slice(0, lim).map(r => recordHTML(r)).join('') || '<p class="empty">찾는 기록이 없습니다.</p>'}
+            ${hit.length > lim ? `<p class="more-row"><button class="ghost" data-crec-more="${esc(c.id)}">${Math.min(20, hit.length - lim)}건 더 보기</button> <span class="hint">남은 ${hit.length - lim}건</span></p>` : ''}`;
+        })()}
       </section>
     </div>`;
 }
@@ -362,6 +393,7 @@ function amendSection(c){
 
 function clientContactsSection(c){
   const cc = c.contacts || [], rw = c.recentWork || [];
+  if(!cc.length && !rw.length) return `<p class="route-line">업체 담당자 없음 <button class="mini" data-scan="${esc(c.id)}">메일에서 담당자 스캔</button></p>`;   // 빈 칸은 한 줄로 (11/14 P3)
   return `<section class="items">
     <div class="sec-head"><h3>업체 담당자 <span class="cnt">${cc.length}명</span></h3><button class="mini" data-scan="${esc(c.id)}">메일에서 담당자 스캔</button></div>
     ${cc.length ? (() => {                                            // 대표 담당자 3명(메일 많은 순)만 먼저, 나머지는 펼치기 (11/9)
@@ -480,7 +512,8 @@ function viewClientList(){
   const list = sortedClients();
   const types = c => [...new Set(db.records.filter(r => r.clientId === c.id).map(r => r.type))];
   return `<header class="client-head"><div><h2>거래업체 리스트</h2><p class="client-meta">업체 ${list.length}곳. 사업자등록증과 메일 기준으로 채웁니다.</p></div>
-      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button></div></header>
+      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button><button class="ghost" data-clist-fwd title="포워더 아래에 그 포워더가 보낸 화주를 묶어 봅니다">${typeof clientListByFwd !== 'undefined' && clientListByFwd ? '전체 목록' : '포워더별로 묶어 보기'}</button></div></header>
+    ${typeof clientListByFwd !== 'undefined' && clientListByFwd ? clientListFwdHTML() : `
     ${list.length ? `<div class="table-wrap" style="margin-top:1.25rem"><table class="grid"><thead><tr><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>업무담당자</th><th>관련업무</th></tr></thead><tbody>
       ${list.map(c => { const cc = (c.contacts || []).slice(0,2), ty = types(c), rw = (c.recentWork || []).slice(0,2); return `<tr>
         <td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong></button>${cautionBadge(c)}${c.bizNo ? `<div class="hint">${esc(c.bizNo)}</div>` : ''}</td>
@@ -489,7 +522,7 @@ function viewClientList(){
         <td>${cc.length ? cc.map(p => `<div>${esc(p.name || '')} <span class="hint">${esc(p.email)}</span></div>`).join('') : esc(c.contact || '')}</td>
         <td>${ty.map(t => `<span class="tag type">${esc(t)}</span> `).join('')}${rw.map(w => `<div class="hint">${esc(w.date)} ${esc(w.subject)}</div>`).join('')}</td>
       </tr>`; }).join('')}
-    </tbody></table></div>` : '<p class="empty">업체가 없습니다. ‘사업자등록증 폴더 반영’으로 한 번에 채울 수 있습니다.</p>'}`;
+    </tbody></table></div>` : '<p class="empty">업체가 없습니다. ‘사업자등록증 폴더 반영’으로 한 번에 채울 수 있습니다.</p>'}`}`;
 }
 async function bizImport(){
   const cfg = db.settings.mail || {};

@@ -226,3 +226,89 @@ function similarClients(name, biz, exceptId){
   }).filter(Boolean).sort((x, y) => y.lvl - x.lvl);
 }
 function dupCount(){ try{ return dupCandidates().length; }catch(e){ return 0; } }
+
+/* ---------- 기록 중복 점검·합치기 (11/14 P2) ----------
+   같은 업체에 같은 신고번호 기록이 둘 이상(확실), 또는 같은 B/L이고 신고번호가 한쪽만 있거나 같고 수입·수출 구분이 같은 기록(확인 필요).
+   신고번호가 둘 다 있고 다르면 분할·정정 신고라 다른 건으로 본다. '다른 건'은 settings.recNotDup.
+   합치기: 먼저 만든 기록(케이스 번호가 있는 쪽 우선)에 메일·자료·식별번호·체크리스트·서류·기한·태그·이력을 합치고, 빈 칸을 채우며,
+   다른 쪽을 가리키던 자료(메일 대화 연결·연결 기록·검토·질의·알림)를 옮긴다. db.recMergeLog로 되돌린다(합친 기록은 합치기 직전 상태로). */
+function recDupCandidates(){
+  const not = new Set(db.settings.recNotDup || []), out = [], seen = new Set();
+  const tail = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  const groups = new Map();
+  const put = (k, r) => { if(!groups.has(k)) groups.set(k, []); groups.get(k).push(r); };
+  db.records.forEach(r => {
+    if(!r.clientId) return;
+    const d = tail(r.refNo); if(d.length >= 10) put(r.clientId + '|d|' + d, r);
+    const b = tail(r.bl); if(b.length >= 6 && !(typeof BOGUS_REF !== 'undefined' && BOGUS_REF.test(b))) put(r.clientId + '|b|' + b, r);
+  });
+  groups.forEach((rs, k) => {
+    if(rs.length < 2) return;
+    const byDecl = k.includes('|d|');
+    for(let i = 0; i < rs.length; i++) for(let j = i + 1; j < rs.length; j++){
+      const a = rs[i], b = rs[j], pk = dupPairKey(a.id, b.id);
+      if(seen.has(pk) || not.has(pk)) continue;
+      if(!byDecl){
+        const da = tail(a.refNo), dbb = tail(b.refNo);
+        if(da && dbb && da !== dbb) continue;                                   // 분할·정정: 신고번호가 다름
+        if(typeof caseCode === 'function' && caseCode(a.type) !== caseCode(b.type)) continue;
+      }
+      seen.add(pk);
+      out.push({a, b, lvl:byDecl ? 3 : 1, why:byDecl ? `신고번호 같음 (${a.refNo})` : `B/L 같음 (${a.bl})`});
+    }
+  });
+  return out.sort((x, y) => y.lvl - x.lvl);
+}
+function recKeepFirst(a, b){ return (b.caseNo ? 1 : 0) - (a.caseNo ? 1 : 0) || String(a.createdAt || a.startDate || '').localeCompare(String(b.createdAt || b.startDate || '')); }
+function mergeRecords(keepId, goneId){
+  const keep = db.records.find(r => r.id === keepId), gone = db.records.find(r => r.id === goneId);
+  if(!keep || !gone || keep === gone) return null;
+  const log = {id:uid(), at:nowIso(), by:me ? me.id : '', keep:keep.id, keepBefore:clone(keep), gone:clone(gone), moved:{}};
+  const uniq = (a, b, key) => { const m = new Map((a || []).map(x => [key(x), x])); (b || []).forEach(x => { if(!m.has(key(x))) m.set(key(x), clone(x)); }); return [...m.values()]; };
+  keep.mails = uniq(keep.mails, gone.mails, x => x.id).sort((x, y) => String(x.date).localeCompare(String(y.date)));
+  keep.files = uniq(keep.files, gone.files, x => x.id || x.name);
+  keep.refs = uniq(keep.refs, gone.refs, x => String(x.no).toUpperCase());
+  keep.tags = [...new Set([...(keep.tags || []), ...(gone.tags || [])])];
+  keep.links = [...new Set([...(keep.links || []), ...(gone.links || [])])];
+  const mergeCk = (a, b) => { const m = new Map((a || []).map(x => [x.text, x])); (b || []).forEach(x => { const y = m.get(x.text); if(!y) m.set(x.text, clone(x)); else if(x.done && !y.done){ y.done = true; if(x.doneAt) y.doneAt = x.doneAt; } }); return [...m.values()]; };
+  keep.checklist = mergeCk(keep.checklist, gone.checklist); keep.docs = mergeCk(keep.docs, gone.docs);
+  keep.deadlines = uniq(keep.deadlines, gone.deadlines, x => x.kind + '|' + x.due);
+  keep.history = [...(keep.history || []), ...(gone.history || []).map(h => ({...h, text:`[합친 기록] ${h.text}`}))].sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-60);
+  keep.certRead = {...(gone.certRead || {}), ...(keep.certRead || {})};
+  keep.stage = {...(gone.stage || {}), ...(keep.stage || {})};
+  ['bl', 'refNo', 'itemId', 'summary', 'assignee', 'fee', 'via', 'billTo', 'procId', 'cargoNo', 'unipass', 'lawSnap'].forEach(k => { if((keep[k] === undefined || keep[k] === null || keep[k] === '') && gone[k]) keep[k] = clone(gone[k]); });
+  if(gone.special && !keep.special){ keep.special = true; keep.specialNote = gone.specialNote || keep.specialNote; }
+  else if(gone.specialNote && keep.specialNote !== gone.specialNote && keep.special) keep.specialNote = [keep.specialNote, gone.specialNote].filter(Boolean).join('\n');
+  if(keep.status !== '완료' && gone.status === '완료'){ keep.status = '완료'; keep.date = gone.date || keep.date; }
+  if(gone.startDate && (!keep.startDate || gone.startDate < keep.startDate)) keep.startDate = gone.startDate;
+  addHist(keep, `기록 합침: ‘${gone.caseNo ? gone.caseNo + ' ' : ''}${gone.title}’ (같은 ${String(gone.refNo || '').length && gone.refNo === keep.refNo ? '신고번호' : 'B/L'})`);
+  keep.updatedAt = nowIso();
+  db.records = db.records.filter(r => r.id !== gone.id);
+  Object.keys(db).forEach(k => {
+    if(k === 'records' || MERGE_SKIP.has(k) || k === 'recMergeLog') return;
+    const v = db[k];
+    if(Array.isArray(v)) v.forEach((x, i) => { if(x && typeof x === 'object' && refSwap(x, gone.id, keep.id)) (log.moved[k] = log.moved[k] || []).push(entKey(x, i)); });
+    else if(v && typeof v === 'object'){ const mv = []; Object.keys(v).forEach(k2 => { const x = v[k2]; if(x === gone.id){ v[k2] = keep.id; mv.push(k2); } else if(x && typeof x === 'object' && refSwap(x, gone.id, keep.id)) mv.push(k2); }); if(mv.length) (log.maps = log.maps || {})[k] = mv; }
+  });
+  db.records.forEach(r => { if(r !== keep && refSwap(r, gone.id, keep.id)) (log.moved.records = log.moved.records || []).push('id:' + r.id); });   // 다른 기록의 연결(linkTo·linkFrom)
+  db.recMergeLog = [...(db.recMergeLog || []), log].slice(-30);
+  if(typeof autoLog === 'function') autoLog('recmerge', 1);
+  if(typeof addAlert === 'function') addAlert({key:'recmerge-' + log.id, kind:'recmerge', ttype:'rec', tid:keep.id, logId:log.id, title:`기록 합침: ${keep.caseNo || ''} ${keep.title}`.slice(0, 120), text:`‘${gone.title}’을(를) 합쳤습니다. 단계·신고번호·수수료가 맞는지 확인하세요. 잘못 합쳤으면 되돌리기.`});
+  return log;
+}
+function unmergeRecords(logId){
+  const log = (db.recMergeLog || []).find(x => x.id === logId);
+  if(!log || db.records.some(r => r.id === log.gone.id)) return false;
+  const i = db.records.findIndex(r => r.id === log.keep);
+  if(i >= 0) db.records[i] = clone(log.keepBefore); else db.records.push(clone(log.keepBefore));
+  db.records.push(clone(log.gone));
+  Object.keys(log.moved).forEach(k => {
+    const v = k === 'records' ? db.records : db[k], keys = new Set(log.moved[k]);
+    if(Array.isArray(v)) v.forEach((x, j) => { if(x && typeof x === 'object' && x.id !== log.keep && x.id !== log.gone.id && (keys.has(entKey(x, j)) || (x.id && [...keys].some(q => q.split('|')[0] === 'id:' + x.id)))) refSwap(x, log.keep, log.gone.id); });
+  });
+  Object.keys(log.maps || {}).forEach(k => { const v = db[k]; if(!v) return; log.maps[k].forEach(k2 => { if(v[k2] === log.keep) v[k2] = log.gone.id; else if(v[k2] && typeof v[k2] === 'object') refSwap(v[k2], log.keep, log.gone.id); }); });
+  db.recMergeLog = db.recMergeLog.filter(x => x.id !== logId);
+  db.settings.recNotDup = [...new Set([...(db.settings.recNotDup || []), dupPairKey(log.keep, log.gone.id)])];
+  (db.alerts || []).forEach(a => { if(a.logId === logId) a.status = 'done'; });
+  return true;
+}

@@ -77,6 +77,7 @@ function viewStatus(){
       ${row(RUN_KEYS.law, runStat.law, '7일마다')}
       ${row('Drive 자동 저장', sy, '고칠 때마다')}
     </tbody></table></div>
+    ${typeof autoCheckHTML === 'function' ? autoCheckHTML() : ''}
     <p class="hint">실패가 이어지면: 메일 수집기는 사무실 PC 확인, 그 밖에는 ‘데이터’ 창의 Apps Script 주소·이 PC 토큰과 인터넷 연결을 확인하세요. 오류 문구에 ‘인증키’·‘허용’이 있으면 관리자에게 알립니다.</p>`;
 }
 
@@ -105,6 +106,17 @@ function checkGroups(){
       return {t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} — ${(r.stage || {})[k + 'By'] || ''}`, lvl:'chk', acts:`<button class="mini" data-edit-rec="${esc(r.id)}">기록 열기</button><button class="mini strong" data-stage-ok="${esc(r.id)}|${k}">확인 완료</button>`}; })]});
   const pv = db.records.filter(r => r.status !== '완료' && typeof procVerHTML === 'function' && / 새 버전/.test(procVerHTML(r)));
   if(pv.length) g.push({k:'pver', title:'매뉴얼이 바뀐 진행 중 업무', why:'시작한 뒤 매뉴얼이 고쳐졌습니다 — 차이를 보고 필요한 단계만 넣으세요', rows:pv.map(r => ({t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${(r.procVer || {}).s || ''}`, lvl:'ref', acts:`<button class="mini strong" data-proc-diff="${esc(r.id)}">차이 보기</button>`}))});
+  if(typeof recDupCandidates === 'function'){                              // 11/14 P2: 같은 신고번호·B/L 기록
+    const rd = recDupCandidates();
+    const lab = r => `${r.caseNo ? r.caseNo + ' ' : ''}${r.title}`.slice(0, 50) + ` (${r.status}, ${recDate(r)})`;
+    if(rd.length) g.push({k:'recdup', title:'같은 신고번호·B/L 기록', why:'두 PC·Drive 합치기·묶음 필증 등으로 한 건이 두 기록이 됐을 수 있습니다 — 합치면 메일·자료·단계가 한 기록에 모입니다', rows:rd.map(x => { const [k, o] = recKeepFirst(x.a, x.b) <= 0 ? [x.a, x.b] : [x.b, x.a];
+      return {t1:`${clientName(k.clientId)} · ${x.why}`, t2:`남김: ${lab(k)} ← ${lab(o)}`, lvl:x.lvl === 3 ? 'chk' : 'ref', acts:`<button class="mini strong" data-rdup-merge="${esc(k.id)}|${esc(o.id)}">합치기</button><button class="mini" data-rdup-swap="${esc(o.id)}|${esc(k.id)}" title="반대쪽을 남기고 합치기">반대로</button><button class="mini" data-rdup-no="${esc(k.id)}|${esc(o.id)}">다른 건</button>`}; })});
+  }
+  if(typeof resolveBillTo === 'function'){                                 // 11/14 P2: 포워더 의뢰 건 청구처 미정
+    const cut = addPeriod(today(), -60, 'd'), tb = db.records.filter(r => r.via && !r.billTo && recDate(r) >= cut);
+    if(tb.length) g.push({k:'billtbd', title:'청구처 미정 — 포워더 의뢰 건', why:'청구서 메일·지난 건·기본값으로 정하지 못했습니다. 한 번 정하면 같은 화주·포워더의 다음 건은 따라갑니다', rows:tb.map(r => ({t1:`${r.caseNo || ''} ${r.title}`.trim(), t2:`${clientName(r.clientId)} · 의뢰 ${clientName(r.via)}`, lvl:'chk',
+      acts:`<button class="mini strong" data-bill-set="${esc(r.id)}|via">포워더 청구</button><button class="mini" data-bill-set="${esc(r.id)}|self">화주 청구</button>`}))});
+  }
   const rf = runFails();
   if(rf.length) g.push({k:'run', title:'수집 실패', why:'자동 수집·확인이 실패하고 있습니다', rows:rf.map(x => ({t1:x.label, t2:`${x.s.fail ? kstT(x.s.fail) + ' · ' : ''}${x.s.err}`, lvl:'act', acts:`<button class="mini" data-go="status">수집 상태</button>`}))});
   return g;

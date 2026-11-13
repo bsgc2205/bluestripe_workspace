@@ -139,9 +139,16 @@ function relationText(r){
   const span = r.months >= 12 ? `${Math.floor(r.months/12)}년${r.months % 12 ? ' ' + (r.months % 12) + '개월' : ''}` : `${r.months}개월`;
   return `${r.first} ~ ${r.last} (${span})${r.recent ? '' : ', 최근 1년 업무 없음'}`;
 }
+/* 단계로 끝난 기한 (11/14 P2): 선적완료(수출 통관 단계)·완료된 건의 적재기한, 통관완료된 건의 반입 후 신고기한은 남은 기한에서 뺀다 */
+function dlClosed(r, d){
+  const st = typeof stageOf === 'function' ? stageOf(r) : (r.stage || {});
+  if(/적재기한/.test(d.kind || '')) return r.status === '완료' || !!st.customs;
+  if(/수입신고 기한/.test(d.kind || '')) return r.status === '완료' || !!st.customs;
+  return false;
+}
 function openDeadlines(){
   const out = [];
-  db.records.forEach(r => (r.deadlines||[]).forEach(d => { if(!d.done) out.push({r, d}); }));
+  db.records.forEach(r => (r.deadlines||[]).forEach(d => { if(!d.done && !dlClosed(r, d)) out.push({r, d}); }));
   return out.sort((a,b) => a.d.due.localeCompare(b.d.due));
 }
 
@@ -158,11 +165,19 @@ async function wrapFor(id, name, role, pw){
   const w = await crypto.subtle.encrypt({name:'AES-GCM', iv}, kek, dekRaw);
   return {id, name, role, salt:b64(sl), iter:ITER, iv:b64(iv), wrapped:b64(w)};
 }
-async function encryptDb(text){
+/* 압축 (11/14 P1): 이 PC 브라우저 저장본은 gzip으로 줄여 암호화한다(z:'gzip'). 읽을 때는 z가 있으면 풀고, 없으면 예전 형식 그대로.
+   Drive 저장(sync)·암호화 파일 받기는 settings.syncZip이 켜졌을 때만 압축 — 예전 화면이 남은 PC가 Drive 파일을 못 여는 일을 막기 위해 기본은 끔. */
+const canZip = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+async function zipBytes(u8){ const s = new Blob([u8]).stream().pipeThrough(new CompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
+async function unzipBytes(u8){ const s = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
+async function encryptDb(text, opt = {}){
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, dataKey, enc.encode(text || JSON.stringify(db)));
-  return {format:'bsgc-ledger', v:3, accounts, iv:b64(iv), ct:b64(ct)};
+  let pt = enc.encode(text || JSON.stringify(db)), z = '';
+  if(opt.zip && canZip){ pt = await zipBytes(pt); z = 'gzip'; }
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, dataKey, pt);
+  return {format:'bsgc-ledger', v:3, accounts, iv:b64(iv), ct:b64(ct), ...(z ? {z} : {})};
 }
+async function plainOf(blob, u8){ return JSON.parse(dec.decode(blob && blob.z === 'gzip' ? await unzipBytes(new Uint8Array(u8)) : u8)); }
 async function openBlob(blob, id, pw){
   if(Array.isArray(blob.accounts)){
     const a = blob.accounts.find(x => x.id.toLowerCase() === String(id || '').trim().toLowerCase());
@@ -171,7 +186,7 @@ async function openBlob(blob, id, pw){
     const raw = new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv:unb64(a.iv)}, kek, unb64(a.wrapped)));
     const k = await importDek(raw);
     const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:unb64(blob.iv)}, k, unb64(blob.ct));
-    return {data:JSON.parse(dec.decode(pt)), raw, key:k, accounts:blob.accounts, me:{id:a.id, name:a.name, role:a.role}};
+    return {data:await plainOf(blob, pt), raw, key:k, accounts:blob.accounts, me:{id:a.id, name:a.name, role:a.role}};
   }
   const sl = unb64(blob.salt), it = blob.iter || ITER;
   const k = await deriveKey(pw, sl, it);
@@ -179,10 +194,40 @@ async function openBlob(blob, id, pw){
   return {data:JSON.parse(dec.decode(pt)), legacy:true};
 }
 function accountName(id){const a = accounts.find(x => x.id === id); return a ? a.name : id;}
-async function persistLocal(){
-  try{const b = await encryptDb(); localStorage.setItem(LS_KEY, JSON.stringify(b)); localBlob = b;}
-  catch(e){toast('브라우저 저장에 실패했습니다. 지금 암호화 파일을 받아 두세요.');}
+/* 이 PC 저장소 (11/14 P1): localStorage(사이트당 약 5MB, 같은 github.io 주소의 다른 페이지와 나눠 씀) 대신 IndexedDB.
+   처음 한 번 localStorage의 예전 사본을 읽어 옮기고 지운다. IndexedDB를 못 쓰는 브라우저면 localStorage로. */
+const IDB_NAME = 'bsgc-workspace', IDB_STORE = 'kv';
+let idbP = null;
+function idbOpen(){
+  if(idbP) return idbP;
+  idbP = new Promise((res, rej) => { try{ const q = indexedDB.open(IDB_NAME, 1); q.onupgradeneeded = () => q.result.createObjectStore(IDB_STORE); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }catch(e){ rej(e); } });
+  idbP.catch(() => { idbP = null; });
+  return idbP;
 }
+async function idbGet(k){ const d = await idbOpen(); return new Promise((res, rej) => { const q = d.transaction(IDB_STORE).objectStore(IDB_STORE).get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function idbSet(k, v){ const d = await idbOpen(); return new Promise((res, rej) => { const t = d.transaction(IDB_STORE, 'readwrite'); t.objectStore(IDB_STORE).put(v, k); t.oncomplete = () => res(true); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
+async function idbDel(k){ try{ const d = await idbOpen(); return new Promise(res => { const t = d.transaction(IDB_STORE, 'readwrite'); t.objectStore(IDB_STORE).delete(k); t.oncomplete = () => res(true); t.onerror = () => res(false); }); }catch(e){ return false; } }
+async function storeGet(k){                                               // IndexedDB → 없으면 예전 localStorage
+  try{ const v = await idbGet(k); if(v) return v; }catch(e){}
+  try{ const s = localStorage.getItem(k); return s ? JSON.parse(s) : null; }catch(e){ return null; }
+}
+async function storeSet(k, v){
+  try{ await idbSet(k, v); try{ localStorage.removeItem(k); }catch(e){} return true; }   // 옮겼으면 localStorage 사본은 지워 공간 확보
+  catch(e){ try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e2){ return false; } }
+}
+async function storeDel(k){ await idbDel(k); try{ localStorage.removeItem(k); }catch(e){} }
+let persistT = null, persistBusy = null;
+async function persistLocal(){
+  clearTimeout(persistT); persistT = null;
+  const run = async () => {
+    try{ const b = await encryptDb('', {zip:true}); if(!(await storeSet(LS_KEY, b))) throw new Error('quota'); localBlob = b; }
+    catch(e){ toast('이 PC 저장에 실패했습니다. Drive 자동 저장은 계속됩니다. 걱정되면 데이터 → 백업 받기를 해 두세요.'); }
+  };
+  persistBusy = (persistBusy || Promise.resolve()).then(run, run);
+  return persistBusy;
+}
+function schedulePersist(){ clearTimeout(persistT); persistT = setTimeout(persistLocal, 700); }   // 고칠 때마다 바로 암호화·저장하지 않고 0.7초 모아서
+function flushPersist(){ if(persistT) persistLocal(); }
 
 /* ---------- data ---------- */
 function migrate(d){
@@ -215,7 +260,7 @@ async function boot(){
     $('#gateMsg').textContent = '이 화면에서는 암호화를 쓸 수 없습니다. https 주소(GitHub Pages)나 최신 브라우저로 여세요.';
     return;
   }
-  try{const s = localStorage.getItem(LS_KEY); if(s) localBlob = JSON.parse(s);}catch{}
+  localBlob = await storeGet(LS_KEY);
   const pairEp = pairLinkEndpoint();                                    // 관리자가 준 연결 링크(#pair=…)로 열었으면 주소를 채우고 코드 입력부터
   if(pairEp){
     $('#gsEp').value = pairEp;
@@ -292,7 +337,8 @@ async function createNew(){
   dekRaw = crypto.getRandomValues(new Uint8Array(32)); dataKey = await importDek(dekRaw);
   accounts = [await wrapFor(id, name, 'admin', a)]; me = {id, name, role:'admin'};
   db = newDb(); remoteUpdatedAt = null; remoteBlob = null;
-  try{localStorage.setItem(LS_KEY + '-uid', id); localStorage.removeItem(LS_KEY + '-base');}catch{}
+  try{localStorage.setItem(LS_KEY + '-uid', id);}catch{}
+  await storeDel(LS_KEY + '-base');
   serverBlob = null; serverPre = null;
   await persistLocal();
   enterApp();
@@ -317,7 +363,7 @@ function enterApp(){
 }
 
 /* ---------- save state ---------- */
-function commit(){ensureCaseNos(db); db.meta.updatedAt = nowIso(); render(); persistLocal(); scheduleSync();}
+function commit(){ensureCaseNos(db); db.meta.updatedAt = nowIso(); render(); schedulePersist(); scheduleSync();}
 let mineOnly = false;
 function updateSaveState(){
   const el = $('#saveState'); let text, dirty = false;

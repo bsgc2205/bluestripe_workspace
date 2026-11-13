@@ -572,3 +572,27 @@ li.own{color:var(--prog)}
 .tag.lv-act{border:1px solid var(--act);color:var(--act);background:transparent}
 .tag.lv-prog{border:1px solid var(--prog);color:var(--prog);background:transparent}
 .tag.lv-chk{border:1px solid var(--chk);color:var(--chk);background:var(--chk-bg)}
+/* 11/14 b: 진행 중 30건씩·업체 기록 검색·단계 메뉴 */
+.more-row{margin:.75rem 0;text-align:center}
+.rec-q{margin:.25rem 0 .75rem}
+.sec-head .item-q{margin-left:auto}
+.stage-more{position:relative}
+.stage-more>summary{list-style:none;cursor:pointer;display:inline-block}
+.stage-more>summary::-webkit-details-marker{display:none}
+.stage-more[open]{display:flex;flex-direction:column;gap:.25rem}
+/* 11/14 b: 간결한 화면 — 왼쪽 업체 검색, 오늘 할 일 묶음, 한 줄 요약 */
+.side-link .lbl-t{white-space:nowrap}
+.side-q{width:100%;margin:.25rem 0 .4rem;padding:.3rem .5rem;font-size:.85rem}
+.side-sub{margin:.6rem 0 .2rem;font-size:.78rem;color:var(--muted)}
+.side-all{display:block;width:100%;margin-top:.6rem;text-align:left;background:transparent;border:0;color:var(--muted);font-size:.85rem;padding:.3rem .25rem;cursor:pointer}
+.side-all:hover{color:var(--ink)}
+.today-grp{border-left:3px solid var(--line);margin:.35rem 0;padding:.15rem 0 .15rem .5rem}
+.today-grp.lv-act{border-left-color:var(--act)}.today-grp.lv-chk{border-left-color:var(--chk)}.today-grp.lv-prog{border-left-color:var(--prog)}
+.today-grp>summary{cursor:pointer;padding:.3rem 0}
+.route-line{margin:.35rem 0;color:var(--muted)}
+.fwd-box{margin:1rem 0}
+.tag.via{border:1px dashed var(--line)}
+.fwd-tree details{margin:.5rem 0;padding:.4rem .6rem;border:1px solid var(--line);border-radius:6px}
+.fwd-tree summary{cursor:pointer}
+.auto-check{margin-top:1.5rem}
+#clientList ul{list-style:none;padding:0;margin:0}

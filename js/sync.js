@@ -49,7 +49,7 @@ function syncPost(cfg, body){
 }
 async function decryptServer(blob){
   const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:unb64(blob.iv)}, dataKey, unb64(blob.ct));
-  return JSON.parse(dec.decode(pt));
+  return plainOf(blob, pt);
 }
 function isDirty(){
   if(!db) return false;
@@ -59,7 +59,7 @@ function isDirty(){
 function setBase(blob, data){
   sync.rev = blob.rev || 0; sync.base = data; sync.baseAcc = clone(blob.accounts);
   sync.at = blob.savedAt || sync.at; sync.by = blob.savedBy || sync.by;
-  try{ localStorage.setItem(LS_KEY + '-base', jstr(blob)); }catch{ try{ localStorage.removeItem(LS_KEY + '-base'); }catch{} }
+  storeSet(LS_KEY + '-base', blob).then(ok => { if(!ok) console.warn('기준본 저장 실패 — 이전 기준본 유지'); });   // 11/14 P1: 실패해도 지우지 않음(지우면 다음 동기화가 기준 없는 합치기로 바뀌어 지운 항목이 되살아남)
 }
 
 /* 3자 병합: 기준(base)에서 한쪽만 바뀐 값은 바뀐 쪽, 둘 다 바뀐 항목은 칸 단위로 합치고 같은 칸이면 내 값.
@@ -159,7 +159,7 @@ async function syncStart(pre){
       catch{ sync.on = false; sync.state = 'mismatch'; sync.mis = blob; updateSaveState(); toast('Drive의 Workspace 파일이 이 PC의 Workspace와 달라 자동 저장을 멈췄습니다. 오른쪽 위 ‘Drive 자동 저장 꺼짐’을 눌러 정리하세요.'); return; }
     }
     let base = null, baseAcc = null, baseRev = -1;
-    try{ const bb = JSON.parse(localStorage.getItem(LS_KEY + '-base') || 'null'); if(bb && bb.ct){ base = migrate(await decryptServer(bb)); baseAcc = bb.accounts; baseRev = bb.rev || 0; } }catch{ base = null; }
+    try{ const bb = await storeGet(LS_KEY + '-base'); if(bb && bb.ct){ base = migrate(await decryptServer(bb)); baseAcc = bb.accounts; baseRev = bb.rev || 0; } }catch{ base = null; }
     if(!blob){ sync.rev = 0; sync.base = null; sync.baseAcc = null; }     // 서버에 파일이 없거나 예전 형식이면 내 내용을 올린다
     else{
       if(!(base && baseRev === (blob.rev || 0))){                         // 마지막으로 맞춘 뒤 서버가 바뀌었으면 합친다
@@ -190,7 +190,7 @@ async function syncNow(){
       if(!isDirty()){ sync.state = 'ok'; sync.err = ''; break; }
       sync.state = 'busy'; updateSaveState();
       const text = jstr(db), who = me.name || me.id;
-      const blob = await encryptDb(text);
+      const blob = await encryptDb(text, {zip:!!(db.settings || {}).syncZip});   // Drive 압축은 모든 PC가 새 버전일 때 관리자가 켬(데이터 메뉴)
       const res = await syncPost(cfg, {op:'save', baseRev:sync.rev, by:who, blob});
       if(res.ok){ blob.rev = res.rev; blob.savedAt = res.savedAt; blob.savedBy = who; setBase(blob, JSON.parse(text)); continue; }
       if(res.conflict && res.blob){ await absorb(res.blob); continue; }
@@ -221,8 +221,8 @@ async function pollSync(){
   }catch(e){ sync.state = 'offline'; sync.err = e.message; updateSaveState(); }
 }
 setInterval(pollSync, SYNC_POLL);
-document.addEventListener('visibilitychange', () => { if(!db || !sync.on) return; if(document.hidden){ if(isDirty()) syncNow(); } else pollSync(); });
-window.addEventListener('beforeunload', e => { if(db && sync.on && (sync.busy || isDirty())){ e.preventDefault(); e.returnValue = ''; } });
+document.addEventListener('visibilitychange', () => { if(db && document.hidden && typeof flushPersist === 'function') flushPersist(); if(!db || !sync.on) return; if(document.hidden){ if(isDirty()) syncNow(); } else pollSync(); });
+window.addEventListener('beforeunload', e => { if(db && typeof flushPersist === 'function') flushPersist(); if(db && ((sync.on && (sync.busy || isDirty())) || persistT)){ e.preventDefault(); e.returnValue = ''; } });
 
 /* ---------- 다른 Workspace 합치기 (11/12) ----------
    'Drive 자동 저장 꺼짐'(mismatch) = 이 PC의 Workspace와 Drive의 data.enc.json이 서로 다른 데이터 열쇠로 만들어져 있음

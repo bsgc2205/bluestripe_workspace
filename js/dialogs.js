@@ -81,6 +81,10 @@ function openRecord(r, preset = {}){
         <label>담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], rec.assignee || (isNew ? (clientAssignee(rec.clientId) || (me ? me.id : '')) : ''))}</select></label>
         <label>대행 수수료 (원)<input name="fee" inputmode="numeric" value="${rec.fee ? esc(rec.fee.toLocaleString('ko-KR')) : ''}" placeholder="리포트 집계용"></label>
       </div>
+      ${typeof fwdClients === 'function' && fwdClients().length ? `<div class="row2">
+        <label>의뢰처 (포워더) <span class="hint">이 건을 보낸 포워더 — 직거래면 비움</span><select name="via">${opts([['', '직거래 (없음)'], ...fwdClients().map(f => [f.id, f.name])], rec.via || '')}</select></label>
+        <label>청구처 <span class="hint">${rec.billBy && rec.billBy !== 'manual' ? '자동: ' + esc({mail:'청구서 메일', pair:'지난 건', client:'화주 기본', fwd:'포워더 기본'}[rec.billBy] || '') : '건마다 다를 수 있음'}</span><select name="billTo">${opts([['', '정하지 않음 (자동)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], rec.billTo || '')}</select></label>
+      </div>` : ''}
       <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
       <p class="hint sim-hint" data-x="simHint" hidden></p>
       <label>진행 요약<textarea name="summary" rows="4" placeholder="진행 순서, 제출 서류, 소요 기간 등. 완료 시 비워 두면 체크리스트로 자동 작성됩니다.">${esc(rec.summary)}</textarea></label>
@@ -148,6 +152,8 @@ function openRecord(r, preset = {}){
         tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t,
         reqApreNo: String(fd.get('reqApreNo') || '').trim(),
         reqRqstNo: String(fd.get('reqRqstNo') || '').trim(),
+        ...(fd.has('via') ? (() => { const v = fd.get('via') || '', b = fd.get('billTo') || ''; const o = {via:v, viaOff:!v && !!rec.via ? true : rec.viaOff || false};
+          if(b !== (rec.billTo || '')){ o.billTo = b; o.billBy = b ? 'manual' : ''; } if(!v){ o.billTo = ''; o.billBy = ''; } return o; })() : {}),
         cond: fd.get('condKind') ? {...(rec.cond || {}), kind: fd.get('condKind'), ln: String(fd.get('condLn') || '').trim(), stsz: String(fd.get('condStsz') || '').trim()} : null,
         mdfy: fd.get('mdfyNo') ? {dcshSbmtNo: String(fd.get('mdfyNo')).trim(), dgcnt: String(fd.get('mdfyDg') || '').trim(), date: fd.get('mdfyDt') || ''} : null
       });
@@ -597,6 +603,8 @@ function openClient(c){
         <label>담당자<input name="contact" value="${esc(cl.contact)}" placeholder="부서, 직함 정도만"></label>
         <label>대표자 (사유서용)<input name="rep" value="${esc(cl.rep || '')}"></label>
         <label>정산 방식<select name="settleMode">${opts([['each', '건별 정산서 (정산서 메일로 완료)'], ['monthly', '월 정산 (통관완료만으로 완료)']], cl.settleMode || 'each')}</select></label>
+        <label>업체 구분<select name="role">${opts([['', '자동 (업종에 포워더·물류면 포워더)'], ['shipper', '화주'], ['fwd', '포워더']], cl.role || '')}</select></label>
+        <label>기본 청구처 <span class="hint">포워더 의뢰 건</span><select name="billDefault">${opts([['', '지정 안 함 (건마다)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], cl.billDefault || '')}</select></label>
       </div>
       <div class="row2">
         <label>메일·Drive 검색어<input name="keyword" value="${esc(cl.keyword)}" placeholder="@abc.co.kr, 약칭 (쉼표로 구분)"></label>
@@ -622,6 +630,7 @@ function openClient(c){
       const bizChanged = bizDigits(cl.bizNo) !== bizDigits(bizBefore);
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim(); cl.ecm = String(fd.get('ecm') || '').trim(); cl.tel = String(fd.get('tel') || '').trim();
       if((bizChanged || isNew) && (db.settings.mail || {}).endpoint) setTimeout(() => checkClientsExt([cl], true), 600);   // 사업자번호가 바뀌면 통관고유부호·국세청 상태 바로 확인
+      cl.role = fd.get('role') || ''; cl.billDefault = fd.get('billDefault') || '';   // 포워더 의뢰 (11/14)
       cl.cautionLevel = fd.get('cautionLevel') || ''; cl.defaultAssignee = fd.get('defaultAssignee') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
       if(isNew){
         const sim = typeof similarClients === 'function' ? similarClients(cl.name, cl.bizNo) : [];    // 중복 등록 방지 (11/14)

@@ -39,7 +39,7 @@ function alertTargetHTML(a){
   if(a.ttype === 'item'){ const it = db.items.find(i => i.id === a.tid); return it ? `<button class="mini" data-edit-item="${esc(it.id)}">품목 열기</button> <button class="linkish" data-go="client" data-id="${esc(it.clientId)}">${esc(clientName(it.clientId))}</button>` : ''; }
   if(a.ttype === 'proc'){ const p = db.procedures.find(x => x.id === a.tid); return p ? `<button class="mini" data-man-open="${esc(p.id)}">매뉴얼에서 보기</button>` : ''; }
   if(a.ttype === 'client'){ const c = db.clients.find(x => x.id === a.tid); return c ? `<button class="mini" data-go="client" data-id="${esc(c.id)}">업체 열기</button>` : ''; }
-  if(a.ttype === 'rec'){ const r = db.records.find(x => x.id === a.tid); return r ? `<button class="mini" data-edit-rec="${esc(r.id)}">기록 열기</button>` : ''; }
+  if(a.ttype === 'rec'){ const r = db.records.find(x => x.id === a.tid); return r ? `<button class="mini" data-edit-rec="${esc(r.id)}">기록 열기</button>${a.kind === 'recmerge' && a.logId && (db.recMergeLog || []).some(x => x.id === a.logId) ? `<button class="mini" data-rdup-undo="${esc(a.logId)}">합치기 되돌리기</button>` : ''}` : ''; }
   return '';
 }
 /* 조건부 요건만 남은 품목의 세관장확인 알림은 자동으로 정리 (11/12 이전에 쌓인 알림 포함) */

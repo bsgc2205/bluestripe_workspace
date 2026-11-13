@@ -1,6 +1,6 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-client-dup],[data-client-unmerge],[data-dl-done],[data-today-mine],[data-amode],[data-asort],[data-man-scope],[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-mail-backfill],[data-unstage],[data-stage],[data-intake-undo],[data-client-ext],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-mail-client],[data-mail-to],[data-open-data],.rec-sum';
+const CLICK_SEL = '[data-rdup-merge],[data-rdup-swap],[data-rdup-no],[data-rdup-undo],[data-bill-set],[data-fwd-move],[data-clist-fwd],[data-act-more],[data-crec-more],[data-client-dup],[data-client-unmerge],[data-dl-done],[data-today-mine],[data-amode],[data-asort],[data-man-scope],[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-mail-backfill],[data-unstage],[data-stage],[data-intake-undo],[data-client-ext],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-mail-client],[data-mail-to],[data-open-data],.rec-sum';
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -57,6 +57,14 @@ document.addEventListener('click', e => {
   else if('startProc' in d){const p = db.procedures.find(x => x.id === d.startProc); openRecord(null, {clientId: p.clientId || curClient, type: p.type, status:'진행중', procId: p.id});}
   else if('newClient' in d) openClient(null);
   else if('clientDup' in d) openClientDup();
+  else if('rdupMerge' in d || 'rdupSwap' in d){ const [k, o] = (d.rdupMerge || d.rdupSwap).split('|'), rk = findRec(k), ro = findRec(o); if(rk && ro && confirm(`‘${ro.title}’을(를) ‘${rk.title}’에 합칩니다. 메일·자료·단계·이력이 한 기록에 모입니다(확인 알림에서 되돌리기 가능).`)){ mergeRecords(k, o); commit(); toast('기록을 합쳤습니다.'); } }
+  else if('rdupNo' in d){ db.settings.recNotDup = [...new Set([...(db.settings.recNotDup || []), dupPairKey(...d.rdupNo.split('|'))])]; commit(); toast('다른 건으로 표시했습니다.'); }
+  else if('rdupUndo' in d){ if(confirm('기록 합치기를 되돌릴까요? 합친 기록은 합치기 직전 상태로 돌아갑니다(그 뒤 고친 내용은 없어짐).')){ if(unmergeRecords(d.rdupUndo)){ commit(); toast('되돌렸습니다.'); } else toast('되돌리지 못했습니다.'); } }
+  else if('billSet' in d){ const [id, v] = d.billSet.split('|'), r = findRec(id); if(r){ r.billTo = v; r.billBy = 'manual'; addHist(r, `청구처: ${billLabel(r)} (직접 지정)`); r.updatedAt = nowIso(); commit(); toast(`청구처를 ${billLabel(r)}로 정했습니다.`); } }
+  else if('fwdMove' in d) openFwdMove(d.fwdMove);
+  else if('clistFwd' in d){ clientListByFwd = !clientListByFwd; renderView(); }
+  else if('actMore' in d){ activeLimit += 30; renderView(); }
+  else if('crecMore' in d){ clientRecLimit[d.crecMore] = (clientRecLimit[d.crecMore] || 10) + 20; renderView(); }
   else if('clientUnmerge' in d){ const lg = (db.clientMergeLog || []).find(x => x.id === d.clientUnmerge); if(lg && confirm(`‘${lg.gone.name}’을(를) 다시 나눌까요? 합칠 때 옮긴 기록·품목 등은 ‘${lg.gone.name}’으로 돌아가고, 합친 뒤 새로 생긴 자료는 지금 업체에 남습니다.`)){ if(unmergeClients(lg.id)){ commit(); toast(`‘${lg.gone.name}’을(를) 다시 나눴습니다.`); } else toast('되돌리지 못했습니다(이미 같은 업체가 있음).'); } }
   else if('editClient' in d) openClient(db.clients.find(c => c.id === d.editClient));
   else if('newItem' in d) openItem(null, d.client || curClient);
@@ -65,8 +73,8 @@ document.addEventListener('click', e => {
   else if('month' in d){rptMonth = d.month; renderView();}
   else if('csv' in d) exportCsv(d.csv);
   else if('mailLoad' in d) loadMail(true);
-  else if('mailMake' in d){const t = findThread(d.mailMake); if(t) openRecord(null, {thread:t, status:'진행중'});}
-  else if('mailAttach' in d){const t = findThread(d.mailAttach); if(t) openAttachMail(t);}
+  else if('mailMake' in d){const t = findThread(d.mailMake); if(t){ if(threadFlags(t).ref && typeof autoLog === 'function') autoLog('refUsed'); openRecord(null, {thread:t, status:'진행중'}); }}
+  else if('mailAttach' in d){const t = findThread(d.mailAttach); if(t){ if(threadFlags(t).ref && typeof autoLog === 'function') autoLog('refUsed'); openAttachMail(t); }}
   else if('mailClient' in d){const t = findThread(d.mailClient); if(t) openMailClient(t);}
   else if('mailTo' in d){const [k, rid] = d.mailTo.split('|'); mailToRecord(k, rid);}
   else if('mailIgnore' in d){const t = findThread(d.mailIgnore); if(t){ db.mailIgnored = [...(db.mailIgnored || []), ...t.ms.map(m => m.id)].slice(-5000); t.ms.forEach(m => seeMail(m.id)); } commit(); toast('목록에서 뺐습니다.');}
@@ -84,15 +92,20 @@ document.addEventListener('click', e => {
   else if('mailOldClear' in d){const isRef = d.mailOldClear === 'ref', olds = mailThreadsList().filter(t => { const f = threadFlags(t); return isRef ? !f.old && f.ref : f.old; }); if(confirm(`${isRef ? '참고 메일' : '기준일 이전 대화'} ${olds.length}건을 모두 목록에서 뺄까요? 메일 색인에는 그대로 남습니다.`)){ olds.forEach(t => t.ms.forEach(m => seeMail(m.id))); commit(); toast(`${olds.length}건을 정리했습니다.`); }}
   else if('stage' in d){const [rid, k] = d.stage.split('|'), r = findRec(rid); if(r){ setStage(r, k, today(), '직접 표시'); if(k === 'accept') setLoadDue(r, r.stage.accept); if(k === 'customs') (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true); const done = autoComplete(r); commit(); toast(done ? '통관·정산이 모두 확인되어 완료 처리했습니다.' : `${stageName(r, k)}로 표시했습니다.${k === 'accept' ? ' 적재기한(수리일 + 30일)을 등록했습니다.' : ''}`); }}
   else if('clientExt' in d){ const list = d.clientExt === 'all' ? db.clients : db.clients.filter(c => c.id === d.clientExt); toast('업체 정보를 확인하는 중…'); checkClientsExt(list, false); }
-  else if('intakeUndo' in d){const r = findRec(d.intakeUndo); if(r && confirm(`자동 접수된 ‘${r.title}’을(를) 취소할까요? 기록을 지우고, 이 메일 대화는 다시 접수하지 않습니다.`)){ db.records = db.records.filter(x => x.id !== r.id); Object.keys(db.mailThreads || {}).forEach(k => { if(db.mailThreads[k] === r.id) delete db.mailThreads[k]; }); (r.mails || []).forEach(m => seeMail(m.id)); db.intakeOff = [...(db.intakeOff || []), ...(r.mails || []).map(m => m.id)].slice(-5000); commit(); toast('자동 접수를 취소했습니다.'); }}
+  else if('intakeUndo' in d){const r = findRec(d.intakeUndo); if(r && confirm(`자동 접수된 ‘${r.title}’을(를) 취소할까요? 기록을 지우고, 이 메일 대화는 다시 접수하지 않습니다.`)){ if(typeof autoLog === 'function') autoLog('undo', 1, {how:(r.history || []).some(h => /업체 추정:/.test(h.text || ''))}); db.records = db.records.filter(x => x.id !== r.id); Object.keys(db.mailThreads || {}).forEach(k => { if(db.mailThreads[k] === r.id) delete db.mailThreads[k]; }); (r.mails || []).forEach(m => seeMail(m.id)); db.intakeOff = [...(db.intakeOff || []), ...(r.mails || []).map(m => m.id)].slice(-5000); commit(); toast('자동 접수를 취소했습니다.'); }}
   else if('unstage' in d){const [rid, k] = d.unstage.split('|'), r = findRec(rid); const nm = r ? stageName(r, k) : ''; const why = r ? askReason(`‘${r.title}’의 ${nm} 표시를 취소하는${r.autoDone ? '(자동 완료도 함께 되돌림)' : ''}`) : null; if(r && why !== null){ unsetStage(r, k, why); commit(); toast(`${nm} 표시를 취소했습니다.`); }}
   else if('undoAuto' in d){const r = findRec(d.undoAuto); if(r){ undoAuto(r); commit(); toast('진행 중으로 되돌렸습니다. 이 기록은 다시 자동 완료하지 않습니다.'); }}
   else if('openData' in d) openDataMenu();
   else if('letter' in d) openLetter('client' in d ? d.client : curClient);
 });
+$('#clientList').addEventListener('input', e => { if(e.target.id !== 'sideQ') return; sideQ = e.target.value; const h = $('#sideHits'); if(h) h.innerHTML = sideHitsHTML(sideQ); document.querySelectorAll('#clientList .side-sub, #clientList .side-sub + ul').forEach(x => { x.hidden = !!sideQ.trim(); }); });   // 왼쪽 업체 검색 (11/14)
 $('#view').addEventListener('input', e => {
   const el = e.target;
   if(el.id === 'contactQ'){ $('#contactTable').innerHTML = contactTable(); return; }
+  if(el.id === 'actQ' || el.id === 'cRecQ'){                              // 진행 중·업체 기록 검색 (11/14): 잠시 뒤 다시 그리고 입력 칸에 커서 유지
+    if(el.id === 'actQ'){ activeQ = el.value; activeLimit = 30; } else clientRecQ = {cid:el.dataset.cid || '', q:el.value};
+    const id = el.id; clearTimeout(window._aq); window._aq = setTimeout(() => { renderView(); const q = $('#' + id); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return;
+  }
   if(el.id === 'cItemQ'){                                                   // 업체 품목 검색 (11/13 g): 다시 그리지 않고 줄만 숨김
     clientItemQ = {cid:el.dataset.cid || '', q:el.value};
     const q = el.value.trim().toLowerCase(), sec = el.closest('section'); let n = 0;
@@ -135,6 +148,7 @@ document.addEventListener('toggle', e => {
   const el = e.target;
   if(el.matches && el.matches('details[data-ck-rec]')){const id = el.dataset.ckRec; el.open ? openCk.add(id) : openCk.delete(id);}
   if(el.matches && el.matches('details[data-more-rec]')){const id = el.dataset.moreRec; el.open ? moreOpen.add(id) : moreOpen.delete(id);}
+  if(el.matches && el.matches('details[data-today-grp]')){ todayOpen[el.dataset.todayGrp] = el.open; }
   if(el.matches && el.matches('details[data-items-more]')){const id = el.dataset.itemsMore; el.open ? itemMoreOpen.add(id) : itemMoreOpen.delete(id);}
   if(el.matches && el.matches('details[data-sim-rec]')){const id = el.dataset.simRec; if(el.open){ simOpen.add(id); simOpen.delete('x' + id); } else { simOpen.delete(id); simOpen.add('x' + id); }}
   if(el.matches && el.matches('details[data-folder]')) folderOpen[el.dataset.folder] = el.open;

@@ -8,7 +8,7 @@
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
-<link rel="stylesheet" href="css/app.css?v=20261114a">
+<link rel="stylesheet" href="css/app.css?v=20261114b">
 </head>
 <body>
 
@@ -66,7 +66,7 @@
     <nav class="side" aria-label="이동">
       <div class="nav-grp nav-main">
       <button class="side-link" data-go="home"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span class="lbl-t">① 오늘 할 일</span><span class="cnt" id="cntToday"></span></button>
-      <button class="side-link" data-go="active"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span class="lbl-t">② 업무케이스</span><span class="cnt" id="cntActive"></span><span class="cnt" id="cntCheck"></span></button>
+      <button class="side-link" data-go="active"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span class="lbl-t">② 업무</span><span class="cnt" id="cntActive"></span><span class="cnt" id="cntCheck"></span></button>
       <button class="side-link" data-go="clientlist"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1"/></svg><span class="lbl-t">③ 업체</span></button>
       <button class="side-link" data-go="manual"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg><span class="lbl-t">④ 매뉴얼·자료</span><span class="cnt" id="cntManual"></span></button>
       <button class="side-link" data-go="report"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M2 20h20"/></svg><span class="lbl-t">⑤ 관리</span><span class="cnt" id="cntAdmin"></span></button>
@@ -83,26 +83,27 @@
 <div id="toast" class="toast" aria-live="polite"></div>
 
 <!-- 화면 코드는 js/ 폴더에 기능별로 나뉘어 있습니다. 순서대로 불러와야 합니다. 고친 뒤에는 v= 값을 바꿔 브라우저 캐시를 새로 받게 하세요. -->
-<script src="js/core.js?v=20261114a"></script>
-<script src="js/sync.js?v=20261114a"></script>
-<script src="js/views.js?v=20261114a"></script>
-<script src="js/cases.js?v=20261114a"></script>
-<script src="js/manual.js?v=20261114a"></script>
-<script src="js/guide.js?v=20261114a"></script>
-<script src="js/extapi.js?v=20261114a"></script>
-<script src="js/collect.js?v=20261114a"></script>
-<script src="js/tools.js?v=20261114a"></script>
-<script src="js/accounts-mail.js?v=20261114a"></script>
-<script src="js/quote.js?v=20261114a"></script>
-<script src="js/board.js?v=20261114a"></script>
-<script src="js/ledger.js?v=20261114a"></script>
-<script src="js/casesum.js?v=20261114a"></script>
-<script src="js/nav.js?v=20261114a"></script>
-<script src="js/insight.js?v=20261114a"></script>
-<script src="js/review.js?v=20261114a"></script>
-<script src="js/dialogs.js?v=20261114a"></script>
-<script src="js/import.js?v=20261114a"></script>
-<script src="js/dedupe.js?v=20261114a"></script>
-<script src="js/events.js?v=20261114a"></script>
+<script src="js/core.js?v=20261114b"></script>
+<script src="js/sync.js?v=20261114b"></script>
+<script src="js/views.js?v=20261114b"></script>
+<script src="js/cases.js?v=20261114b"></script>
+<script src="js/manual.js?v=20261114b"></script>
+<script src="js/guide.js?v=20261114b"></script>
+<script src="js/extapi.js?v=20261114b"></script>
+<script src="js/collect.js?v=20261114b"></script>
+<script src="js/tools.js?v=20261114b"></script>
+<script src="js/accounts-mail.js?v=20261114b"></script>
+<script src="js/quote.js?v=20261114b"></script>
+<script src="js/board.js?v=20261114b"></script>
+<script src="js/ledger.js?v=20261114b"></script>
+<script src="js/casesum.js?v=20261114b"></script>
+<script src="js/nav.js?v=20261114b"></script>
+<script src="js/insight.js?v=20261114b"></script>
+<script src="js/review.js?v=20261114b"></script>
+<script src="js/dialogs.js?v=20261114b"></script>
+<script src="js/import.js?v=20261114b"></script>
+<script src="js/dedupe.js?v=20261114b"></script>
+<script src="js/fwd.js?v=20261114b"></script>
+<script src="js/events.js?v=20261114b"></script>
 </body>
 </html>

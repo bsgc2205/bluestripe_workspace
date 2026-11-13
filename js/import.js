@@ -53,6 +53,7 @@ function openDataMenu(){
         <label>웹 앱 주소<input name="mailEndpoint" value="${esc(mail.endpoint)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
         <label>이 PC의 토큰 <span class="hint">(업무 데이터에는 저장되지 않고 이 PC 브라우저에만 남습니다. 직원 PC는 '계정 관리 → PC 연결'의 연결 코드로 받습니다)</span><input type="password" name="mailToken" value="${esc(mail.token)}" autocomplete="off"></label>
       </div>
+      ${isAdmin() ? `<label class="check"><input type="checkbox" name="syncZip"${db.settings.syncZip ? ' checked' : ''}> Drive 저장 압축 (파일이 약 4분의 1로 줄어 저장·불러오기가 빨라짐) — <b>모든 PC·휴대폰을 v20261114b 이후로 새로 고친 뒤</b> 켜세요. 예전 화면은 압축된 파일을 열지 못합니다.</label>` : ''}
       <div class="dlg-section">
         <h4>내 비밀번호 변경 (${esc(me.id)})</h4>
         <p class="hint">Drive 자동 저장을 쓰면 다른 PC에도 바로 반영됩니다. Drive의 이전 버전·날짜별 사본은 예전 비밀번호로 열립니다.</p>
@@ -69,6 +70,7 @@ function openDataMenu(){
       const ep = fd.get('mailEndpoint').trim();
       if(ep && !/^https:\/\/script\.google(usercontent)?\.com\//.test(ep)){toast('웹 앱 주소는 https://script.google.com/ 으로 시작해야 합니다.'); return false;}
       db.settings.taskTypes = [...new Set(types)];
+      if(isAdmin()) db.settings.syncZip = fd.get('syncZip') === 'on';
       if(ep !== db.settings.mail.endpoint) mailCache = null;
       const tk = fd.get('mailToken').trim(), syncChanged = ep !== (db.settings.mail.endpoint || '') || tk !== (db.settings.mail.token || '');
       db.settings.mail.endpoint = ep; db.settings.mail.token = tk;          // 토큰은 이 PC에만 저장(숨은 속성)

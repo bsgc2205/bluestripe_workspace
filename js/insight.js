@@ -51,6 +51,7 @@ function clientInsights(c){
 function clientInsightHTML(c){
   const ins = clientInsights(c);
   if(!ins.length) return '';
+  if(ins.length === 1 && ins[0].lvl !== 'warn') return `<p class="route-line">${esc(ins[0].t)}</p>`;   // 건수 한 줄뿐이면 상자 없이 (11/14 P3)
   return `<section class="insight"><div class="sec-head"><h3>업체 특이사항 요약 <span class="hint">최근 12개월 기록에서 자동</span></h3></div><ul>${ins.map(x => `<li class="${x.lvl === 'warn' ? 'warn' : ''}">${esc(x.t)}</li>`).join('')}</ul></section>`;
 }
 
