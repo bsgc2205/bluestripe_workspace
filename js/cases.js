@@ -448,21 +448,55 @@ const DOC_SUBJ_ONLY = /(?<![a-z])eta(?![a-z])/i;
 const ARRIVAL_RE = /arrival|(?<![a-z])a\s*\/\s*n(?![a-z])|도착|입항|(?<![a-z])eta(?![a-z])|cargo\s*arriv/i;
 /* 직원이 보낸 청구서·정산서 (11/9): 업무가 이미 진행됐다는 근거. B/L이 있을 때만 접수 근거로 쓴다(주별 정산 내역서 등 제외) */
 const BILL_RE = /청구서|정산서|정산\s*내역/;
+/* 포워더 운송 안내 (11/13 f): 제목에 운송 단어(항공·해상·LCL·FOB·입항·부킹…)가 있고 B/L(운송장)이 있으면 서류·도착 안내와 같이 본다 */
+const SHIP_SUBJ = /(?<![a-z])(lcl|fcl|cfs|air|sea|ocean|exw|fob|cif|cfr|fca|dap|ddp)(?![a-z])|항공|해상|특송|컨테이너|\d{2}\s*(ft|피트|'|dc|dry)|입항|출항|(?<![a-z])et[ad](?![a-z])|부킹|booking|선적|화물/i;
 function docMail(m){
   if(isOwn(m.from) && !m.fwdFrom) return false;
-  return DOC_RE.test(m.subject || '') || DOC_SUBJ_ONLY.test(m.subject || '') || DOC_RE.test(String(m.snippet || '').slice(0, 200));
+  return DOC_RE.test(m.subject || '') || DOC_SUBJ_ONLY.test(m.subject || '') || DOC_RE.test(String(m.snippet || '').slice(0, 200))
+    || (SHIP_SUBJ.test(m.subject || '') && mailBLs(m).length > 0);
 }
 function billMail(m){ return isOwn(m.from) && !m.fwdFrom && BILL_RE.test(m.subject || ''); }
+/* 참고 메일 (11/13 f): 업무 기록과 이을 일이 없는 메일은 '미연결' 경고에서 뺀다(메일 화면 아래 '참고 메일'에 따로 보임).
+   noise 반송·자동 회신·메일함 안내 / tax 세금계산서·거래명세서(포워더·국세청) / news 광고·교육 안내 /
+   report 직원이 보낸 정기 보고(월·주 내역서, 통관 현황, 입고 정보, ETA 목록 — B/L 한 건짜리는 제외) / quote 견적(견적 화면에서 관리).
+   필증 파일을 보낸 대화는 어느 경우에도 참고로 보지 않는다. */
+const REF_LABEL = {noise:'반송·자동 회신', tax:'세금계산서·명세서', news:'광고·교육·운임 안내', report:'보고·안내(내역서·현황)', quote:'견적'};
+const NOISE_FROM = /^(root|postmaster|mailer-daemon|mail-daemon|administrator|no-?reply|donotreply|do-not-reply|system|notification)@/i;
+const NOISE_SUBJ = /email\s*return|returned\s*mail|undeliver|delivery\s*(status|failure|has\s*failed)|메일함\s*(저장\s*)?(공간|용량)|용량\s*부족|^\s*(\[[^\]]*\]\s*)?(자동\s*회신|자동\s*응답|automatic\s*reply|auto[-\s]?reply|out\s*of\s*office|부재\s*중)/i;
+const TAX_RE = /세금\s*계산서|전자\s*세금|거래\s*명세서|tax\s*invoice/i, TAX_FROM = /hometax|ktnet|logisbill|bill36524|esero|taxbill|smartbill|ebill/i;
+const NEWS_RE = /\(광고\)|\[광고\]|뉴스\s*레터|newsletter|웨비나|webinar|세미나|교육\s*(안내|과정|홍보|신청|모집)|무료\s*교육|unsubscribe|수신\s*거부|설문\s*조사/i;
+const REPORT_RE = /내역서|통관\s*현황|거래\s*내역|월말\s*청구|고지서|(월|주)별|주간\s*(현황|보고)|수입\s*화물\s*(eta|<|예정분)|예정분|입고\s*정보|운임\s*(표|업데이트|안내)|rate\s*update|본사\s*진행\s*(x|안\s*함|없음)|목록\s*통관/i;
+const REPORT_WEAK = /정산\s*내역|청구\s*내역/;                                   // B/L 한 건짜리 '정산내역'은 그 건의 정산 근거라 참고로 보지 않음
+const QUOTE_RE = /견적/;
+/* 업무 요청이 확실한 제목 — 회신(RE:)이어도 의뢰로 본다 */
+const STRONG_REQ = /(통관|신고|면장|면허|필증)\s*(발급|발행|진행)?\s*(요청|의뢰)|(수출|수입|반송)\s*신고\s*(요청|의뢰)/;
+function threadRefKind(t, bls){
+  const first = t.ms[0], subj = first.subject || '', all = t.ms.map(m => m.subject || '').join(' ');
+  if(t.ms.some(m => { const cm = certMail(m); return cm && cm.byFile; })) return '';
+  if(t.ms.every(m => NOISE_FROM.test(String(m.from || '')) || NOISE_SUBJ.test(m.subject || ''))) return 'noise';
+  const ext = !isOwn(first.from) || !!first.fwdFrom;
+  if(ext && (TAX_FROM.test(String(first.from || '')) || TAX_RE.test(subj))) return 'tax';
+  if((NEWS_RE.test(subj) || (ext && /운임\s*(표|업데이트|안내|인상)|rate\s*(update|notice)|tariff\s*update|gri\s*notice/i.test(subj))) && !bls.length) return 'news';
+  const own = t.ms.filter(m => isOwn(m.from) && !m.fwdFrom);
+  if(own.some(m => REPORT_RE.test(m.subject || '')) && !STRONG_REQ.test(all)) return 'report';
+  if(own.some(m => REPORT_WEAK.test(m.subject || '')) && bls.length !== 1 && !STRONG_REQ.test(all)) return 'report';
+  if(QUOTE_RE.test(all) && !bls.length && !STRONG_REQ.test(all)) return 'quote';
+  return '';
+}
 function threadFlags(t){
   const first = t.ms[0];
   const ext = !isOwn(first.from) || !!first.fwdFrom;
-  const docs = t.ms.some(docMail);
-  const asked = ext && !IS_REPLY.test(first.subject || '') && (REQ_SUBJ.test(first.subject || '') || REQ_BODY.test((first.snippet || '').slice(0, 200)));
-  return {ageH:hoursSince(first.date), request:docs || asked, asked, docs, bill:t.ms.some(billMail), client:threadClient(t), old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
+  const bls = threadBLs(t), ref = threadRefKind(t, bls);
+  const docs = !ref && t.ms.some(docMail);
+  const asked = !ref && ext && ((!IS_REPLY.test(first.subject || '') && (REQ_SUBJ.test(first.subject || '') || REQ_BODY.test((first.snippet || '').slice(0, 200)))) || STRONG_REQ.test(cleanSubj(first.subject)));
+  /* 직원 진행 메일 (11/13 f): 직원이 B/L 한 건을 제목에 적어 보낸 메일(도착 안내·D/O 요청·확인 안내 등) = 이미 진행 중인 업무 */
+  const work = !ref && bls.length === 1 && t.ms.some(m => isOwn(m.from) && !m.fwdFrom && mailBLs(m).includes(bls[0]));
+  const ci = threadClientInfo(t);
+  return {ageH:hoursSince(first.date), request:docs || asked, asked, docs, work, bill:!ref && t.ms.some(billMail), ref, client:ci.c, how:ci.how, howWhy:ci.why, old:String(t.last.date).slice(0, 10) < mailWatchFrom()};
 }
 function mailAlerts(){
-  const fl = (mailCache ? mailThreadsList() : []).map(threadFlags), cur = fl.filter(f => !f.old);
-  return {total:cur.length, old:fl.length - cur.length, overdue:cur.filter(f => f.ageH >= OVERDUE_H).length, requests:cur.filter(f => f.request).length};
+  const fl = (mailCache ? mailThreadsList() : []).map(threadFlags), cur = fl.filter(f => !f.old && !f.ref);
+  return {total:cur.length, old:fl.filter(f => f.old).length, ref:fl.filter(f => !f.old && f.ref).length, overdue:cur.filter(f => f.ageH >= OVERDUE_H).length, requests:cur.filter(f => f.request).length, nocl:cur.filter(f => !f.client).length};
 }
 
 /* ---------- 홈 요약 (저장된 데이터만으로 계산, 추가 호출 없음) ---------- */

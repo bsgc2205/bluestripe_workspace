@@ -217,7 +217,25 @@ function matchClient(m){
   return findClient(ms.map(mailHead).join(' ')) || findClient(ms.map(mailText).join(' '))
     || (ms.some(x => x.hints) ? findClient(ms.map(x => mailText(x) + ' ' + (x.hints || '')).join(' ')) : null);   // ③ 본문 단서는 마지막에(인용된 지난 메일의 포워더 주소가 본문 속 업체명을 덮지 않게)
 }
-function threadClient(t){ const id = (db.mailClient || {})[t.key]; return (id && db.clients.find(c => c.id === id)) || matchClient(t.ms); }
+function threadClient(t){ return threadClientInfo(t).c; }
+/* 대화의 업체 (11/13 f): ① 직원 지정 ② 메일 주소·제목·본문 단서(matchClient) ③ 추정 — 같은 번호 / 주고받은 주소 / 수하인 이름.
+   추정은 다른 대화·기록에서 업체가 정해진 근거가 한 업체만 가리킬 때만 쓰고, how·why로 근거를 남긴다(화면 '업체 추정' 표시, 자동 접수 이력). */
+function threadClientInfo(t){
+  const mc = db.mailClient || {};
+  const id = [t.key, ...t.ms.flatMap(m => threadKeysOf(m.subject))].map(k => mc[k]).find(Boolean);
+  const c0 = id && db.clients.find(c => c.id === id);
+  if(c0) return {c:c0, how:'manual'};
+  const ix = mailIdx(), memo = ix.info.get(t.key);
+  if(memo && memo.n === t.ms.length) return memo.v;
+  const c1 = matchClient(t.ms);
+  let v = c1 ? {c:c1, how:''} : inferClient(t, ix);
+  if(c1 && isFwdClient(c1)){                                                // 포워더 업체 메일의 'C/수하인'이 등록된 다른 업체면 그 업체(수입자)로 (11/13 f)
+    const cn = cneeClient(t, ix);
+    if(cn && cn.c.id !== c1.id) v = {c:cn.c, how:'cnee', why:`${cn.why} — 포워더 ${c1.name} 메일`};
+  }
+  ix.info.set(t.key, {n:t.ms.length, v});
+  return v;
+}
 /* 수하인(C/…) 이름: 포워더 A/N 제목 'S/SHIPPER CO C/ABC TRADING H/ABCD2611001'에서 'ABC TRADING' */
 function consigneeNames(text){
   const out = [], re = /(?:^|[\s\[(,])C\s*\/\s*([A-Z][A-Z0-9&.'\- ]{1,40}?)\s*(?=\s(?:H|M|B|S)\s*\/|\s*\/\/|[\])/,]|\s{2,}|$)/g;
@@ -231,7 +249,7 @@ const refKey = s => String(s || '').toUpperCase().replace(/[-\s]/g, '');
    제목 → 첨부 → 본문 앞부분 순으로 기준 B/L을 정하고, 접두어·길이가 같은 번호만 같은 묶음으로 본다(ABCDE26100048, ABCDE26100045).
    접두어가 다르면(HBL·MBL, 선적 서류 번호 등) 기준 하나만 쓴다. PO·INV 번호와 케이스 번호는 뺀다. */
 const BL_G = /(?<![A-Z0-9]|[A-Z]-)[A-Z]{2,}[A-Z0-9]*\d{5,}[A-Z0-9]*(?![A-Z0-9])/g;   // 'HS-AB2026100355'처럼 하이픈 앞머리가 붙은 문서번호는 뺌
-const NOT_BL = /^(PO|INV|CI|PL|PI|TY|SC|OR|HS|EXP|IMP)\d/;
+const NOT_BL = /^(PO|INV|CI|PL|PI|TY|SC|OR|HS|EXP|IMP)\d|^[A-Z]{3}[UJZ]\d{7}$/;   // 뒤: 컨테이너 번호(SKLU1996079 — 영문 4자+숫자 7자, 11/13 f)
 const blPrefix = b => (String(b).match(/^[A-Z]+/) || [''])[0];
 /* 같은 제목에 접두어가 다른 번호가 섞이면(공급사 문서번호 + B/L) B/L다운 것을 앞으로: 이미 기록에 있는 B/L 접두어 → 영문 3자 이상+숫자 6자 이상 */
 const BL_SHAPE = /^[A-Z]{3,}\d{6,}$/;
@@ -248,11 +266,33 @@ function blGroup(base, more){
   const same = [...new Set([...base, ...more])].filter(b => blPrefix(b) === p && b.length === n);
   return same.length >= 2 ? same : [base[0]];
 }
+/* 본문에 넣은 이미지 (11/13 f): 한비로 서명 이미지 '<해시>@lw000000.jpg', 'image001.png', 해시 이름 이미지는 첨부가 아니다.
+   예전에는 여기서 'LW000000'·해시 앞부분을 B/L로 읽어, 서명 이미지가 있는 직원 메일이 엉뚱한 기록 하나에 계속 붙었다. */
+const INLINE_IMG = /(@lw\d+\.(jpe?g|png|gif|bmp)$)|(^image\d{2,4}\.(jpe?g|png|gif|bmp)($|@))|(@[0-9a-f]{8}\.[0-9a-f]{8})|(^~?wrd\d+\.(jpe?g|png|gif|bmp)$)|(^[0-9a-f]{16,}\.(jpe?g|png|gif|bmp)$)|(^(회사)?로고|^logo|^signature|^sign\.)/i;
+const IMG_FILE = /\.(jpe?g|png|gif|bmp|webp|heic)$/i;                          // 사진은 번호 근거(같은 번호)로 쓰지 않음
+const BOGUS_REF = /^LW\d{4,}$|^[0-9A-F]{20,}$|^([A-Z])\1*0{5,}$/;
+function realFiles(m){ return (m.attachments || m.files || []).map(String).filter(f => !INLINE_IMG.test(f.trim())); }
+/* 'B/L NO. EASPV2641YB012', 'HB/L# …', 'MBL: …', 'WAYBILL# : …'처럼 이름표가 붙은 번호는 숫자가 끊겨 있어도 B/L로 본다 */
+const BL_LABEL = /(?:(?<![A-Z])(?:M|H|HB|MB)?\s*B\s*\/\s*L|(?<![A-Z])[MH]?BL(?![A-Z])|(?<![A-Z])AWB|WAYBILL|운송장)\s*(?:NO\.?|NUMBER|#|번호)?\s*[:#.]?\s*([A-Z0-9][A-Z0-9-]{6,24})/g;
+function labeledBLs(text){
+  const out = [], t = String(text || '').toUpperCase();
+  let m; BL_LABEL.lastIndex = 0;
+  while((m = BL_LABEL.exec(t))){ const v = m[1].replace(/-+$/, ''); const d = (v.match(/\d/g) || []).length; if(d >= 3 && (/[A-Z]/.test(v) || d >= 8) && !NOT_BL.test(v) && !BOGUS_REF.test(v)) out.push(v); }
+  return [...new Set(out)];
+}
+/* 수집기가 색인에 넣은 bl 값이 서명 이미지에서 나온 것이면 버린다(제목·본문·실제 첨부 어디에도 없으면) */
+function cleanMailBL(m){
+  if(!m || !m.bl) return m;
+  const k = refKey(m.bl), hay = refKey([m.subject, m.snippet, realFiles(m).join(' ')].join(' '));
+  if(BOGUS_REF.test(k) || !hay.includes(k)) m.bl = '';
+  return m;
+}
 function mailBLs(m){
-  const subj = blList(m.subject), files = blList((m.attachments || m.files || []).join(' '));
-  let base = subj.length ? subj : files;
-  if(!base.length) base = blList(String(m.snippet || '').slice(0, 300)).slice(0, 1);
-  if(!base.length && m.bl && !NOT_BL.test(String(m.bl).toUpperCase())) base = [String(m.bl).toUpperCase()];
+  const subj = [...new Set([...labeledBLs(m.subject), ...blList(m.subject)])], fl = realFiles(m), files = blList(fl.join(' ')).filter(b => !BOGUS_REF.test(b));
+  let base = subj.filter(b => !BOGUS_REF.test(b));
+  if(!base.length) base = files;
+  if(!base.length){ const sn = String(m.snippet || '').slice(0, 300); base = labeledBLs(sn).slice(0, 1); if(!base.length) base = blList(sn).filter(b => !BOGUS_REF.test(b)).slice(0, 1); }
+  if(!base.length && m.bl && !NOT_BL.test(String(m.bl).toUpperCase()) && !BOGUS_REF.test(refKey(m.bl))) base = [String(m.bl).toUpperCase()];
   return blGroup(base, files);
 }
 function threadBLs(t){
@@ -277,7 +317,29 @@ function mailRecords(m){
   if(bls.length >= 2) bls.forEach(b => { const r = recordByBL(b); if(r && !out.includes(r)) out.push(r); });
   return out;
 }
+/* 대화 키 (11/13 f): ① '자동 회신:'·'Automatic reply:'·'回复:' 같은 머리말도 뗀다(원래 대화와 한 줄로)
+   ② 직원이 앞에 붙인 숫자 든 머리말 '[1차청구서 및 필증] RE: …', '(정정) RE: …', '[최종] 청구서 / RE: …'은 처음 RE:/FW: 앞을 통째로 뗀다
+   ③ 끝의 '/ BSGC관세사무소' 서명꼴 꼬리를 뗀다. 예전 키(threadKeyV1)로 저장된 연결·업체 지정도 함께 찾는다. */
+const AUTO_PFX = /^\s*(자동\s*회신|자동\s*응답|automatic\s*reply|auto[-\s]?reply|autoreply|out\s*of\s*office|부재\s*중|trả\s*lời|回复|答复|转发|aw|wg|sv|antw|rv|tr)\s*[:：]\s*/i;
+const tkMemo = new Map();
 function threadKey(subject){
+  const s0 = String(subject || '');
+  if(tkMemo.has(s0)) return tkMemo.get(s0);
+  if(tkMemo.size > 20000) tkMemo.clear();
+  const v = threadKeyV2(s0); tkMemo.set(s0, v); return v;
+}
+function threadKeyV2(subject){
+  let s = String(subject || '');
+  for(let i = 0; i < 3 && AUTO_PFX.test(s); i++) s = s.replace(AUTO_PFX, '');
+  if(/^\s*[\[(]/.test(s) || /^\s*\[?[^\s:]{0,12}\]?\s*(청구서|정산서|필증)[^:]{0,20}\/\s*(re|fw)/i.test(s)){
+    const m = /(^|[\s\]\)\/])(re|fw|fwd|답장|회신|전달)\s*(\[\d+\])?\s*[:：]/i.exec(s);
+    if(m && m.index > 0) s = s.slice(m.index + m[1].length);
+  }
+  s = s.replace(/\[[^\]]{0,40}\]\s*(?=(re|fw|fwd|답장|회신|전달)\s*(\[\d+\])?\s*[:：])/gi, '');   // 중간의 '[3차 청구서 및 필증]RE:'처럼 RE: 바로 앞 머리말
+  s = s.replace(/\s*[\/|]\s*(bsgc\s*(관세사무소|customs(\s*networks)?)?|비에스지씨)\s*$/i, '');
+  return threadKeyV1(s);
+}
+function threadKeyV1(subject){
   let t = String(subject || '').toLowerCase();
   t = t.replace(/\[[^\]\d]*\]/g, ' ');                                   // [정산서], [BSGC-TROPI] 같은 숫자 없는 머리말
   t = t.replace(/(^|\s|\]|:)(re|fw|fwd|답장|회신|전달|r)\s*(\[\d+\])?\s*[:：]/g, ' ');
@@ -351,22 +413,23 @@ function applyProcAuto(r){
    bill    직원이 보낸 통관예상경비청구서·자금청구서·정산서 (B/L 필요) — 필증을 메일로 보내지 않는 업체 대비
    B/L이 여러 개인 대화('ABCDE26100048, ABCDE26100045')는 B/L마다 기록을 하나씩 만들고, 이미 기록이 있는 B/L에는 메일만 붙인다.
    opts.since: 기준일(없으면 최근 14일·누락 기준일 중 늦은 날) / opts.all: 목록에서 뺀 메일도 다시 봄(놓친 건 일괄 접수) / opts.dry: 미리 보기만 */
-const WHY_LABEL = {cert:'필증 송부', asked:'의뢰 메일', docs:'선적 서류·도착 안내', bill:'청구서·정산서'};
+const WHY_LABEL = {cert:'필증 송부', asked:'의뢰 메일', docs:'선적 서류·도착 안내', bill:'청구서·정산서', work:'직원 진행 메일'};
 function intakeThreads(opts){
   if(!opts.all) return mailThreadsList();
   const attached = new Set(db.records.flatMap(r => (r.mails || []).map(x => x.id)));
   const off = new Set([...(db.intakeOff || []), ...(db.mailIgnored || [])]);
   return threadsOf((mailCache || []).filter(m => !attached.has(m.id) && !off.has(m.id)));
 }
-function autoIntake(opts = {}){
+function autoIntake(opts = {}){ return holdIdx(() => autoIntake0(opts)); }
+function autoIntake0(opts){
   const made = [], linked = [], plan = [];
   const since = opts.since || [addPeriod(today(), -14, 'd'), mailWatchFrom()].sort().slice(-1)[0];
   const newBL = new Set();
   intakeThreads(opts).slice().sort((a, b) => a.ms[0].date < b.ms[0].date ? -1 : 1).forEach(t => {   // 오래된 대화부터: 서류 전달 → 청구서 → 정산서 순으로 이어지게
     if(String(t.last.date).slice(0, 10) < since) return;
-    const ci = t.ms.map(m => ({m, cm:certMail(m)})).filter(x => x.cm && x.cm.decl && x.cm.date >= since);
     const f = threadFlags(t), bls = threadBLs(t);
-    const why = ci.length ? 'cert' : f.asked ? 'asked' : f.docs && bls.length ? 'docs' : f.bill && bls.length ? 'bill' : '';
+    const ci = t.ms.map(m => ({m, cm:certMail(m)})).filter(x => x.cm && x.cm.decl && x.cm.date >= since && (!f.ref || x.cm.byFile));
+    const why = ci.length ? 'cert' : f.ref ? '' : f.asked ? 'asked' : f.docs && bls.length ? 'docs' : f.bill && bls.length ? 'bill' : f.work ? 'work' : '';
     if(!why) return;
     const c = f.client;
     if(!c) return;                                                                          // 업체 미인식 → 메일 화면 표시, 업체 등록 후 다음 불러오기 때 접수
@@ -379,23 +442,27 @@ function autoIntake(opts = {}){
       const ex = bl ? recordByBL(bl) : null;
       if(opts.dry){ if(!ex && !(bl && newBL.has(bl))){ plan.push({client:c.name, bl, why, subject:t.ms[0].subject, date:String(t.ms[0].date).slice(0, 10)}); if(bl) newBL.add(bl); } return; }
       if(ex){ let n = 0; t.ms.forEach(x => { if(attachMail(ex, x)) n++; seeMail(x.id); }); if(n){ addHist(ex, `메일 ${n}통 연결 (B/L ${bl}, ${WHY_LABEL[why]})`); linked.push(ex); } return; }
-      made.push(intakeRecord(t, c, why, bl, bls, ci));
+      const r = intakeRecord(t, c, why, bl, bls, ci);
+      if(f.how && f.how !== 'manual') addHist(r, `업체 추정: ${HOW_LABEL[f.how] || f.how}${f.howWhy ? ` (${f.howWhy})` : ''} — 업체가 틀리면 기록에서 업체를 바꾸세요`);
+      made.push(r);
     });
   });
   return opts.dry ? plan : Object.assign(made, {linked});
 }
 /* 제목: 청구서·서류 메일은 [통관예상경비청구서 품명] 머리말에 품명이 들어 있어 RE:/FW:만 뗀다 */
 function intakeTitle(subject, why){
-  if(why !== 'bill' && why !== 'docs') return cleanSubj(subject);
+  if(why !== 'bill' && why !== 'docs' && why !== 'work') return cleanSubj(subject);
   return String(subject || '').replace(/^\s*((\[(정산서|청구서)[^\]]*\]\s*)|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim();
 }
 function intakeRecord(t, c, why, bl, bls, ci){
   const txt = t.ms.map(x => x.subject + ' ' + String(x.snippet || '').slice(0, 200)).join(' ');
   const cm = ci.length ? ci[0].cm : null;
+  const subjTxt = t.ms.map(x => x.subject || '').join(' ');
   const type = cm && cm.kind === 'E' ? '수출신고' : cm && cm.kind === 'I' ? '수입통관'
     : why === 'docs' && ARRIVAL_RE.test(txt) ? '수입통관'
-    : (guessType(txt, c.id) || lastType(c.id) || (why === 'bill' || why === 'docs' ? '수입통관' : '기타'));
-  const first = t.ms[0], src = t.ms.find(x => why === 'docs' ? docMail(x) : why === 'bill' ? billMail(x) : true) || first;
+    : why === 'work' || why === 'docs' ? (/수출|export|출항|(?<![a-z])etd(?![a-z])|부킹|booking|적재/i.test(subjTxt) ? '수출신고' : /수입|import|입항|도착|arrival|(?<![a-z])eta(?![a-z])|a\/n/i.test(subjTxt) ? '수입통관' : mainType(c.id) || '수입통관')   // 서류·직원 진행 메일은 제목만 보고, 없으면 그 업체의 주 업무 (11/13 f)
+    : (guessType(txt, c.id) || lastType(c.id) || (why === 'bill' || why === 'docs' || why === 'work' ? '수입통관' : '기타'));
+  const first = t.ms[0], src = t.ms.find(x => why === 'docs' ? docMail(x) : why === 'bill' ? billMail(x) : why === 'work' ? isOwn(x.from) && !x.fwdFrom : true) || first;
   const multi = bls.length > 1;
   const r = {id:uid(), clientId:c.id, type, status:'진행중', startDate:String(first.date || today()).slice(0, 10), date:'', refNo:cm ? cm.decl : (multi ? '' : t.ms.map(mailDecl).find(Boolean) || ''), bl:bl || t.ms.map(x => x.bl).find(Boolean) || '',
     title:(intakeTitle(first.subject, why) || `[${type}] ${cm ? cm.decl : bl}`) + (multi ? ` (B/L ${bl})` : ''), summary:String(first.snippet || '').slice(0, 300), special:false, specialNote:'', tags:['자동접수'], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[],
@@ -431,6 +498,7 @@ async function backfillIntake(){
   toast([`${made.length}건을 접수했습니다`, (made.linked || []).length && `기존 기록 ${made.linked.length}건에 메일 연결`, ev.n && `정산서로 정산완료 ${ev.n}건`, ev.done && `자동 완료 ${ev.done}건`].filter(Boolean).join(' · ') + '. UNI-PASS 수리 확인은 15건씩 이어서 진행합니다.');
   if(made.length) setTimeout(() => refreshCustoms(true), 800);
 }
+function mainType(cid){ const n = {}; db.records.filter(x => x.clientId === cid && x.type).sort(byDateDesc).slice(0, 10).forEach(x => { n[x.type] = (n[x.type] || 0) + 1; }); return Object.keys(n).sort((a, b) => n[b] - n[a])[0] || ''; }
 function lastType(cid){ const r = db.records.filter(x => x.clientId === cid && x.type).sort(byDateDesc)[0]; return r ? r.type : ''; }
 /* 업체 인식 학습 (목표 5): 직원이 대화를 업체 기록에 연결하면, 그 대화의 의뢰자 주소(회사 도메인이면 '@도메인', 공용 메일이면 주소)를 업체 검색어에 더한다.
    다른 업체 기록에도 나온 주소·도메인(포워더 등)은 배우지 않는다. */
@@ -456,7 +524,7 @@ function learnClient(cid, ms){
 function mailRecord(m){
   const cm = CASE_RE.exec(m.caseNo || m.subject || '');
   if(cm){ const r = db.records.find(x => x.caseNo === cm[0]); if(r) return r; }
-  const th = (db.mailThreads || {})[threadKey(m.subject)];
+  const th = threadRecId(m.subject);
   if(th){
     const r = db.records.find(x => x.id === th);
     if(r){                                                                  // 한 대화에서 B/L별로 기록을 나눈 경우: 메일의 B/L이 그 기록과 다르면 B/L 쪽을 따름
@@ -465,7 +533,7 @@ function mailRecord(m){
       return r;
     }
   }
-  const keys = [...new Set([m.bl, ...mailBLs(m), mailDecl(m)].map(refKey).filter(k => k.length >= 6))];
+  const keys = [...new Set([cleanMailBL({...m}).bl, ...mailBLs(m), mailDecl(m)].map(refKey).filter(k => k.length >= 6 && !BOGUS_REF.test(k)))];
   if(!keys.length) return null;
   const hits = db.records.filter(r => recKeys(r).some(x => keys.includes(refKey(x))));
   if(hits.length <= 1) return hits[0] || null;
@@ -495,7 +563,7 @@ function mailsHTML(r){
   if(!ms.length) return '';
   return `<details class="rec-mails"><summary>customs@ 메일 ${ms.length}통</summary><ul>${ms.map(x => `<li><span class="rec-date">${esc(String(x.date).replace('T', ' '))}</span> ${hl(x.subject)} <span class="hint">${esc(x.from)}</span>${(x.files || []).length ? `<div class="hint">첨부: ${esc(x.files.join(', '))}</div>` : ''}</li>`).join('')}</ul></details>`;
 }
-function mailThreadsList(){ return threadsOf((mailCache || []).filter(m => !db.mailSeen.includes(m.id))); }
+function mailThreadsList(){ const seen = new Set(db.mailSeen); return threadsOf((mailCache || []).filter(m => !seen.has(m.id))); }
 function threadsOf(list){
   const groups = new Map();
   list.forEach(m => {
@@ -503,8 +571,174 @@ function threadsOf(list){
     if(!groups.has(k)) groups.set(k, []);
     groups.get(k).push(m);
   });
+  [...groups.keys()].forEach(k => { const b = keyBase(k); if(b && b !== k && groups.has(b)){ groups.get(b).push(...groups.get(k)); groups.delete(k); } });   // 꼬리에 번호만 덧붙인 회신 → 원래 대화 (11/13 f)
   return [...groups.entries()].map(([key, ms]) => { ms.sort((a, b) => a.date < b.date ? -1 : 1); return {key, ms, last:ms[ms.length - 1]}; })
     .sort((a, b) => a.last.date < b.last.date ? 1 : -1);
+}
+
+/* ---------- 미연결 줄이기 (11/13 f) ----------
+   ① 대화 묶기: 직원이 원래 제목 끝에 B/L·작업번호만 덧붙여 회신하면('… 출항예정) / EASPH2645SB5024') 원래 대화로 본다.
+      같은 원래 제목에 서로 다른 꼬리가 둘 이상이면(‘수출신고필증 발급 / 26-06-1’, ‘… / 26-07’처럼 제목을 건마다 재사용) 묶지 않는다.
+   ② 업체 추정(inferClient): 업체를 못 알아본 대화를, 업체가 정해진 기록·대화에서 모은 근거로 정한다.
+      - 같은 번호: 제목·첨부의 B/L·신고번호·PO·인보이스·작업번호·운송장이 한 업체 기록·대화에만 있음
+      - 주고받은 주소: 받은 메일은 보낸 사람, 보낸 메일은 받는 사람. 회사 도메인(무료 메일은 주소 전체)이 한 업체 대화에만 2번 이상 나옴.
+        물류·포워더·공공기관 도메인(이름에 logis·cargo·freight·trans·shipping·express·line…, go.kr·or.kr, 연락처 DB의 도메인)은 쓰지 않는다.
+      - 수하인 이름: 포워더 제목 'C/TOSTEM'처럼, 업체가 정해진 대화에 나온 영문 수하인 이름
+      업체명이 두 곳 똑같이 걸린 대화(포워더명+화주명)는 그 두 업체 안에서만 고른다.
+   ③ 같은 번호 연결(threadTokenRecord): B/L·신고번호가 없어도 PO·인보이스·작업번호·운송장이 진행 중(또는 20일 안에 끝난) 기록 하나에만 있으면 그 기록에 붙인다. */
+function threadKeysOf(subject){ const a = threadKey(subject), b = threadKeyV1(subject); return a === b ? [a] : [a, b]; }
+function threadRecId(subject){
+  const map = db.mailThreads || {};
+  for(const k of threadKeysOf(subject)) if(map[k]) return map[k];
+  const b = keyBase(threadKey(subject));
+  return b && map[b] ? map[b] : '';
+}
+let keyMemo = {src:null, n:-1, base:new Map()}, mxHold = 0;                 // mxHold: 자동 연결·접수를 도는 동안은 색인을 다시 만들지 않음(한 번 만든 것으로)
+function holdIdx(fn){ if(!mxHold && mailCache) mailIdx(); mxHold++; try{ return fn(); } finally { mxHold--; } }   // 시작할 때 한 번 새로 만들고 붙잡음
+function keyBase(k){
+  const nT = Object.keys(db.mailThreads || {}).length;
+  if(keyMemo.src !== mailCache || (keyMemo.n !== nT && !mxHold)){
+    const all = new Set([...(mailCache || []).map(m => threadKey(m.subject)), ...Object.keys(db.mailThreads || {})].filter(Boolean)), vars = new Map();
+    all.forEach(key => { const w = key.split(' '); for(let i = w.length - 1; i >= 1; i--){ const p = w.slice(0, i).join(' '); if(p.length >= 12 && all.has(p) && /\d/.test(w.slice(i).join(' '))){ if(!vars.has(p)) vars.set(p, new Set()); vars.get(p).add(key); } } });
+    const base = new Map();
+    vars.forEach((set, p) => { if(set.size === 1){ const k1 = [...set][0]; if(!base.has(k1) || base.get(k1).length < p.length) base.set(k1, p); } });
+    keyMemo = {src:mailCache, n:nT, base};
+  }
+  return keyMemo.base.get(k) || '';
+}
+/* 제목·첨부에서 찾는 번호: B/L·신고번호·PO·인보이스·작업번호·운송장 (영문+숫자 4자리 이상, 숫자만이면 8자리 이상). 전화·사업자번호·날짜·파일 시각은 뺀다 */
+function refTokens(text){
+  const out = new Set();
+  String(text || '').toUpperCase().split(/[\s_\/|,;:()\[\]<>'"#*+=~]+/).forEach(w => (w.match(/[A-Z0-9][A-Z0-9-]{4,}[A-Z0-9]/g) || []).forEach(x => {
+    if(/^\d{2,4}-\d{3,4}-\d{4}$|^\d{3}-\d{2}-\d{5}$|^(19|20)\d{2}-?\d{2}-?\d{2}$/.test(x)) return;
+    const k = x.replace(/-/g, ''), d = (k.match(/\d/g) || []).length;
+    if(d < 4 || k.length < 6 || BOGUS_REF.test(k) || /^(IMAGE|IMG|DSC|SCAN|SCN|KAKAOTALK)\d/.test(k)) return;
+    if(d === k.length && (k.length < 8 || /^(19|20)\d{6}$/.test(k) || /^1[6-9]\d{11}$/.test(k))) return;
+    if(/^\d+(EA|PCS|KG|CBM|PLT|CT|BOX|ROLL|SET)$/.test(k)) return;
+    out.add(k);
+  }));
+  return [...out];
+}
+function docFiles(m){ return realFiles(m).filter(f => !IMG_FILE.test(f)); }
+function threadTokens(t){ return [...new Set(t.ms.flatMap(m => refTokens([m.subject, docFiles(m).join(' '), m.bl, m.declNo].join(' '))))]; }
+/* 상대방 주소: 받은 메일은 보낸 사람(대표 전달이면 원래 보낸 사람), 직원이 보낸 메일은 받는 사람 */
+const LOGI_DOM = /logi|cargo|freight|trans|forward|shipping|express|marine|airsea|aerosea|ocean|line\.|lines|navi|customs|hanbiro|\.go\.kr$|\.or\.kr$|ktnet|bill|hometax|dhl|fedex|ups\.com|tnt|kmtc|maersk|msc|cosco|evergreen|hmm21|sinokor|heung-?a|dsv|kuehne|schenker|expeditors|nippon|yusen|kintetsu/;
+function mailPeers(m){
+  const pick = s => (String(s || '').toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || []).filter(a => !isOwn(a));
+  return (!isOwn(m.from) || m.fwdFrom) ? pick(m.fwdFrom || m.from).slice(0, 1) : pick(m.to).slice(0, 2);
+}
+let mxMemo = {stamp:'', v:null}, mcMemo = {sig:'', src:null, m:new Map()};
+function mailIdx(){
+  const stamp = [mailCache ? mailCache.length : -1, db.records.length, db.records.reduce((n, r) => n + (r.mails || []).length + (r.clientId ? r.clientId.length : 0), 0), db.clients.length, db.clients.map(c => (c.keyword || '') + (c.contacts || []).length).join('').length, Object.keys(db.mailClient || {}).length].join('|');
+  if(mxMemo.v && mxMemo.src === mailCache && (mxMemo.stamp === stamp || mxHold)) return mxMemo.v;
+  const logi = new Set((db.contacts || []).map(p => (String(p.email || '').toLowerCase().split('@')[1] || '').trim()).filter(Boolean));
+  const peerKey = a => { const d = a.split('@')[1] || ''; if(!d || logi.has(d) || LOGI_DOM.test(d)) return ''; return FREE_MAIL.includes(d) ? a : '@' + d; };
+  const tok = new Map(), addr = new Map(), cnee = new Map(), recTok = new Map();
+  const vote = (map, k, cid, src) => { if(!k) return; if(!map.has(k)) map.set(k, new Map()); const m = map.get(k); if(!m.has(cid)) m.set(cid, new Set()); m.get(cid).add(src); };
+  const byId = new Map((mailCache || []).map(m => [m.id, m]));
+  const recent = addPeriod(today(), -20, 'd');
+  db.records.forEach(r => {
+    const ms = (r.mails || []).map(x => byId.get(x.id) || {subject:x.subject, from:x.from, attachments:x.files || []});
+    const toks = new Set([...[r.bl, r.refNo, ...(r.refs || []).map(x => x.no)].filter(Boolean).flatMap(x => refTokens(x)), ...ms.flatMap(m => refTokens([m.subject, docFiles(m).join(' ')].join(' ')))]);
+    const live = r.status !== '완료' || (r.date || '') >= recent;
+    toks.forEach(k => { if(r.clientId) vote(tok, k, r.clientId, 'r' + r.id); if(live){ if(!recTok.has(k)) recTok.set(k, new Set()); recTok.get(k).add(r.id); } });
+    if(!r.clientId) return;
+    if(isFwdClient(db.clients.find(c => c.id === r.clientId))) return;
+    ms.forEach(m => { mailPeers(m).forEach(a => vote(addr, peerKey(a), r.clientId, 'r' + r.id)); consigneeNames(m.subject).forEach(n => vote(cnee, n.toUpperCase(), r.clientId, 'r' + r.id)); });
+  });
+  const mcl = db.mailClient || {}, csig = db.clients.map(c => c.id + (c.keyword || '') + (c.contacts || []).map(p => p.email || '').join('')).join('|');
+  if(mcMemo.sig !== csig || mcMemo.src !== mailCache) mcMemo = {sig:csig, src:mailCache, m:new Map()};
+  threadsOf(mailCache || []).forEach(t => {
+    const id = mcl[t.key];
+    let c = id && db.clients.find(x => x.id === id);
+    if(!c){ const mm = mcMemo.m.get(t.key); if(mm && mm.n === t.ms.length) c = mm.c; else { c = matchClient(t.ms); mcMemo.m.set(t.key, {n:t.ms.length, c}); } }
+    if(!c) return;
+    threadTokens(t).forEach(k => vote(tok, k, c.id, 't' + t.key));
+    const fw = isFwdClient(c);                                              // 포워더 업체 대화의 수하인·주소는 그 포워더 것이 아님
+    t.ms.forEach(m => { if(!fw) mailPeers(m).forEach(a => vote(addr, peerKey(a), c.id, 't' + t.key)); if(!fw) consigneeNames(m.subject).forEach(n => vote(cnee, n.toUpperCase(), c.id, 't' + t.key)); });
+  });
+  mxMemo = {stamp, src:mailCache, v:{tok, addr, cnee, recTok, peerKey, info:new Map()}};
+  return mxMemo.v;
+}
+/* 근거 하나가 한 업체만 가리키면 그 업체, 근거끼리 서로 다른 업체를 가리키면 정하지 않는다 */
+function inferClient(t, ix){
+  const cands = (() => { const txt = t.ms.map(mailHead).join(' '); return typeof clientCands === 'function' ? clientCands(txt) : []; })();
+  const ok = cid => !cands.length || cands.some(c => c.id === cid);
+  const one = (map, keys, minSrc) => {
+    const hit = new Map(); let why = '';
+    keys.forEach(k => { const m = map.get(k); if(!m || m.size !== 1) return; const [cid, srcs] = [...m.entries()][0]; if(srcs.size < minSrc) return; hit.set(cid, (hit.get(cid) || 0) + srcs.size); if(!why) why = k; });
+    return hit.size === 1 && ok([...hit.keys()][0]) ? {cid:[...hit.keys()][0], why} : null;
+  };
+  const rs = [['ref', one(ix.tok, threadTokens(t), 1)], ['addr', one(ix.addr, [...new Set(t.ms.flatMap(mailPeers).map(ix.peerKey).filter(Boolean))], 2)],
+    ['cnee', one(ix.cnee, [...new Set([...t.ms.flatMap(m => consigneeNames(m.subject)).map(n => n.toUpperCase()), ...cneeWords(t, ix)])], 1)]].filter(x => x[1]);
+  if(!rs.length || new Set(rs.map(x => x[1].cid)).size > 1) return {c:null, how:'', why:rs.length > 1 ? '근거끼리 업체가 다름' : ''};   // 근거가 서로 다른 업체를 가리키면 정하지 않음
+  return {c:db.clients.find(c => c.id === rs[0][1].cid) || null, how:rs[0][0], why:rs[0][1].why};
+}
+/* 포워더로 등록된 업체(업종에 '포워더·물류·운송·해운' 등): 그 업체 메일의 수하인·화주는 다른 업체일 수 있다 */
+function isFwdClient(c){ return !!c && /포워더|포워딩|물류|운송|해운|항공화물|forward|logis|shipping|freight/i.test(`${c.industry || ''} ${c.name || ''}`); }
+function cneeClient(t, ix){
+  const names = [...new Set(t.ms.flatMap(m => consigneeNames(m.subject)))];
+  for(const n of names){
+    const c = findClient(n);
+    if(c && !isFwdClient(c)) return {c, why:`C/${n}`};
+    const m = ix.cnee.get(n.toUpperCase());
+    if(m && m.size === 1){ const c2 = db.clients.find(x => x.id === [...m.keys()][0]); if(c2 && !isFwdClient(c2)) return {c:c2, why:`C/${n}`}; }
+  }
+  return null;
+}
+/* 수하인 이름이 'C/' 없이 제목에 나올 때('ORDER REQUEST - TOSTEM -', 'AN - TOSTEM CO., LTD'): 배운 이름(4자 이상, 한 업체만) 중 제목에 단어로 있는 것 */
+function cneeWords(t, ix){
+  const subj = t.ms.map(m => m.subject || '').join(' ').toLowerCase(), out = [];
+  ix.cnee.forEach((m, name) => { if(name.length >= 4 && m.size === 1 && hasWord(subj, name.toLowerCase())) out.push(name); });
+  return out;
+}
+const HOW_LABEL = {ref:'같은 번호', addr:'주고받은 주소', cnee:'수하인 이름', manual:'직원 지정'};
+/* 같은 번호로 기록 하나 찾기: 그 번호가 든 진행 중(또는 20일 안에 끝난) 기록이 하나뿐이고, 대화의 업체와 맞을 때 */
+function threadTokenRecord(t){
+  const ix = mailIdx(), ids = new Set(); let why = '';
+  threadTokens(t).forEach(k => { const s = ix.recTok.get(k); if(!s || s.size > 1) return; s.forEach(id => ids.add(id)); if(!why) why = k; });
+  if(ids.size !== 1) return null;
+  const r = db.records.find(x => x.id === [...ids][0]);
+  if(!r) return null;
+  const c = threadClient(t);
+  return !c || !r.clientId || c.id === r.clientId ? {r, why} : null;
+}
+/* 서명 이미지 B/L 오류 바로잡기 (11/13 f, 한 번): 기록의 B/L·식별번호가 'LW000000'·해시 꼴이면 지우고,
+   그 번호로 잘못 붙은 메일(같은 번호·같은 대화가 아닌 것)을 떼어 다시 연결되게 한다. 뗀 기록은 확인 알림으로 알린다. */
+function fixBogusLinks(){
+  if(!mailCache || db.settings.mailFix === '20261113f') return 0;
+  db.settings.mailFix = '20261113f';
+  const byId = new Map(mailCache.map(m => [m.id, m]));
+  let fixed = 0;
+  db.records.forEach(r => {
+    let bad = false;
+    if(r.bl && BOGUS_REF.test(refKey(r.bl))){ addHist(r, `B/L ‘${r.bl}’ 지움 — 메일 서명 이미지 이름을 B/L로 잘못 읽은 값`); r.bl = ''; bad = true; }
+    if((r.refs || []).some(x => BOGUS_REF.test(refKey(x.no)))){ r.refs = r.refs.filter(x => !BOGUS_REF.test(refKey(x.no))); bad = true; }
+    if(!bad || !(r.mails || []).length) return;
+    const ms = r.mails.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+    // 신고번호·식별번호는 잘못 붙은 필증 메일에서 왔을 수 있어 근거로 쓰지 않는다 — 처음 메일의 대화, B/L, 케이스 번호만
+    const keys = new Set([r.bl].filter(Boolean).map(refKey));
+    const okKeys = new Set(threadKeysOf(ms[0].subject));
+    const toksOf = x => { const m = byId.get(x.id) || {subject:x.subject, attachments:x.files}; return refTokens([m.subject, docFiles(m).join(' '), mailDecl(m)].join(' ')); };
+    const related = x => toksOf(x).some(k => keys.has(k)) || (r.caseNo && String(x.subject || '').includes(r.caseNo));
+    for(let pass = 0; pass < 3; pass++) ms.forEach(x => { if(related(x) || threadKeysOf(x.subject).some(k => okKeys.has(k))) threadKeysOf(x.subject).forEach(k => okKeys.add(k)); });
+    const drop = ms.filter(x => !threadKeysOf(x.subject).some(k => okKeys.has(k)) && !related(x));
+    if(!drop.length) return;
+    const dropIds = new Set(drop.map(x => x.id));
+    const keptT = new Set(ms.filter(x => !dropIds.has(x.id)).flatMap(toksOf)), dropT = new Set(drop.flatMap(toksOf));
+    const wrong = no => { const k = refKey(no); return dropT.has(k) && !keptT.has(k); };   // 뗀 메일에만 있던 번호
+    const wr = (r.refs || []).filter(x => wrong(x.no));
+    if(wr.length){ r.refs = r.refs.filter(x => !wr.includes(x)); addHist(r, `식별번호 ${wr.map(x => x.no).join(', ')} 지움 (잘못 붙은 메일에서 온 번호)`); }
+    if(r.refNo && wrong(r.refNo)){ addHist(r, `신고번호 ${r.refNo} 지움 (잘못 붙은 메일에서 온 번호)`); r.refNo = ''; }
+    r.mails = r.mails.filter(x => !dropIds.has(x.id));
+    db.mailSeen = db.mailSeen.filter(id => !dropIds.has(id));
+    Object.keys(db.mailThreads || {}).forEach(k => { if(db.mailThreads[k] === r.id && !okKeys.has(k)) delete db.mailThreads[k]; });
+    addHist(r, `잘못 붙은 메일 ${drop.length}통 뗌 (서명 이미지 번호를 B/L로 읽은 오류) — 단계·신고번호가 그 메일로 바뀌었는지 확인`);
+    if(typeof addAlert === 'function') addAlert({key:'mailfix-' + r.id, kind:'mailfix', title:`잘못 붙은 메일 ${drop.length}통을 뗐습니다 — ${clientName(r.clientId)} ${r.title || ''}`.slice(0, 120),
+      text:`메일 서명 이미지 이름(LW000000 등)을 B/L로 읽어 다른 업무 메일이 이 기록에 붙어 있었습니다. 뗀 메일은 다시 맞는 기록에 붙습니다.\n단계(수리·통관)·신고번호가 뗀 메일의 필증으로 바뀌지 않았는지 확인하세요: ${drop.slice(0, 5).map(x => x.subject).join(' / ').slice(0, 300)}`, ttype:'rec', tid:r.id});
+    r.updatedAt = nowIso(); fixed++;
+  });
+  return fixed;
 }
 function findThread(key){ return mailThreadsList().find(t => t.key === key); }
 function viewMail(){
@@ -513,9 +747,9 @@ function viewMail(){
     <div class="setup"><p>한비로 customs@bsgc.co.kr로 들어온 메일을 업무 기록과 연결합니다. 사무실 PC의 메일 수집기와 Apps Script 연동이 필요합니다.</p>
     <p class="hint">설치 순서는 README의 ‘customs@ 메일 수집’을 보세요.</p>
     <button class="primary" data-open-data>데이터 메뉴 열기</button></div>`;
-  const all = mailThreadsList().map(t => ({...t, f:threadFlags(t)})), olds = all.filter(t => t.f.old);
-  const ths = all.filter(t => !t.f.old).sort((a, b) => (b.f.request - a.f.request) || (b.f.ageH >= OVERDUE_H) - (a.f.ageH >= OVERDUE_H) || (a.last.date < b.last.date ? 1 : -1));
-  return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 customs@ 메일 중 아직 기록과 연결하지 않은 대화 ${ths.length}건입니다. 제목에 케이스 번호([2026-I-001])가 있거나, 이미 기록에 붙인 대화의 회신이거나, B/L·신고번호로 기록이 하나로 정해지면 자동으로 붙습니다.</p></div>
+  const all = mailThreadsList().map(t => ({...t, f:threadFlags(t)})), olds = all.filter(t => t.f.old), refs0 = all.filter(t => !t.f.old && t.f.ref);
+  const ths = all.filter(t => !t.f.old && !t.f.ref).sort((a, b) => (b.f.request - a.f.request) || (b.f.ageH >= OVERDUE_H) - (a.f.ageH >= OVERDUE_H) || (a.last.date < b.last.date ? 1 : -1));
+  return `<header class="client-head"><div><h2>customs@ 메일</h2><p class="client-meta">최근 60일 customs@ 메일 중 아직 기록과 연결하지 않은 대화 ${ths.length}건입니다${refs0.length ? ` (반송·세금계산서·내역서·견적 같은 참고 메일 ${refs0.length}건은 아래에 따로)` : ''}. 케이스 번호, 이미 붙인 대화의 회신, B/L·신고번호·PO·인보이스·작업번호로 기록이 하나로 정해지면 자동으로 붙고, 업체 이름이 없어도 같은 번호·주고받은 주소·수하인 이름으로 업체를 추정해 자동 접수합니다.</p></div>
       <div class="client-act"><label class="inline">누락 경고 기준일 <input type="date" id="mailWatch" value="${esc(mailWatchFrom())}"></label><button class="ghost" data-mail-audit title="업체를 알아보지 못한 메일·자료에서 업체 후보 찾기">업체 미인식 점검</button><label class="inline" title="이 날짜 이후 메일 중 기록이 없는 업무(필증·의뢰·A/N·선적 서류·청구서·정산서)를 찾아 한 번에 접수합니다. 목록에서 정리(무시)한 메일도 다시 봅니다.">놓친 건 <input type="date" id="mailBackfillFrom" value="${esc(db.settings.mailBackfillFrom || addPeriod(today(), -45, 'd'))}"></label><button class="ghost" data-mail-backfill${mailLoading ? ' disabled' : ''}>일괄 접수</button><button class="primary" data-mail-load${mailLoading ? ' disabled' : ''}>${mailLoading ? '불러오는 중…' : '새로 불러오기'}</button></div></header>
     ${mailErr ? `<p class="msg">${esc(mailErr)}</p>` : ''}
     <div class="narrow">
@@ -529,7 +763,7 @@ function viewMail(){
         return `<article class="rec${over ? ' overdue' : ''}">
         <div class="rec-date">${esc(String(m.date).slice(0, 10))}<small>${t.ms.length > 1 ? `${t.ms.length}통 · ${esc(String(first.date).slice(5, 10))}~` : esc(String(m.date).slice(11, 16))}</small></div>
         <div class="rec-body"><h4>${esc(m.subject || '(제목 없음)')}</h4>
-          <div class="rec-meta">${t.f.request ? '<span class="tag new">새 의뢰 후보</span>' : ''}${t.ms.some(certMail) ? `<span class="tag new" title="직원이 필증을 보낸 대화입니다. 업체를 알아보면 다음 불러오기 때 자동 접수됩니다.">필증 송부됨${c ? '' : ' · 업체 지정 필요'}</span>` : ''}${over ? `<span class="tag warn">${Math.floor(t.f.ageH / 24) ? Math.floor(t.f.ageH / 24) + '일' : Math.floor(t.f.ageH) + '시간'} 미연결</span>` : ''}<span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag">${esc(c.name)}</span>${cautionBadge(c)}` : '<span class="tag type">업체 미지정</span>'}${typeof threadReviewHTML === 'function' ? threadReviewHTML(t) : ''}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+          <div class="rec-meta">${t.f.request ? '<span class="tag new">새 의뢰 후보</span>' : ''}${t.ms.some(certMail) ? `<span class="tag new" title="직원이 필증을 보낸 대화입니다. 업체를 알아보면 다음 불러오기 때 자동 접수됩니다.">필증 송부됨${c ? '' : ' · 업체 지정 필요'}</span>` : ''}${over ? `<span class="tag warn">${Math.floor(t.f.ageH / 24) ? Math.floor(t.f.ageH / 24) + '일' : Math.floor(t.f.ageH) + '시간'} 미연결</span>` : ''}<span>${esc(people.slice(0, 4).join(', '))}${people.length > 4 ? ` 외 ${people.length - 4}명` : ''}</span>${c ? `<span class="tag"${t.f.how && t.f.how !== 'manual' ? ` title="업체 추정 근거: ${esc(HOW_LABEL[t.f.how] || t.f.how)}${t.f.howWhy ? ' — ' + esc(t.f.howWhy) : ''}. 틀리면 ‘업체 변경’"` : ''}>${esc(c.name)}${t.f.how && t.f.how !== 'manual' ? ' (추정)' : ''}</span>${cautionBadge(c)}` : `<span class="tag type"${t.f.howWhy ? ` title="${esc(t.f.howWhy)}"` : ''}>업체 미지정</span>`}${!t.f.request && c && !t.ms.some(certMail) ? '<span class="tag" title="의뢰·서류·청구서·필증·B/L 근거가 없어 자동 접수하지 않은 대화입니다. 진행 중인 기록에 붙이거나 무시하세요.">접수 근거 없음</span>' : ''}${typeof threadReviewHTML === 'function' ? threadReviewHTML(t) : ''}${refs.slice(0, 4).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
           ${m.snippet ? `<p class="rec-sum">${esc(m.snippet)}</p>` : ''}
           ${files.length ? `<div class="hint">첨부 ${files.length}개: ${esc(files.slice(0, 6).join(', '))}${files.length > 6 ? ' …' : ''}</div>` : ''}
           ${openRecs.length ? `<div class="hint mail-to">진행 중인 ${esc(c.name)} 기록에 바로 붙이기: ${openRecs.map(r => `<button class="mini" data-mail-to="${esc(t.key)}|${esc(r.id)}" title="${esc(r.title || '')}">${esc(((r.caseNo ? r.caseNo + ' ' : '') + (r.bl ? r.bl + ' ' : '') + (r.title || '')).slice(0, 34))}</button>`).join(' ')}</div>` : ''}
@@ -538,16 +772,28 @@ function viewMail(){
         <div class="rec-act"><button class="mini strong" data-mail-make="${esc(t.key)}">${t.f.request ? '업무 시작' : '기록 만들기'}</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button>${typeof threadKind === 'function' && (threadKind(t) === 'review' || reviewOf(t.key)) ? `<button class="mini${reviewOf(t.key) ? '' : ' strong'}" data-rv="${esc(t.key)}" title="관세사 검토의견이 필요한 문의 — AI 1차 검토 초안 만들기">1차 검토</button>` : ''}<button class="mini${c ? '' : ' strong'}" data-mail-client="${esc(t.key)}" title="이 대화의 업체를 직접 정합니다. 의뢰·선적 서류·청구서·필증 근거가 있으면 바로 자동 접수합니다.">${c ? '업체 변경' : '업체 지정'}</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button></div>
       </article>`; }).join('')
       : '<p class="empty">새로 연결할 메일이 없습니다.</p>'}
+    ${refs0.length ? `<details class="old-mails"><summary>참고 메일 ${refs0.length}건 — 미연결 경고에서 제외됨</summary><p class="hint">업무 기록과 이을 일이 없는 메일로 자동 분류했습니다(반송·자동 회신, 세금계산서·거래명세서, 광고·교육 안내, 직원이 보낸 내역서·현황 보고, 견적). 업무 메일이 섞여 있으면 ‘기록에 붙이기’나 ‘기록 만들기’를 누르세요.</p><button class="mini" data-mail-old-clear="ref">참고 메일 ${refs0.length}건 모두 정리(무시)</button><ul>${refs0.slice(0, 60).map(t => `<li><span class="rec-date">${esc(String(t.last.date).slice(0, 10))}</span> <span class="tag">${esc(REF_LABEL[t.f.ref] || t.f.ref)}</span> ${esc(t.last.subject || '')} <span class="hint">${t.f.client ? esc(t.f.client.name) + ' · ' : ''}${t.ms.length}통</span> <button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-make="${esc(t.key)}">기록 만들기</button></li>`).join('')}${refs0.length > 60 ? `<li class="hint">외 ${refs0.length - 60}건</li>` : ''}</ul></details>` : ''}
     ${olds.length ? `<details class="old-mails"><summary>기준일(${esc(mailWatchFrom())}) 이전 대화 ${olds.length}건 — 경고에서 제외됨</summary><p class="hint">처음 연결할 때 쌓인 과거 메일입니다. 필요한 것만 위 기준일을 앞당겨 처리하거나, 한 번에 정리하세요.</p><button class="mini" data-mail-old-clear>이전 대화 ${olds.length}건 모두 정리(무시)</button><ul>${olds.slice(0, 50).map(t => `<li><span class="rec-date">${esc(String(t.last.date).slice(0, 10))}</span> ${esc(t.last.subject || '')} <span class="hint">${t.ms.length}통</span></li>`).join('')}${olds.length > 50 ? `<li class="hint">외 ${olds.length - 50}건</li>` : ''}</ul></details>` : ''}
     </div>`;
 }
-function autoAttachMails(){
+function autoAttachMails(){ return holdIdx(autoAttachMails0); }
+function autoAttachMails0(){
   let n = 0;
-  (mailCache || []).filter(m => !db.mailSeen.includes(m.id)).sort((a, b) => a.date < b.date ? -1 : 1).forEach(m => {
-    const rs = mailRecords(m);                                                   // B/L 여러 건 메일('정산서 두 건')은 해당 기록 모두에 붙임
-    if(!rs.length) return;
-    if(rs.map(r => attachMail(r, m)).some(Boolean)) n++;
-    seeMail(m.id);
+  const seen = () => new Set(db.mailSeen);
+  for(let pass = 0; pass < 2; pass++){                                           // 뒤 메일이 붙으며 대화가 기록과 이어지면 앞 메일도 한 번 더 봄
+    const sn = seen();
+    (mailCache || []).filter(m => !sn.has(m.id)).sort((a, b) => a.date < b.date ? -1 : 1).forEach(m => {
+      const rs = mailRecords(m);                                                 // B/L 여러 건 메일('정산서 두 건')은 해당 기록 모두에 붙임
+      if(!rs.length) return;
+      if(rs.map(r => attachMail(r, m)).some(Boolean)) n++;
+      seeMail(m.id);
+    });
+  }
+  mailThreadsList().forEach(t => {                                               // 같은 번호(PO·인보이스·작업번호·운송장)로 기록 하나 (11/13 f)
+    const hit = threadTokenRecord(t);
+    if(!hit) return;
+    let k = 0; t.ms.forEach(m => { if(attachMail(hit.r, m)) k++; seeMail(m.id); });
+    if(k){ addHist(hit.r, `메일 ${k}통 연결 (같은 번호 ${hit.why}): “${t.last.subject || ''}”`.slice(0, 200)); n += k; }
   });
   return n;
 }
@@ -555,14 +801,15 @@ async function loadMail(manual = true){
   mailLoading = true; mailErr = ''; if(route.name === 'mail') renderView();
   try{
     const j = await collectApi({mails:1, days:60});
-    mailCache = j.items || []; mailCollectorAt = j.collectorAt || '';
+    mailCache = (j.items || []).map(cleanMailBL); mailCollectorAt = j.collectorAt || '';
+    const fx = fixBogusLinks();
     if(typeof markRun === 'function') markRun('mail', true);
     if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
-    if(n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu){ pruneThreads(); commit(); }
+    if(fx || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu){ pruneThreads(); commit(); }
     if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
-    if(n || made.length || ln || cs || ev.done || cu) toast([n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '));
+    if(fx || n || made.length || ln || cs || ev.done || cu) toast([fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '));
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(typeof markRun === 'function') markRun('mail', false, e.message);
@@ -603,10 +850,11 @@ function openMailClient(t){
       const x = db.clients.find(y => y.id === fd.get('cid'));
       if(!x){ toast('업체를 고르세요.'); return false; }
       db.mailClient = {...(db.mailClient || {}), [t.key]:x.id};
+      const lk = learnClient(x.id, t.ms);                                     // 의뢰자 주소도 배움 (11/13 f)
       const kw = String(fd.get('kw') || '').trim();
       if(kw.length >= 2 && !kwList(x).includes(kw.toLowerCase())){ x.keyword = [...String(x.keyword || '').split(/[,;\n]/).map(v => v.trim()).filter(Boolean), kw].join(', '); x.updatedAt = nowIso(); }
       const made = autoIntake();
-      toast(`${x.name}로 지정했습니다.${kw ? ` 검색어 ‘${kw}’도 기억합니다.` : ''}${made.length ? ` 메일로 ${made.length}건을 자동 접수했습니다.` : ''}`);
+      toast(`${x.name}로 지정했습니다.${kw ? ` 검색어 ‘${kw}’도 기억합니다.` : ''}${lk.length ? ` 다음부터 ${lk[0]} 메일도 ${x.name}로 알아봅니다.` : ''}${made.length ? ` 메일로 ${made.length}건을 자동 접수했습니다.` : ''}`);
     }});
 }
 function mailToRecord(key, rid){
@@ -614,6 +862,7 @@ function mailToRecord(key, rid){
   if(!t || !r) return;
   t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
   addHist(r, `메일 ${t.ms.length}통 연결: “${t.last.subject || ''}”`);
+  if(r.clientId) learnClient(r.clientId, t.ms);
   if(typeof applyCautions === 'function') applyCautions();
   commit(); toast(`${clientName(r.clientId)} 기록에 메일 ${t.ms.length}통을 붙였습니다.`);
 }

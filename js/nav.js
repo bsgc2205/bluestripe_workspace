@@ -84,9 +84,9 @@ function viewStatus(){
 function checkGroups(){
   const g = [];
   if(mailCache){
-    const th = mailThreadsList().map(t => ({t, f:threadFlags(t)})).filter(x => !x.f.old);
+    const th = mailThreadsList().map(t => ({t, f:threadFlags(t)})).filter(x => !x.f.old && !x.f.ref);   // 참고 메일(반송·세금계산서·내역서·견적)은 뺌 (11/13 f)
     const nocl = th.filter(x => !x.f.client), unl = th.filter(x => x.f.client && (x.f.request || x.f.ageH >= OVERDUE_H));
-    if(unl.length) g.push({k:'mail', title:'기록과 연결 안 된 메일 대화', why:'새 의뢰 후보이거나 24시간 넘게 연결이 안 된 대화', rows:unl.map(({t, f}) => ({t1:t.last.subject || '(제목 없음)', t2:`${f.client.name} · ${t.ms.length}통 · ${Math.floor(f.ageH / 24) ? Math.floor(f.ageH / 24) + '일' : Math.floor(f.ageH) + '시간'} 전${f.request ? ' · 새 의뢰 후보' : ''}`, lvl:f.request ? 'act' : 'chk',
+    if(unl.length) g.push({k:'mail', title:'기록과 연결 안 된 메일 대화', why:'새 의뢰 후보이거나 24시간 넘게 연결이 안 된 대화', rows:unl.map(({t, f}) => ({t1:t.last.subject || '(제목 없음)', t2:`${f.client.name}${f.how && f.how !== 'manual' ? '(추정)' : ''} · ${t.ms.length}통 · ${Math.floor(f.ageH / 24) ? Math.floor(f.ageH / 24) + '일' : Math.floor(f.ageH) + '시간'} 전${f.request ? ' · 새 의뢰 후보' : ''}`, lvl:f.request ? 'act' : 'chk',
       acts:`<button class="mini strong" data-mail-make="${esc(t.key)}">업무 시작</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button>`}))});
     if(nocl.length) g.push({k:'nocl', title:'업체를 알아보지 못한 메일', why:'업체를 지정하고 검색어를 넣으면 다음부터 자동으로 알아봅니다', rows:nocl.map(({t}) => ({t1:t.last.subject || '(제목 없음)', t2:`${t.last.fromName || t.last.from || ''} · ${t.ms.length}통`, lvl:'chk',
       acts:`<button class="mini strong" data-mail-client="${esc(t.key)}">업체 지정</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button>`}))});

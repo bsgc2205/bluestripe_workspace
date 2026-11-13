@@ -133,7 +133,7 @@ function todayItems(){
     out.push({lvl:n < 0 ? 'act' : 'chk', pri:n < 0 ? 0 : 3, kind:n < 0 ? '지난 기한' : '기한 임박', title:`${d.kind} ${d.due} ${n < 0 ? '(D+' + (-n) + ')' : n === 0 ? '(오늘)' : '(D-' + n + ')'}`, sub:recLine(r),
       acts:`<button class="mini strong" data-dl-done="${esc(r.id)}|${esc(d.id)}">처리 완료</button><button class="mini" data-edit-rec="${esc(r.id)}">기록</button>`});
   });
-  if(mailCache) mailThreadsList().map(t => ({t, f:threadFlags(t)})).filter(x => !x.f.old && (x.f.request || x.f.ageH >= OVERDUE_H)).forEach(({t, f}) => {
+  if(mailCache) mailThreadsList().map(t => ({t, f:threadFlags(t)})).filter(x => !x.f.old && !x.f.ref && (x.f.request || x.f.ageH >= OVERDUE_H)).forEach(({t, f}) => {
     out.push({lvl:'act', pri:f.request ? 1 : 2, kind:f.request ? '새 의뢰' : '미연결 메일', title:t.last.subject || '(제목 없음)', sub:`${f.client ? f.client.name : '업체 미지정'} · ${t.ms.length}통 · ${Math.floor(f.ageH / 24) ? Math.floor(f.ageH / 24) + '일' : Math.floor(f.ageH) + '시간'} 경과`,
       acts:`<button class="mini strong" data-mail-make="${esc(t.key)}">업무 시작</button><button class="mini" data-mail-attach="${esc(t.key)}">기록에 붙이기</button><button class="mini" data-mail-ignore="${esc(t.key)}">무시</button>`});
   });
@@ -396,7 +396,8 @@ function normName(s){return String(s || '').replace(/\(예시\)|주식회사|유
    한글 두 글자 이하나 영문 이름은 앞뒤가 다른 글자와 붙어 있으면 인정하지 않는다(예: 두 글자 약칭이 더 긴 단어 안에 들어 있는 경우는 무시).
    같은 순위에서 길이가 같은 다른 업체가 함께 걸리면 추측하지 않고 미분류로 둔다. */
 const FREE_MAIL = ['gmail.com','naver.com','daum.net','hanmail.net','nate.com','kakao.com','outlook.com','hotmail.com','yahoo.com','yahoo.co.kr','icloud.com','live.com','kita.net','korea.com','hanmir.com','empal.com'];   // kita.net: 무역협회 공용 메일 (여러 업체가 씀)
-function kwList(c){return String(c.keyword || '').split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);}
+const kwMemo = new Map();                                                    // 같은 검색어 문자열은 한 번만 나눔 (메일 업체 알아보기가 자주 부름, 11/13 f)
+function kwList(c){ const k = String(c.keyword || ''); let v = kwMemo.get(k); if(!v){ v = k.split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean); if(kwMemo.size > 2000) kwMemo.clear(); kwMemo.set(k, v); } return v.slice(); }
 function primaryKw(c){const k = kwList(c); return (k.find(x => x.startsWith('@')) || k[0] || c.name || '').trim();}
 function nameKey(s){return String(s || '').replace(/\(예시\)|주식회사|유한회사|\(주\)|\(유\)|㈜/g, '').replace(/\b(co\.?,?\s*ltd\.?|corp(oration)?\.?|inc\.?|ltd\.?|limited)\b/gi, '').replace(/\(.*?\)/g, '').replace(/[.,]+$/, '').trim().toLowerCase();}
 function hasWord(text, w){
@@ -412,7 +413,9 @@ function nameHit(text, compact, w){
    꼬리말을 뗀 앞부분이 3글자 이상이고, 다른 업체 이름·줄임 이름과 겹치지 않을 때만 쓴다('○○산업기계'·'○○정공'처럼 앞부분이 겹치면 안 씀). */
 const NAME_TAIL = /(일렉트로닉스|일렉트로닉|전자|산업기계|산업|기계|정공|물산|통상|상사|무역|인터내셔널|글로벌|코리아|테크|엠앤디|에스티|이앤비|에프앤비|네트웍스|기업|유기농|화학|케미칼|메디칼|로지스틱스|물류|엔지니어링|시스템|솔루션)+$/;
 let aliasCache = {sig:'', map:new Map()};
-function clientAlias(c){
+function clientAlias(c){ return aliasMap().get(c.id) || ''; }
+function aliasMap(){
+  if(aliasCache.arr === db.clients && aliasCache.n === db.clients.length && aliasCache.at > Date.now() - 2000) return aliasCache.map;   // 한 번 알아보는 동안(2초)은 다시 만들지 않음
   const sig = db.clients.map(x => x.id + ':' + x.name).join('|');
   if(aliasCache.sig !== sig){
     const keys = db.clients.map(x => [x.id, nameKey(x.name).replace(/\s+/g, '')]);
@@ -425,9 +428,12 @@ function clientAlias(c){
     });
     aliasCache = {sig, map};
   }
-  return aliasCache.map.get(c.id) || '';
+  Object.assign(aliasCache, {arr:db.clients, n:db.clients.length, at:Date.now()});
+  return aliasCache.map;
 }
-function findClient(text){
+function findClient(text){ const b = clientCands(text); return b.length === 1 ? b[0] : null; }
+/* 가장 높은 순위에서 똑같이 걸린 업체들 (하나면 그 업체, 둘 이상이면 findClient는 정하지 않음 — 메일 업체 추정이 이 안에서 고름, 11/13 f) */
+function clientCands(text){
   const t = String(text || '').toLowerCase(), compact = t.replace(/[\s_-]+/g, '');
   const addrs = t.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [];
   const tiers = [[], [], []];
@@ -446,10 +452,10 @@ function findClient(text){
   });
   for(const tier of tiers){
     if(!tier.length) continue;
-    const top = Math.max(...tier.map(x => x[1])), best = tier.filter(x => x[1] === top);
-    return best.length === 1 ? best[0][0] : null;
+    const top = Math.max(...tier.map(x => x[1]));
+    return tier.filter(x => x[1] === top).map(x => x[0]);
   }
-  return null;
+  return [];
 }
 function viewClientList(){
   const list = sortedClients();

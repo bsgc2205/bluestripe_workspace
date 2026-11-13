@@ -69,8 +69,16 @@ function applyCautions(){
 }
 
 /* ---------- 1차 검토 ---------- */
-function reviewOf(key){ return (db.reviews || {})[key] || null; }
-function recReviewKeys(r){ return [...new Set((r.mails || []).map(m => threadKey(m.subject)).filter(k => k.length >= 4))]; }
+let rvV1 = {src:null, map:new Map()};
+function reviewOf(key){                                                     // 11/13 f 이전 키(threadKeyV1)로 저장된 검토도 찾음
+  const rv = db.reviews || {};
+  if(rv[key]) return rv[key];
+  if(!Object.keys(rv).length || !mailCache) return null;
+  if(rvV1.src !== mailCache){ const mp = new Map(); mailCache.forEach(m => { const k = threadKey(m.subject), k1 = threadKeyV1(m.subject); if(k !== k1){ if(!mp.has(k)) mp.set(k, new Set()); mp.get(k).add(k1); } }); rvV1 = {src:mailCache, map:mp}; }
+  const k1 = [...(rvV1.map.get(key) || [])].find(k => rv[k]);
+  return k1 ? rv[k1] : null;
+}
+function recReviewKeys(r){ return [...new Set((r.mails || []).flatMap(m => threadKeysOf(m.subject)).filter(k => k.length >= 4))]; }
 function recReview(r){ const rv = db.reviews || {}; return Object.values(rv).find(x => x.recId === r.id) || recReviewKeys(r).map(k => rv[k]).find(Boolean) || null; }
 function recNeedsReview(r){
   if(!mailCache) return false;
