@@ -202,8 +202,28 @@ function splitPending(x, docs){
   set(x, docs[0]);
   docs.slice(1).forEach(d => { const y = set({...x, splitOf:x.id, path:(x.path || '') + ' (같은 파일의 다른 필증)'}, d); db.collectPending.push(y); });
 }
+/* 11/15: 묶음 필증 다시 읽기 정리 — ① 이 파일로 예전에 붙은 필증 요약·추가 신고번호를 지우고 새로 붙임 ② 예전 잘못 읽기로 엉뚱한 업체에 자동 생성된 기록
+   (자동 생성·메일 없음·이 파일뿐)은 필증의 수출화주·수입자 업체로 옮기고, 그 업체에 같은 신고번호 기록이 있으면 합침(되돌리기 가능) */
+function fixAutoRecParty(r, docs, fname){
+  const own = docs.find(d => d.declNo && r.refNo && refTail(d.declNo) === refTail(r.refNo));
+  if(!own || !(r.createdBy === 'auto' && !(r.mails || []).length && (r.files || []).every(f => f.name === fname))) return false;
+  const pc = certParty(own), cid = pc ? pc.id : r.clientId;
+  const t = db.records.filter(x => x.id !== r.id && x.clientId === cid && recKeys(x, 'decl').map(refTail).includes(refTail(own.declNo)))
+    .sort((a, b) => (a.createdBy === 'auto') - (b.createdBy === 'auto') || String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];   // 사람이 만든·먼저 만든 기록 우선
+  if(t && typeof mergeRecords === 'function'){ mergeRecords(t.id, r.id); return 'merged'; }
+  if(!pc || pc.id === r.clientId) return false;
+  const old = clientName(r.clientId);
+  r.clientId = pc.id; r.assignee = clientAssignee(pc.id) || r.assignee; addHist(r, `필증 다시 읽기(${fname}): 수출화주·수입자가 ${pc.name} — 업체를 ${old}에서 바로잡음`);
+  return 'moved';
+}
 function applyCertDocs(r, docs, file){
   const fname = file.name, out = {made:0};
+  if(docs.filter(d => !d.idx).length > 1){
+    r.certs = (r.certs || []).filter(c => c.file !== fname);
+    r.refs = (r.refs || []).filter(x => !String(x.why || '').includes(`필증 ${fname}`));
+    const fx = fixAutoRecParty(r, docs, fname);
+    if(fx === 'merged') return out;                                       // 합쳐진 기록은 남은 기록에서 다시 읽힘
+  }
   const mine = [], others = [], listed = [];
   /* 색인표에만 있고 본문을 못 읽은 필증 (11/13 g): 같은 신고번호 기록이 있으면 파일만 붙이고, 이 기록 번호면 그대로, 없으면 미분류(업체 선택) */
   docs.filter(d => d.idx).forEach(d => {
@@ -223,12 +243,20 @@ function applyCertDocs(r, docs, file){
     const isMine = pc ? pc.id === r.clientId : (!d.party || partyIsClient(d.party, r.clientId) || (docs.length === 1 && !(d.lines || []).length));
     (isMine ? mine : others).push({d, pc});
   });
+  /* 11/15: 여러 장 묶음 파일에서 같은 업체 필증이 둘 이상이면(예: 레이 2건) 이 기록의 신고번호와 같은 장만 이 기록에, 나머지는 자기 기록으로 */
+  if(docs.length > 1 && mine.length > 1){
+    const keys = recKeys(r, 'decl').map(refTail), own = d => d.declNo && keys.some(k => k === refTail(d.declNo) || k.endsWith(refTail(d.declNo)) || refTail(d.declNo).endsWith(k));
+    const keep = mine.filter(x => own(x.d)), rest = keep.length ? mine.filter(x => !own(x.d)) : mine.slice(1);
+    mine.splice(0, mine.length, ...(keep.length ? keep : mine.slice(0, 1)));
+    rest.forEach(x => others.push({d:x.d, pc:x.pc || db.clients.find(c => c.id === r.clientId) || null}));
+  }
   mine.forEach(({d}) => { const a = applyCert2Rec(r, d, fname); out.made += a.made; });
   const moved = [];
   others.forEach(({d, pc}) => {
     if(pc){
       const L = refLookup({declNo:d.declNo, bl:d.bl}); let t = L.r;
       if(t && t.clientId !== pc.id) t = null;
+      if(!t){ const pcC = L.cands.filter(x => x.clientId === pc.id); if(pcC.length === 1) t = pcC[0]; }   // 같은 번호 기록이 여럿이어도 필증 업체 기록이 하나면 그 기록
       const amb = !t && L.cands.filter(x => x.clientId === pc.id).length > 1 ? L.cands.filter(x => x.clientId === pc.id).slice(0, 6).map(x => x.id) : null;
       if(amb){
         db.collectPending = db.collectPending || [];
@@ -283,8 +311,8 @@ function fixMisplacedItems(r, mineDocs, others){
 }
 /* 한 번만: 예전에 한 장짜리로 읽은 '날짜 이름' 같은 묶음 PDF(파일명에 신고번호·EXP/IMP 없음)를 다시 읽게 함 */
 /* 11/13 g: 견본 필증('견본(수출)'로 시작, '수출신고필증' 제목 없음)과 색인표 신고번호를 잘못 나누던 것을 고쳐(Apps Script cert3_) 한 번 더 다시 읽음 */
-function recheckCombined(){
-  if(db.settings.certMulti === '20261113g') return 0;
+function recheckCombined(){                                               // 11/15: 수출신고서(갑지·을지) 머리·신고번호 앞 배치 대응으로 묶음 PDF를 한 번 더 다시 읽음
+  if(db.settings.certMulti === '20261115') return 0;
   let n = 0;
   db.records.forEach(r => {
     const fs = (r.files || []).filter(f => /\.pdf$/i.test(f.name || '') && !CERT_HINT.test(f.name || '') && (r.certRead || {})[f.id]);
@@ -292,7 +320,7 @@ function recheckCombined(){
     fs.forEach(f => { delete r.certRead[f.id]; }); r.certAgain = true; n += fs.length;
   });
   (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !CERT_HINT.test(x.name || '') && x.certTried && !x.splitOf){ x.certTried = false; n++; } });
-  db.settings.certMulti = '20261113g';
+  db.settings.certMulti = '20261115';
   return n;
 }
 let certBusy = false;
