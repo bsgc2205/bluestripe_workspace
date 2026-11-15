@@ -25,7 +25,7 @@ function replyWaitOf(r){                                                 // 회�
 }
 function partyOfAddr(r, addrs){
   const c = db.clients.find(x => x.id === r.clientId);
-  const cm = ((c && c.contacts) || []).map(p => String(p.email || '').toLowerCase()).filter(e => e.includes('@'));
+  const cm = confirmedContacts(c).map(p => String(p.email || '').toLowerCase()).filter(e => e.includes('@'));
   const dom = cm.map(e => e.split('@')[1]);
   return addrs.some(a => cm.includes(a) || dom.includes(a.split('@')[1])) ? 'client' : 'fwd';
 }
@@ -77,16 +77,16 @@ function nextAction(r){
   if(!(io && (st.customs || st.accept))){
     const miss = ['recv', 'docs'].includes(ph) ? docStatus(r).list.filter(x => !x.ok).map(x => x.label) : [];   // 직접 신고진행 이후로 옮겼으면 서류 대기로 보지 않음
     if(miss.length) return a(`서류 받기: ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ` 외 ${miss.length - 3}` : ''}`);
-    const ck = (r.checklist || []).find(x => !x.done);
+    const ck = (r.checklist || []).find(x => !x.done && !(isExp(r) && isLogiItem(r, x.text)));   // 통관만 맡은 수출 건은 물류 항목을 남은 일로 보지 않음 (11/16)
     if(ck) return a(ck.text);
   }
   if(!io) return a(caseCode(r.type) === 'C' ? '검토 의견 회신 후 완료 처리' : '완료 처리');
   if(!r.refNo && !(r.unipass || {}).dclrNo && !st.customs && !st.accept) return a(isExp(r) ? '수출신고' : '수입신고');
   if(isExp(r)){
     if(!st.accept) return a('수출신고 수리 확인');
-    if(!st.customs){ const ld = (r.deadlines || []).find(x => x.kind === '수출물품 적재기한' && !x.done); return a(`선적 확인${ld ? ` (적재기한 ${mmdd(ld.due)})` : ''}`); }
+    const es = exportState(r); if(es && es.act) return a(es.act);          // 11/16: 선적 일정·후속 처리 기준
   } else if(!st.customs) return a((r.unipass || {}).cleared ? '납부·반출 확인' : '수리 확인');
-  if(!st.settle && settleMode(r) === 'each') return a('정산서 발송');
+  if(!st.settle && settleMode(r) === 'each') return a('정산서(청구서) 발송');
   return a('완료 처리');
 }
 
@@ -94,7 +94,8 @@ function nextAction(r){
 function phaseEvidence(r){
   const ph = recPhase(r), u = r.unipass || {}, ev = recEvents(r);
   if(!ph.auto) return `직접 지정${ph.by ? ' ' + accountName(ph.by) : ''}${ph.at ? ' ' + mmdd(ph.at) : ''}`;
-  if(ph.k === 'accept'){ const e = ev.accept; return e ? `${e.src} ${mmdd(e.date)}` : ''; }
+  if(['accept', 'ship'].includes(ph.k)){ const e = ev.accept; return e ? `${e.src} ${mmdd(e.date)}` : ''; }
+  if(ph.k === 'after'){ const st = stageOf(r); return st.customs ? `${stageName(r, 'customs')} ${st.customsEst ? '(날짜 미확인)' : mmdd(st.customs)}` : ''; }
   if(ph.k === 'fix') return `UNI-PASS ${u.mdfy || u.last || u.cscl || ''}`.trim();
   if(ph.k === 'insp') return `UNI-PASS ${[u.last, u.ldp, u.condTxt].filter(Boolean).join(' · ')}`.trim();
   if(ph.k === 'decl'){ const e = ev.decl; return e ? `${e.src} ${mmdd(e.date)}` : '서류 모두 받음'; }
@@ -164,7 +165,7 @@ function timelineOf(r){
   const put = (at, kind, text, sub) => { if(at) ev.push({at:String(at), kind, text, sub:sub || ''}); };
   (r.mails || []).forEach(m => put(m.date, isOwn(m.from) ? '보낸 메일' : '받은 메일', m.subject || '(제목 없음)', `${m.fromName || m.from || ''}${(m.files || []).length ? ` · 첨부 ${m.files.length}` : ''}`));
   (r.files || []).forEach(f => put(f.date, '자료', f.name + (f.ver ? ` (v${f.ver})` : ''), ''));
-  [['accept', '수리완료'], ['customs', stageName(r, 'customs')], ['settle', '정산완료']].forEach(([k, nm]) => st[k] && put(st[k], '단계', `${nm}${st[k + 'Lv'] === 'chk' ? ' (확인 필요)' : ''}`, st[k + 'By'] || ''));
+  [['accept', '수리완료'], ['customs', stageName(r, 'customs')], ['settle', '청구 완료']].forEach(([k, nm]) => st[k] && put(st[k], '단계', `${nm}${st[k + 'Lv'] === 'chk' ? ' (확인 필요)' : ''}`, st[k + 'By'] || ''));
   if(u.shedIn) put(u.shedIn, 'UNI-PASS', `반입 ${u.shedNm || u.shedSgn || ''}`.trim());
   if(u.clearedAt) put(u.clearedAt, 'UNI-PASS', '수입신고수리');
   if(u.paidAt) put(u.paidAt, 'UNI-PASS', '납부 확인');
@@ -220,3 +221,54 @@ document.addEventListener('click', e => {
   else if('csClear' in d){ clearWait(r, waitReply(r) ? '회신 받음' : '직접 해제'); commit(); toast('대기를 해제했습니다.'); }
   else if('csLater' in d && r.wait){ r.wait.recheck = addPeriod(today(), 2, 'd'); addHist(r, `대기 재확인일 → ${r.wait.recheck}`); r.updatedAt = nowIso(); commit(); toast(`재확인일을 ${r.wait.recheck}로 미뤘습니다.`); }
 });
+
+/* ---------- 11/16 수출 업무: 업무 범위 · 선적 예정일 · 단계 표시 ----------
+   업무 범위 r.scope(없으면 업체 기본 c.scope, 없으면 '수출통관'): 통관만 맡은 건은 부킹·운송·B/L 같은 물류 항목을 남은 일·경고로 보지 않는다.
+   선적 예정일 r.ship = {etd, at, by} — 바뀌면 이력에 남김. 실제 선적일은 UNI-PASS(출항일)·직원 표시로만(stage.customs).
+   단계: 접수·서류 확인 / 신고 진행 → 선적 대기(일정 확인 필요 · 예정일) → 선적 확인 필요(예정일 지남) → 후속 처리(정정·남은 체크) → 업무 종결 가능(청구 상태) → 종결.
+   보완·검사·회신 대기는 단계가 아니라 '막는 사유'(blk)로 붙인다. */
+const SCOPE = {customs:'수출통관', logi:'수출통관 + 물류 핸들링', extra:'개별 검토·증명서 등 부가업무'};
+const LOGI_RE = /부킹|booking|내륙\s*운송|트럭|픽업|포장|팔레트|선적\s*서류\s*발송|B\/?L\s*(확인|발행|드래프트|draft)|S\/R|선복|컨테이너\s*(배정|반입)|운임|도착\s*안내|D\/O/i;
+function recScope(r){ const c = db.clients.find(x => x.id === r.clientId); return (r.scope && SCOPE[r.scope]) ? r.scope : (c && SCOPE[c.scope]) ? c.scope : 'customs'; }
+function isLogiItem(r, text){ return recScope(r) !== 'logi' && LOGI_RE.test(String(text || '')); }
+function exportState(r){
+  if(!isExp(r)) return null;
+  if(r.status === '완료') return {k:'close', t:'종결', blk:[]};
+  const st = stageOf(r), ph = recPhase(r).k, w = typeof waitOf === 'function' ? waitOf(r) : null, blk = [];
+  if(ph === 'fix') blk.push('세관 보완 대기'); if(ph === 'insp') blk.push('검사 대응');
+  if(w && w.who) blk.push(`${WAIT_PARTY[w.who] || w.who} 회신 대기`);
+  if(r.status === '보류') return {k:'pre', t:'보류', blk};
+  if(!st.accept) return {k:'pre', t:['recv', 'docs'].includes(ph) ? '접수·서류 확인' : '신고 진행', blk};
+  if(!st.customs){
+    const etd = (r.ship || {}).etd, ld = (r.deadlines || []).find(x => x.kind === '수출물품 적재기한' && !x.done);
+    const ldTxt = ld ? ` · 적재기한 ${mmdd(ld.due)}${daysLeft(ld.due) <= 7 ? (daysLeft(ld.due) < 0 ? ' 지남' : ' 임박') : ''}` : '';
+    if(!etd) return {k:'ship', t:`선적 대기 · 일정 확인 필요${ldTxt}`, blk, act:recScope(r) === 'logi' ? '선적 일정 확정(부킹)' : '포워더·화주에 선적 일정 확인'};
+    if(etd < today()) return {k:'shipchk', t:`선적 확인 필요 · 예정일 ${mmdd(etd)} 지남${ldTxt}`, blk, act:'선적 여부 확인 — 포워더 회신 요청'};
+    return {k:'ship', t:`선적 대기 · 예정일 ${mmdd(etd)}${w && w.recheck ? ` / 다음 확인 ${mmdd(w.recheck)}` : ''}${ldTxt}`, blk, act:`선적 예정 ${mmdd(etd)} — 선적 여부 확인`};
+  }
+  const u = r.unipass || {}, fixing = (u.mdfy && !/승인|완료|수리|취하|반려/.test(u.mdfy));
+  const open = (r.checklist || []).filter(x => !x.done && !isLogiItem(r, x.text));
+  if(fixing || open.length) return {k:'after', t:`후속 처리 · ${fixing ? '정정 진행' : String(open[0].text).slice(0, 24)}`, blk, act:fixing ? '정정 진행 확인' : open[0].text};
+  const b = billState(r);
+  return {k:'closeable', t:`업무 종결 가능 · ${b.t}`, blk, act:b.k === 'none' ? '정산서(청구서) 발송' : '완료 처리'};
+}
+function exportLine(r){ const es = exportState(r); return es ? es.t + (es.blk.length ? ' · ' + es.blk.join(' · ') : '') : ''; }
+function setEtd(r, etd){
+  r.ship = r.ship || {};
+  if((r.ship.etd || '') === (etd || '')) return false;
+  addHist(r, etd ? `선적 예정일 ${r.ship.etd ? `${r.ship.etd} → ` : ''}${etd}` : `선적 예정일 지움 (${r.ship.etd})`);
+  r.ship = {...r.ship, etd:etd || '', at:nowIso(), by:me ? me.id : ''}; r.updatedAt = nowIso();
+  return true;
+}
+function openShipDialog(r){
+  const etd = (r.ship || {}).etd || '', ld = (r.deadlines || []).find(x => x.kind === '수출물품 적재기한');
+  openDialog({title:`선적 일정 — ${r.caseNo || ''} ${r.title || ''}`.slice(0, 60), saveLabel:'저장',
+    body:`<p class="hint">예정일은 포워더·화주가 알려 준 날입니다. 실제 선적일은 UNI-PASS(출항일)나 ‘선적완료’ 표시로만 정합니다.${ld ? ` 적재기한 ${esc(ld.due)} (${esc(DL_SRC[ld.src || 'calc'])})` : ''}</p>
+      <div class="row2"><label>선적 예정일<input type="date" name="etd" value="${esc(etd)}"></label><label>다음 확인일<input type="date" name="recheck" value="${esc((r.wait || {}).recheck || '')}"></label></div>
+      <label>업무 범위<select name="scope">${opts(Object.entries(SCOPE), recScope(r))}</select></label>`,
+    onSave(fd){ const v = fd.get('etd') || '', rc = fd.get('recheck') || '', sc = fd.get('scope') || 'customs';
+      setEtd(r, v);
+      if(sc !== recScope(r)){ addHist(r, `업무 범위: ${SCOPE[sc]}`); r.scope = sc; }
+      if(rc && rc !== ((r.wait || {}).recheck || '')){ if(r.wait && r.wait.who){ r.wait.recheck = rc; addHist(r, `대기 재확인일 → ${rc}`); } else setWait(r, {who:'fwd', recheck:rc, note:'선적 일정'}); }
+      r.updatedAt = nowIso(); }});
+}

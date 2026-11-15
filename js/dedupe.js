@@ -17,7 +17,7 @@ function dupCore(s){ const k = dupNameKey(s), t = k.replace(DUP_TAIL, ''); retur
 function dupDomains(c){
   const out = new Set();
   kwList(c).filter(k => k.startsWith('@')).forEach(k => out.add(k.slice(1)));
-  (c.contacts || []).forEach(p => { const d = String(p.email || '').toLowerCase().split('@')[1]; if(d) out.add(d.trim()); });
+  confirmedContacts(c).forEach(p => { const d = String(p.email || '').toLowerCase().split('@')[1]; if(d) out.add(d.trim()); });
   return [...out].filter(d => d && !FREE_MAIL.includes(d) && !/(^|\.)bsgc\.co\.kr$/.test(d));
 }
 function dupPairKey(a, b){ return [a, b].sort().join('|'); }
@@ -311,4 +311,64 @@ function unmergeRecords(logId){
   db.settings.recNotDup = [...new Set([...(db.settings.recNotDup || []), dupPairKey(log.keep, log.gone.id)])];
   (db.alerts || []).forEach(a => { if(a.logId === logId) a.status = 'done'; });
   return true;
+}
+
+/* ---------- 11/16 업체 판별 규칙 (A1) ----------
+   사업자번호는 숫자 10자리로 비교하고 검증식으로 형식만 확인(실제 업체 확인은 아님).
+   번호 같음 → 그 업체(same: 정보도 같음 / update: 상호·주소 등이 다름)
+   상호 같고 번호 다름 → 자동으로 합치지 않음(conflict: 별도 업체 후보)
+   상호 같고 한쪽 번호 없음 → 연결 후보(link)
+   번호가 검증식에 안 맞음 → check(확인 필요) · 모두 새로움 → new */
+function bizKey(s){ const d = String(s || '').replace(/[^0-9]/g, ''); return d.length === 10 ? d : ''; }
+function bizValid(s){
+  const d = bizKey(s); if(!d) return false;
+  const n = d.split('').map(Number), w = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+  let sum = w.reduce((a, x, i) => a + x * n[i], 0); sum += Math.floor(n[8] * 5 / 10);
+  return (10 - sum % 10) % 10 === n[9];
+}
+function bizFmt(s){ const d = bizKey(s); return d ? `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}` : String(s || ''); }
+function bizMatch(it){
+  const bk = bizKey(it.biz), nk = normName(it.name || '');
+  if(it.biz && bk && !bizValid(bk)) {
+    const byB = db.clients.find(c => bizKey(c.bizNo) === bk);
+    return {kind:'check', c:byB || null, why:'사업자번호 검증식 불일치 — 글자 인식 오류일 수 있음'};
+  }
+  if(bk){ const c = db.clients.find(x => bizKey(x.bizNo) === bk); if(c) return {kind:nk && normName(c.name) !== nk ? 'update' : 'same', c, why:'사업자번호 일치'}; }
+  const byName = nk ? db.clients.filter(c => normName(c.name) === nk) : [];
+  if(byName.length){
+    const noBiz = byName.find(c => !bizKey(c.bizNo));
+    if(noBiz || !bk) return {kind:'link', c:noBiz || byName[0], why:'상호 같음 · 한쪽 사업자번호 없음'};
+    return {kind:'conflict', c:byName[0], why:`상호 같지만 사업자번호 다름(${bizFmt(byName[0].bizNo)}) — 다른 업체·지점일 수 있음`};
+  }
+  return {kind:'new', c:null, why:''};
+}
+
+/* ---------- 11/16 담당자 확정·후보 (A4) ----------
+   p.st 'cand' = 메일에서 찾았지만 소속 미확인(빈도는 정렬에만). 확정 담당자만 업체 알아보기(clientCands)의 강한 근거로 씀. */
+function contactOk(p){ return p && p.st !== 'cand'; }
+function confirmedContacts(c){ return ((c && c.contacts) || []).filter(contactOk); }
+function clientOwnDomains(c){ return kwList(c).filter(k => k.startsWith('@')).map(k => k.slice(1).toLowerCase()); }
+/* 메일 스캔 결과를 넣을 때: 업체 도메인 주소·검색어에 든 주소·직접 고른 것만 확정, 나머지는 후보 */
+function contactStatus(c, email, picked){
+  const e = String(email || '').toLowerCase(), d = e.split('@')[1] || '';
+  if(picked) return 'ok';
+  if(clientOwnDomains(c).includes(d) || kwList(c).map(k => k.toLowerCase()).includes(e)) return 'ok';
+  return 'cand';
+}
+/* 한 번 정리(11/16): 예전에 자동으로 들어간 담당자 중 다른 업체 도메인·포워더 도메인·여러 업체에 같이 있는 주소는 후보로 내림 */
+function demoteContacts(){
+  if(db.settings.ccTrim === '20261116') return 0;
+  const domOwner = new Map(), addrN = new Map();
+  db.clients.forEach(c => { clientOwnDomains(c).forEach(d => { if(!domOwner.has(d)) domOwner.set(d, new Set()); domOwner.get(d).add(c.id); });
+    (c.contacts || []).forEach(p => { const e = String(p.email || '').toLowerCase(); if(e) addrN.set(e, (addrN.get(e) || 0) + 1); }); });
+  const fwdDoms = new Set(db.clients.filter(c => typeof isFwd === 'function' && isFwd(c)).flatMap(clientOwnDomains));
+  let n = 0;
+  db.clients.forEach(c => (c.contacts || []).forEach(p => {
+    if(p.st) return;
+    const e = String(p.email || '').toLowerCase(), d = e.split('@')[1] || '';
+    const own = clientOwnDomains(c).includes(d), other = domOwner.has(d) && !domOwner.get(d).has(c.id);
+    if(!own && (other || (fwdDoms.has(d) && !(typeof isFwd === 'function' && isFwd(c))) || (addrN.get(e) || 0) > 1)){ p.st = 'cand'; n++; }
+  }));
+  db.settings.ccTrim = '20261116';
+  return n;
 }

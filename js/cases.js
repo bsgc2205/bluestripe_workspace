@@ -90,16 +90,45 @@ const SETTLE_RE = /정산서/;
 const kDecl = s => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 function stageOf(r){ return r.stage || {}; }
 const isExp = r => caseCode(r.type) === 'E';
-function stageName(r, k){ return k === 'accept' ? '수리완료' : k === 'customs' ? (isExp(r) ? '선적완료' : '통관완료') : '정산완료'; }
+function stageName(r, k){ return k === 'accept' ? '수리완료' : k === 'customs' ? (isExp(r) ? '선적완료' : '통관완료') : '청구 완료'; }   // 11/16: 정산서 발송 = 청구 완료(입금 확인은 수금 상태로 따로)
+/* 11/16 청구·수금 분리 — 업무(진행·후속·종결)와 별도로 청구 상태(청구 전 · 청구 완료 · 월정산 인계)·수금 상태(미확인 · 일부 입금 · 입금 확인) */
+const PAY_ST = {none:'수금 미확인', part:'일부 입금', paid:'입금 확인'};
+function billState(r){
+  const st = stageOf(r), m = settleMode(r) === 'monthly';
+  if(st.settle) return {k:'billed', t:'청구 완료'};
+  if(m) return r.status === '완료' ? {k:'monthly', t:'월정산 인계'} : {k:'monthlyWait', t:'월정산'};
+  return {k:'none', t:'청구 전'};
+}
+function payState(r){ return (r.pay && PAY_ST[r.pay.st]) ? r.pay : {st:'none'}; }
+function payChipHTML(r){
+  const b = billState(r);
+  if(!['billed', 'monthly'].includes(b.k)) return '';
+  const p = payState(r);
+  return `<button class="stg pay-${p.st}" data-pay-set="${esc(r.id)}" title="수금 상태 — 눌러서 입금 확인을 기록">${PAY_ST[p.st]}${p.at ? ' ' + esc(String(p.at).slice(5, 10)) : ''}</button>`;
+}
+function openPayDialog(r){
+  const p = payState(r);
+  openDialog({title:`수금 — ${r.caseNo || ''} ${r.title || ''}`.slice(0, 60), saveLabel:'저장',
+    body:`<p class="hint">정산서(청구서) 발송은 ‘청구 완료’까지만 반영합니다. 입금은 통장·회계 자료로 확인한 뒤 여기에 남기세요(은행 연동은 BSGC_Account에서 예정).</p>
+      <label>수금 상태<select name="st">${opts(Object.entries(PAY_ST), p.st || 'none')}</select></label>
+      <div class="row2"><label>입금일<input type="date" name="at" value="${esc(p.at || '')}"></label><label>근거·메모<input name="note" value="${esc(p.note || '')}" placeholder="예: 신한 11/20 입금 1,234,000원"></label></div>`,
+    onSave(fd){ const st = fd.get('st') || 'none', at = fd.get('at') || '', note = String(fd.get('note') || '').trim();
+      if(st !== 'none' && !at){ toast('입금일을 넣어 주세요.'); return false; }
+      r.pay = {st, at, note, by:me ? me.id : '', on:nowIso()}; addHist(r, `수금: ${PAY_ST[st]}${at ? ' ' + at : ''}${note ? ' — ' + note : ''}`); r.updatedAt = nowIso(); }});
+}
 /* 수출 적재기한: 수리일부터 30일(관세법 제251조). UNI-PASS 적재의무기한이 있으면 그 날짜를 쓴다 */
+/* 11/16: 기한 출처 d.src — 'uni'(UNI-PASS 적재의무기한) · 'ext'(연장 승인, 직원 입력) · 'calc'(수리일 + 30일 계산값). 계산값은 공식값이 오면 바뀌고, 연장 승인값은 더 늦은 공식값만 덮음 */
+const DL_SRC = {uni:'UNI-PASS', ext:'연장 승인', calc:'계산값(수리일+30일)'};
 function setLoadDue(r, base, due){
   if(!base && !due) return;
   r.deadlines = r.deadlines || [];
   const d = r.deadlines.find(x => x.kind === '수출물품 적재기한');
-  const val = due || addPeriod(base, 30, 'd');
-  if(!d) r.deadlines.push({id:uid(), kind:'수출물품 적재기한', base:base || null, due:val, done:false, auto:true});
-  else if(d.auto && due && d.due !== due) d.due = due;
+  const val = due || addPeriod(base, 30, 'd'), src = due ? 'uni' : 'calc';
+  if(!d) r.deadlines.push({id:uid(), kind:'수출물품 적재기한', base:base || null, due:val, done:false, auto:true, src});
+  else if(d.auto && due && d.due !== due && (d.src !== 'ext' || due > d.due)){ addHist(r, `적재기한 ${d.due} → ${due} (UNI-PASS${d.src === 'ext' ? ', 연장 반영' : ''})`); d.due = due; d.src = 'uni'; }
+  else if(d.auto && due && d.due === due && d.src !== 'ext') d.src = 'uni';
 }
+function dlSrcTag(d){ return d && d.kind === '수출물품 적재기한' ? `<span class="tag ${d.src === 'calc' || !d.src ? 'guess' : 'sure'} how" title="기한 출처">${DL_SRC[d.src || 'calc']}</span>` : ''; }
 /* lv: 'ok'(확정 — UNI-PASS·필증 파일 메일·정산서 메일·직원 표시) | 'chk'(메일 글만 근거 — 확인 필요, 자동 완료 안 함).
    이미 'chk'로 표시된 단계에 확정 근거가 오면 등급만 올린다(UNI-PASS 날짜가 있으면 그 날짜로). */
 /* 11/15 b ①: src = {mail:[메일 id], file:[파일 id]} — 단계의 근거 자료. 그 메일·파일을 떼거나 옮기면 stageSrcLost가 단계를 다시 '확인 필요'로 */
@@ -109,11 +138,13 @@ function addStageSrc(st, k, src){
   ['mail', 'file'].forEach(t => { const v = [].concat(src[t] || []).filter(Boolean); if(v.length) o[t] = [...new Set([...(o[t] || []), ...v])]; });
   if(o.mail || o.file) st[k + 'Src'] = o;
 }
+/* 11/16: src.est — 실제 날짜가 없어 확인한 날을 임시로 넣은 단계(stage[k+'Est']). 나중에 실제 날짜가 오면 그 날짜로 바꾼다 */
 function setStage(r, k, date, by, lv, src){
   r.stage = r.stage || {};
   lv = lv === 'chk' ? 'chk' : 'ok';
   if(r.stage[k]){
     addStageSrc(r.stage, k, src);
+    if(r.stage[k + 'Est'] && date && !(src && src.est)){ const old = r.stage[k]; r.stage[k] = String(date).slice(0, 10); delete r.stage[k + 'Est']; r.stage[k + 'By'] = by; addHist(r, `${stageName(r, k)} 실제 날짜 확인: ${r.stage[k]} (임시 ${old}) — ${by}`); r.updatedAt = nowIso(); return true; }
     if(r.stage[k + 'Lv'] !== 'chk' || lv !== 'ok') return false;
     delete r.stage[k + 'Lv']; delete r.stage[k + 'Re'];
     if(/^UNI-PASS/.test(by) && date) r.stage[k] = String(date).slice(0, 10);
@@ -123,6 +154,7 @@ function setStage(r, k, date, by, lv, src){
     return true;
   }
   r.stage[k] = String(date || today()).slice(0, 10); r.stage[k + 'By'] = by;
+  if(!date || (src && src.est)) r.stage[k + 'Est'] = today(); else delete r.stage[k + 'Est'];
   addStageSrc(r.stage, k, src);
   if(lv === 'chk') r.stage[k + 'Lv'] = 'chk';
   addHist(r, `${stageName(r, k)} ${r.stage[k]} (${by}${lv === 'chk' ? ' — 메일 글만 근거, 확인 필요' : ''})`);
@@ -134,7 +166,7 @@ function stageHTML(r){
   const st = stageOf(r), u = r.unipass || {}, out = [];
   const btn = (k, label) => st[k + 'Lv'] === 'chk'
     ? `<button class="stg chk" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 메일 글만 근거입니다. UNI-PASS·필증으로 확인되면 자동으로 확정됩니다. 잘못 표시했으면 눌러서 취소">${label}? ${esc(st[k].slice(5))} · 확인 필요</button><button class="mini strong" data-stage-ok="${esc(r.id)}|${k}" title="필증·UNI-PASS로 직접 확인했으면 누르세요">확인 완료</button>`
-    : `<button class="stg ok" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')} — 잘못 표시했으면 눌러서 취소">${label} ${esc(st[k].slice(5))}</button>`;
+    : `<button class="stg ok" data-unstage="${esc(r.id)}|${k}" title="${esc(st[k + 'By'] || '')}${st[k + 'Est'] ? ' — 실제 날짜 미확인(확인한 날로 임시 표시)' : ''} — 잘못 표시했으면 눌러서 취소">${label} ${st[k + 'Est'] ? '(날짜 미확인)' : esc(st[k].slice(5))}</button>`;
   if(isExp(r)){
     const ld = (r.deadlines || []).find(x => x.kind === '수출물품 적재기한');
     if(st.accept) out.push(btn('accept', '수리완료'));
@@ -142,7 +174,8 @@ function stageHTML(r){
     else if(st.accept || u.accepted) out.push(`<span class="stg">선적 전${ld && !ld.done ? ' · 적재기한 ' + esc(ld.due.slice(5)) : ''}</span>`);
   } else if(st.customs) out.push(btn('customs', '통관완료'));
   else if(u.cleared && !u.paid && !u.released) out.push('<span class="stg">수리 · 납부 확인 전</span>');
-  if(st.settle) out.push(btn('settle', '정산완료'));
+  if(st.settle) out.push(btn('settle', '청구 완료'));
+  const pc = payChipHTML(r); if(pc) out.push(pc);
   if(u.mdfy) out.push(`<span class="stg">정정: ${esc(u.mdfy)}</span>`);
   if(u.req) out.push(`<span class="stg">요건: ${esc(u.req)}</span>`);
   if(u.reqRqst) out.push(`<span class="stg">요건신청: ${esc(u.reqRqst)}</span>`);
@@ -159,7 +192,7 @@ function stageWhyHTML(r){
   if(!ks.length && !r.autoDone) return '';
   const src = by => /^UNI-PASS/.test(by) ? 'UNI-PASS' : /^메일/.test(by) ? '메일' : /필증|자동 수집/.test(by) ? '필증 자료' : by ? '직접' : '';
   const li = ks.map(k => { const by = String(st[k + 'By'] || ''), chk = st[k + 'Lv'] === 'chk';
-    return `<li><b>${esc(stageName(r, k))}</b> ${esc(st[k])} · ${esc(src(by) || '근거 없음')}${chk ? ' <span class="tag chk">확인 필요</span>' : ''} <span class="hint">${esc(by.slice(0, 120))}</span></li>`; });
+    return `<li><b>${esc(stageName(r, k))}</b> ${st[k + 'Est'] ? `날짜 미확인(${esc(st[k + 'Est'])} 확인)` : esc(st[k])} · ${esc(src(by) || '근거 없음')}${chk ? ' <span class="tag chk">확인 필요</span>' : ''} <span class="hint">${esc(by.slice(0, 120))}</span></li>`; });
   if(r.autoDone) li.push(`<li><b>자동 완료</b> ${esc(String(r.autoDone.at || '').slice(0, 10))} <span class="hint">${esc(r.autoDone.reason || '')}</span></li>`);
   return `<details class="rec-mails stage-why"><summary>단계 근거 ${ks.length}</summary><ul>${li.join('')}</ul></details>`;
 }
@@ -168,7 +201,8 @@ function stageActsHTML(r){
   const st = stageOf(r), b = [];
   if(isExp(r) && !st.accept && !st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|accept">수리완료</button>`);
   if(!st.customs) b.push(`<button class="mini" data-stage="${esc(r.id)}|customs">${stageName(r, 'customs')}</button>`);
-  if(!st.settle && settleMode(r) === 'each') b.push(`<button class="mini" data-stage="${esc(r.id)}|settle">정산완료</button>`);
+  if(!st.settle && settleMode(r) === 'each') b.push(`<button class="mini" data-stage="${esc(r.id)}|settle" title="정산서(청구서)를 보냈으면 누르세요">청구 완료</button>`);
+  if(isExp(r) && st.accept && !st.customs) b.unshift(`<button class="mini" data-ship-set="${esc(r.id)}" title="선적 예정일·다음 확인일·업무 범위">선적 일정${(r.ship || {}).etd ? ' ' + esc(r.ship.etd.slice(5)) : ''}</button>`);   // 11/16
   if((r.tags || []).includes('자동접수') && (r.history || []).length <= 6) b.push(`<button class="mini" data-intake-undo="${esc(r.id)}" title="업무가 아닌 메일이 자동 접수됐으면 취소하세요. 메일은 다시 접수되지 않습니다.">접수 취소</button>`);
   if(b.length <= 1) return b.join('');                                     // 11/14 P3: 다음 단계 버튼 하나만 보이고 나머지는 '단계 ▾'
   return b[0] + `<details class="stage-more"><summary class="mini">단계 ▾</summary>${b.slice(1).join('')}</details>`;
@@ -181,7 +215,7 @@ function autoComplete(r, why){
   if(st.customsLv === 'chk') return false;                             // 메일 글만 근거인 통관·선적은 UNI-PASS·직원 확인 뒤에 완료
   r.status = '완료';
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
-  const reason = [`${stageName(r, 'customs')} ${st.customs} (${st.customsBy || ''})`, st.settle ? `정산완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체'].join(', ');
+  const reason = [`${stageName(r, 'customs')} ${st.customs} (${st.customsBy || ''})`, st.settle ? `청구 완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체 — 월정산 인계'].join(', ');
   r.autoDone = {at:nowIso(), reason};
   addHist(r, '자동 완료: ' + reason);
   if(r.wait){ addHist(r, '대기 해제 (완료)'); delete r.wait; }
@@ -215,7 +249,7 @@ function recEvents(r){
   if(cert) put('certSent', cert.date, '필증 송부 메일');
   const dm = ms.find(m => !isOwn(m.from) && (m.files || []).some(f => ['Invoice', 'Packing List', 'B/L'].some(t => docTypes(f).includes(t))));
   if(dm) put('docs', dm.date, '서류 첨부 메일');
-  if(st.settle) put('settle', st.settle, st.settleBy || '정산완료');
+  if(st.settle) put('settle', st.settle, st.settleBy || '청구 완료');
   if(u.releasedAt) put('release', u.releasedAt, 'UNI-PASS 반출신고');
   if(u.paid) put('paid', u.paidAt || today(), 'UNI-PASS 납부 확인');
   if(isExp(r) && st.customs) put('loaded', u.departAt || st.customs, 'UNI-PASS 선적완료');
@@ -392,7 +426,7 @@ async function checkImport(r, u){
   if(u.clearedAt && u.paid === false && !r.deadlines.some(x => x.kind === '관세 납부기한'))                 // 수리 후 미납이면 납부기한(수리일 + 15일), 납부 확인되면 처리 표시
     r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:addPeriod(u.clearedAt, 15, 'd'), done:false, auto:true});
   if(u.paid) r.deadlines.filter(x => x.kind === '관세 납부기한' && x.auto).forEach(x => x.done = true);
-  if(u.cleared && (u.paid || u.released)) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || today(), `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : ''}${u.released ? ', 반출신고' : ''}`);
+  if(u.cleared && (u.paid || u.released)) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || '', `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : ''}${u.released ? ', 반출신고' : ''}${u.paidAt || u.releasedAt || u.clearedAt ? '' : ' (날짜 미확인)'}`, 'ok', u.paidAt || u.releasedAt || u.clearedAt ? null : {est:true});   // 11/16: 날짜 없으면 오늘을 실제 날짜로 넣지 않음
 }
 async function checkExport(r, u){
   const decl = kDecl(r.refNo);
@@ -402,7 +436,7 @@ async function checkExport(r, u){
   catch(e){ u.err = e.message; return; }
   const yn = pick(j, 'shpmCmplYn') || pick(j, 'shpmcmplYn'), acpt = pick(j, 'acptDt'), due = pick(j, 'loadDtyTmIm'), tk = pick(j, 'tkofDt');
   Object.assign(u, {accepted:!!acpt, acceptedAt:fmtYmd(acpt), loaded:yn === 'Y', loadDue:fmtYmd(due), departAt:fmtYmd(tk), last:yn === 'Y' ? '선적완료' : (acpt ? '수출신고수리' : '')});
-  if(u.accepted) setStage(r, 'accept', u.acceptedAt || today(), 'UNI-PASS: 수출신고수리');   // 수리 시점에 '수리완료' 단계
+  if(u.accepted) setStage(r, 'accept', u.acceptedAt || '', `UNI-PASS: 수출신고수리${u.acceptedAt ? '' : ' (날짜 미확인)'}`, 'ok', u.acceptedAt ? null : {est:true});   // 수리 시점에 '수리완료' 단계 (11/16: 날짜 없으면 임시 표시)
   if(u.accepted || u.loadDue) setLoadDue(r, u.acceptedAt, u.loadDue);  // 적재기한: UNI-PASS 적재의무기한, 없으면 수리일 + 30일
   if(u.loaded) (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true);
   if(decl && u.accepted && !u.ldpDone){
@@ -410,7 +444,7 @@ async function checkExport(r, u){
       if(t) u.ldp = t === 'Y' ? (c === 'Y' ? '검사완료' : '검사대상') : '대상 아님'; u.ldpDone = t !== 'Y' || c === 'Y'; }
     catch(e){ u.err053 = e.message; }
   }
-  if(u.loaded) setStage(r, 'customs', u.departAt || today(), 'UNI-PASS: 선적완료');
+  if(u.loaded) setStage(r, 'customs', u.departAt || '', `UNI-PASS: 선적완료${u.departAt ? '' : ' (출항일 미확인)'}`, 'ok', u.departAt ? null : {est:true});   // 11/16: 조회한 날을 선적일로 넣지 않음
 }
 async function checkExtra(r, u){
   if(r.reqRqstNo){
@@ -565,7 +599,7 @@ function homeWidgetsHTML(){
   const ma = mailAlerts(), dls = openDeadlines(), soon = dls.filter(x => { const n = daysLeft(x.d.due); return n >= 0 && n <= 7; }).length, over = dls.filter(x => daysLeft(x.d.due) < 0).length;
   const tile = (go, n, label, sub, warn) => `<button class="tile${warn ? ' warn' : ''}" ${go}><span class="t-n">${n}</span><span class="t-l">${label}</span><span class="t-s">${sub}</span></button>`;
   const tiles = [
-    tile('data-go="active"', act.length, '진행 중', `통관 대기 ${waitC}${waitP ? ` · 선적 대기 ${waitP}` : ''} · 정산 대기 ${waitS}`),
+    tile('data-go="active"', act.length, '진행 중', `통관 대기 ${waitC}${waitP ? ` · 선적 대기 ${waitP}` : ''} · 청구 대기 ${waitS}`),
     tile('data-go="report"', doneW, '이번 주 완료', `자동 완료(7일) ${auto7}`),
     tile('data-go="mail"', ma.total, '미연결 메일 대화', `24시간 경과 ${ma.overdue} · 새 의뢰 ${ma.requests}`, ma.overdue > 0),
     tile('data-go="active"', soon + over, '7일 내 기한', over ? `지난 기한 ${over}` : '지난 기한 없음', over > 0),

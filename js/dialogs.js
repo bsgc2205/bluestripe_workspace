@@ -602,9 +602,10 @@ function openClient(c){
       <div class="row2">
         <label>담당자<input name="contact" value="${esc(cl.contact)}" placeholder="부서, 직함 정도만"></label>
         <label>대표자 (사유서용)<input name="rep" value="${esc(cl.rep || '')}"></label>
-        <label>정산 방식<select name="settleMode">${opts([['each', '건별 정산서 (정산서 메일로 완료)'], ['monthly', '월 정산 (통관완료만으로 완료)']], cl.settleMode || 'each')}</select></label>
+        <label>정산 방식<select name="settleMode">${opts([['each', '건별 청구 (정산서 메일 = 청구 완료)'], ['monthly', '월정산 (업무 종결 때 월정산 목록으로 인계)']], cl.settleMode || 'each')}</select></label>
         <label>업체 구분<select name="role">${opts([['', '자동 (업종에 포워더·물류면 포워더)'], ['shipper', '화주'], ['fwd', '포워더']], cl.role || '')}</select></label>
         <label>기본 청구처 <span class="hint">포워더 의뢰 건</span><select name="billDefault">${opts([['', '지정 안 함 (건마다)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], cl.billDefault || '')}</select></label>
+        <label>수출 업무 범위 <span class="hint">기본값 — 건마다 바꿀 수 있음</span><select name="scope">${opts([['', '수출통관'], ['logi', '수출통관 + 물류 핸들링'], ['extra', '개별 검토·증명서 등 부가업무']], cl.scope || '')}</select></label>
       </div>
       <div class="row2">
         <label>메일·Drive 검색어<input name="keyword" value="${esc(cl.keyword)}" placeholder="@abc.co.kr, 약칭 (쉼표로 구분)"></label>
@@ -625,12 +626,16 @@ function openClient(c){
       <div class="row2"><label>주의 등급<select name="cautionLevel">${opts([['', '자동 (최근 12개월 기록 기준)'], ['주의', '주의 (직접 지정)'], ['관심', '관심 (직접 지정)'], ['보통', '보통 (직접 지정)']], cl.cautionLevel || '')}</select></label><label>주의 메모<input name="cautionNote" value="${esc(cl.cautionNote || '')}" placeholder="직접 지정한 이유"></label></div>
       <label>메모<textarea name="notes" rows="4" placeholder="거래 특성, 합의 사항, 자주 생기는 이슈">${esc(cl.notes)}</textarea></label>`,
     onSave(fd){
+      const before = {name:cl.name || '', bizNo:cl.bizNo || '', rep:cl.rep || '', address:cl.address || '', openDate:cl.openDate || ''};   // 11/16 A3: 직접 고친 칸 표시(등록증 반영이 덮어쓰지 않게)
       Object.assign(cl, {name: fd.get('name').trim(), bizNo: fd.get('bizNo').trim(), industry: fd.get('industry').trim(), contact: fd.get('contact').trim(), rep: fd.get('rep').trim(), settleMode: fd.get('settleMode') || 'each', keyword: fd.get('keyword').trim(), notes: fd.get('notes').trim(), updatedAt: nowIso()});
       cl.relation = {since: fd.get('since') || '', last: fd.get('last') || '', basis: fd.get('basis').trim()};
       const bizChanged = bizDigits(cl.bizNo) !== bizDigits(bizBefore);
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim(); cl.ecm = String(fd.get('ecm') || '').trim(); cl.tel = String(fd.get('tel') || '').trim();
       if((bizChanged || isNew) && (db.settings.mail || {}).endpoint) setTimeout(() => checkClientsExt([cl], true), 600);   // 사업자번호가 바뀌면 통관고유부호·국세청 상태 바로 확인
       cl.role = fd.get('role') || ''; cl.billDefault = fd.get('billDefault') || '';   // 포워더 의뢰 (11/14)
+      cl.scope = fd.get('scope') || '';                                    // 11/16 수출 업무 범위 기본값
+      if(!isNew) Object.keys(before).forEach(k => { if(String(cl[k] || '') !== before[k]){ cl.manualAt = {...(cl.manualAt || {}), [k]:today()}; cl.bizHist = [...(cl.bizHist || []), {at:nowIso(), by:me ? me.id : '', how:'직접 수정', changes:[{k, old:before[k], nw:cl[k] || ''}]}].slice(-20); } });
+      if(bizKey(cl.bizNo) && !bizValid(cl.bizNo)) toast('사업자번호가 검증식에 맞지 않습니다. 번호를 다시 확인해 주세요.');
       cl.cautionLevel = fd.get('cautionLevel') || ''; cl.defaultAssignee = fd.get('defaultAssignee') || ''; cl.cautionNote = String(fd.get('cautionNote') || '').trim();
       if(isNew){
         const sim = typeof similarClients === 'function' ? similarClients(cl.name, cl.bizNo) : [];    // 중복 등록 방지 (11/14)

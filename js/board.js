@@ -3,7 +3,7 @@
    칸: 접수 → 서류대기 → 신고진행 → 보완요청 → 검사 → 수리완료 → 종결(최근 14일 완료).
    단계는 기록에 쌓인 근거로 자동으로 정한다(받은 서류, UNI-PASS 신고·정정·검사·수리, 필증 송부 메일).
    직원이 카드를 옮기면(끌어 놓기 또는 단계 선택) 그 단계를 쓰고, 그 뒤 새 근거로 자동 단계가 바뀌면 다시 자동을 따른다(r.phase = {k, auto, at, by}). */
-const PHASES = [['recv', '접수'], ['docs', '서류대기'], ['decl', '신고진행'], ['fix', '보완요청'], ['insp', '검사'], ['accept', '수리완료'], ['done', '종결']];
+const PHASES = [['recv', '접수'], ['docs', '서류대기'], ['decl', '신고진행'], ['fix', '보완요청'], ['insp', '검사'], ['accept', '수리완료'], ['ship', '선적 대기'], ['after', '후속·청구'], ['done', '종결']];   // 11/16: 수출 수리 후 선적 대기·후속 처리를 따로
 const phaseLabel = k => (PHASES.find(p => p[0] === k) || [, ''])[1];
 const PH_INSP = /검사\s*(대상|지정|입회|중|선별)|현품\s*검사|정밀\s*검사|정밀\s*검역|검역\s*(중|대상)/;
 const PH_FIX = /보완\s*(요구|요청|통보)|정정\s*(요구|요청|신청|중)/;
@@ -11,7 +11,10 @@ const PH_DONE_DAYS = 14;
 function autoPhase(r){
   if(r.status === '완료') return 'done';
   const u = r.unipass || {}, st = stageOf(r), ev = recEvents(r);
-  if(ev.accept || st.accept || st.customs || u.cleared || u.accepted) return 'accept';
+  if(ev.accept || st.accept || st.customs || u.cleared || u.accepted){
+    if(st.customs) return 'after';                                       // 선적완료(수출)·통관완료(수입) 뒤 = 후속 처리·청구 (11/16)
+    return isExp(r) ? 'ship' : 'accept';                                 // 수출은 수리 뒤 선적 확인까지 '선적 대기'
+  }
   const uni = [u.last, u.cscl, u.stts, u.condTxt, u.ldp === '검사대상' ? '검사대상' : '', u.req].filter(Boolean).join(' ');
   if(PH_FIX.test(uni) || (u.mdfy && !/승인|완료|수리|취하|반려/.test(u.mdfy))) return 'fix';
   if(PH_INSP.test(uni)) return 'insp';

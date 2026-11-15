@@ -91,7 +91,8 @@ function recBand(r){
   if(r.status === '보류') return {k:'hold', t:'보류'};
   const overdue = (r.deadlines || []).some(d => !d.done && daysLeft(d.due) < 0), stale = bizDaysSince(lastActivity(r)) >= STALE_DAYS && !(typeof waitHold === 'function' && waitHold(r));   // 대기 지정·재확인일 전이면 무변동 아님
   if(overdue || stale) return {k:'act', t:overdue ? '지난 기한 있음' : `${STALE_DAYS}영업일 넘게 변화 없음`};
-  if(stageOf(r).customs) return {k:'settle', t:`${stageName(r, 'customs')} · 정산 대기`};
+  if(isExp(r) && typeof exportState === 'function'){ const es = exportState(r); if(es && es.k === 'shipchk') return {k:'act', t:exportLine(r)}; if(es && ['ship', 'after', 'closeable'].includes(es.k)) return {k:es.k === 'ship' ? 'ship' : 'settle', t:exportLine(r)}; }   // 11/16 수출 단계 표시
+  if(stageOf(r).customs) return {k:'settle', t:`${stageName(r, 'customs')} · 청구 대기`};
   if(isExp(r) && stageOf(r).accept) return {k:'ship', t:'수리완료 · 선적 대기'};
   return {k:'prog', t:'진행 중'};
 }
@@ -160,7 +161,7 @@ function deadlineRow({r, d}){
   return `<div class="dl-row">
     <input type="checkbox" data-dl="${esc(r.id)}|${esc(d.id)}" title="처리 완료로 표시" aria-label="${esc(d.kind)} 처리 완료">
     ${ddayHTML(d.due)}
-    <div><strong>${esc(d.kind)}</strong> <span class="hint">${esc(d.due)}${d.base ? `, 기준일 ${esc(d.base)}` : ''}</span>
+    <div><strong>${esc(d.kind)}</strong> ${typeof dlSrcTag === 'function' ? dlSrcTag(d) : ''} <span class="hint">${esc(d.due)}${d.base ? `, 기준일 ${esc(d.base)}` : ''}</span>${d.kind === '수출물품 적재기한' && !d.done ? ` <button class="linkish" data-dl-ext="${esc(r.id)}|${esc(d.id)}" title="적재기한 연장 승인을 받았으면 승인된 날짜를 넣습니다">연장 승인 입력</button>` : ''}
       <div class="hint"><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.title)}</button> (${esc(clientName(r.clientId))})</div></div>
   </div>`;
 }
@@ -188,6 +189,8 @@ function todayItems(){
   db.records.filter(r => r.status !== '완료' && r.status !== '보류' && mine(r)).forEach(r => suggestions(r).forEach(sg => out.push({rid:r.id, lvl:'prog', pri:5, kind:'제안', title:sg.text, sub:recLine(r),
     acts:`<button class="mini strong" data-sug="${esc(r.id)}|${esc(sg.key)}">${esc(sg.label)}</button><button class="mini" data-sug-off="${esc(r.id)}|${esc(sg.key)}">무시</button>`})));
   if(typeof caseTodayItems === 'function') out.push(...caseTodayItems(mine, recLine));
+  db.records.filter(r => r.status !== '완료' && r.status !== '보류' && mine(r) && isExp(r)).forEach(r => { const es = exportState(r);   // 11/16: 선적 예정일이 지났는데 선적 근거 없음
+    if(es && es.k === 'shipchk') out.push({rid:r.id, lvl:'chk', pri:3.5, kind:'선적 확인', title:es.t, sub:recLine(r), acts:`<button class="mini strong" data-ship-set="${esc(r.id)}">선적 일정</button><button class="mini" data-cs-wait="${esc(r.id)}">포워더 회신 대기</button>`}); });
   staleRecords().filter(x => mine(x.r)).forEach(x => out.push({rid:x.r.id, lvl:'ref', pri:6, kind:'무변동', title:`${x.n}영업일 넘게 메일·자료·기록 변화 없음`, sub:recLine(x.r), acts:`<button class="mini" data-edit-rec="${esc(x.r.id)}">기록</button>`}));
   return out.sort((a, b) => a.pri - b.pri);
 }
@@ -224,7 +227,7 @@ function homeRowHTML(x){
   const r = x.r, top = x.xs[0], cnt = {};
   x.xs.forEach(i => { cnt[i.kind] = (cnt[i.kind] || 0) + 1; });
   const ttl = top ? String(top.title).replace(/\s\d{4}-\d{2}-\d{2}\s\((D[+-]\d+|오늘)\)$/, '') : '';
-  const action = top ? `${esc(top.kind)}: ${esc(ttl)}` : r ? esc(nextAction(r).t || r.status) : '';
+  const action = top ? `${esc(top.kind)}: ${esc(ttl)}` : r ? esc(nextAction(r).t || r.status) + (isExp(r) && typeof exportLine === 'function' && exportLine(r) ? `<span class="hint"> · ${esc(exportLine(r))}</span>` : '') : '';
   const more = Object.keys(cnt).length > 1 || x.xs.length > 1 ? `<span class="hint"> · ${Object.entries(cnt).map(([k, n]) => `${esc(k)} ${n}`).join(' · ')}</span>` : '';
   const who = r ? `<b>${esc(clientName(r.clientId))}</b><span class="hint">${esc(`${r.caseNo ? r.caseNo + ' · ' : ''}${r.title || ''}`)}</span>` : `<b>${esc(top.cl || '')}</b><span class="hint">${esc(top.title || '')}</span>`;
   const btn = top ? firstBtn(top.acts) : r ? `<button class="mini" data-edit-rec="${esc(r.id)}">기록</button>` : '';
@@ -298,6 +301,28 @@ function lazyHTML(k){
   if(k === 'hold'){ const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id); const xs = db.records.filter(r => r.status === '보류' && mine(r)).sort((a, b) => (a.startDate || '').localeCompare(b.startDate || '')); return `<div class="rec-grid wide">${xs.slice(0, 20).map(r => recordHTML(r, {showClient:true})).join('')}</div>${xs.length > 20 ? `<p class="hint">외 ${xs.length - 20}건 — 위 검색칸이나 표 보기</p>` : ''}`; }
   return '';
 }
+/* ---------- 11/16 수출 빠른 필터: 신고 전 · 수리 후 미선적 · 후속 처리 · 기한 임박·초과 ---------- */
+let expF = '';
+function exportBucket(r){ const es = typeof exportState === 'function' ? exportState(r) : null; if(!es) return ''; return es.k === 'pre' ? 'pre' : ['ship', 'shipchk'].includes(es.k) ? 'ship' : ['after', 'closeable'].includes(es.k) ? 'after' : ''; }
+function exportDue(r){ return isExp(r) && (r.deadlines || []).some(d => !d.done && daysLeft(d.due) <= 7); }
+function exportBarHTML(act){
+  const ex = act.filter(r => isExp(r)); if(!ex.length) return '';
+  const n = k => k === 'dl' ? ex.filter(exportDue).length : ex.filter(r => exportBucket(r) === k).length;
+  const b = (k, l) => `<button class="tab${expF === k ? ' on' : ''}${k === 'dl' && n(k) ? ' act' : ''}" data-exp-f="${k}">${l} <span class="cnt">${n(k)}</span></button>`;
+  return `<div class="tabs exp-tabs"><span class="hint">수출 ${ex.length}건:</span>${b('pre', '신고 전')}${b('ship', '수리 후 미선적')}${b('after', '후속 처리')}${b('dl', '기한 임박·초과')}${expF ? '<button class="mini" data-exp-f="">필터 끄기</button>' : ''}</div>`;
+}
+function exportTableHTML(rows){
+  const nd = r => (r.deadlines || []).filter(d => !d.done).sort((a, b) => a.due.localeCompare(b.due))[0];
+  rows = rows.slice().sort((a, b) => ((exportState(a) || {}).k === 'shipchk' ? 0 : 1) - ((exportState(b) || {}).k === 'shipchk' ? 0 : 1) || ((nd(a) || {}).due || '9').localeCompare((nd(b) || {}).due || '9'));
+  if(activePage * 20 >= rows.length) activePage = Math.max(0, Math.ceil(rows.length / 20) - 1);
+  const row = r => { const es = exportState(r) || {}, w = typeof waitOf === 'function' ? waitOf(r) : null, d = nd(r), bs = billState(r);
+    return `<tr class="${es.k === 'shipchk' ? 'b-act' : ''}"><td><button class="linkish" data-go="client" data-id="${esc(r.clientId)}"><b>${esc(clientName(r.clientId))}</b></button><div class="hint"><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(`${r.caseNo ? r.caseNo + ' · ' : ''}${r.title || ''}`.slice(0, 50))}</button></div></td>
+      <td>${esc(es.t || '')}${(es.blk || []).length ? `<div class="hint">${esc(es.blk.join(' · '))}</div>` : ''}${recScope(r) !== 'customs' ? `<div class="hint">${esc(SCOPE[recScope(r)])}</div>` : ''}</td>
+      <td>${esc(nextAction(r).t || '')}</td><td>${w && w.who ? `${esc(WAIT_PARTY[w.who] || w.who)}${w.recheck ? ` <span class="hint">재확인 ${esc(mmdd(w.recheck))}</span>` : ''}` : '<span class="hint">-</span>'}</td>
+      <td>${d ? `${ddayHTML(d.due)} <span class="hint">${esc(d.kind)}</span> ${dlSrcTag(d)}` : '<span class="hint">-</span>'}</td><td>${esc(bs.t)}${['billed', 'monthly'].includes(bs.k) ? `<div class="hint">${esc(PAY_ST[payState(r).st])}</div>` : ''}</td>
+      <td><button class="mini" data-ship-set="${esc(r.id)}">선적 일정</button></td></tr>`; };
+  return `<div class="table-wrap"><table class="grid act-table exp-table"><thead><tr><th>업체·사건</th><th>현재 단계</th><th>다음 조치</th><th>기다리는 상대</th><th>가장 가까운 기한</th><th>청구</th><th></th></tr></thead><tbody>${rows.slice(activePage * 20, (activePage + 1) * 20).map(row).join('') || '<tr><td colspan="7" class="empty">해당하는 수출 건이 없습니다.</td></tr>'}</tbody></table></div>${pagerHTML('act-page', activePage, rows.length)}`;
+}
 function viewActive(){
   const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id);
   const stale = staleRecords().filter(x => mine(x.r));
@@ -313,11 +338,13 @@ function viewActive(){
   const dls = openDeadlines();
   const head = `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
     <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button><button class="${activeMode === 'board' ? 'on' : ''}" data-amode="board" title="접수 → 서류대기 → 신고진행 → 보완요청 → 검사 → 수리완료 → 종결">보드</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
-  if(activeMode === 'board') return head + boardHTML({list:[...act, ...hold], mine});
-  if(activeMode === 'table') return head + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">정산 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
+  const H = head + exportBarHTML(act);                                     // 11/16 수출 빠른 필터
+  if(expF) return H + exportTableHTML(act.filter(r => exportBucket(r) === expF || (expF === 'dl' && exportDue(r))));
+  if(activeMode === 'board') return H + boardHTML({list:[...act, ...hold], mine});
+  if(activeMode === 'table') return H + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">청구 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
     + ([...act, ...hold].length ? activeTableHTML([...act, ...hold]) : '<p class="empty">진행 중인 업무가 없습니다.</p>')
-    + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>전체 기한</h3></div>${dls.length ? dls.map(deadlineRow).join('') : '<p class="empty">남은 기한이 없습니다.</p>'}</section>`;
-  return head + `
+    + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>전체 기한</h3></div>${dls.length ? dls.slice(0, 30).map(deadlineRow).join('') + (dls.length > 30 ? `<p class="hint">외 ${dls.length - 30}건 — 가까운 순 30건만</p>` : '') : '<p class="empty">남은 기한이 없습니다.</p>'}</section>`;
+  return H + `
   ${stale.length ? `<details class="stale"><summary><b>${STALE_DAYS}영업일 넘게 변화 없음 ${stale.length}건</b> <span class="hint">대기 사유·재확인일을 정한 건은 빠집니다</span></summary><ul>${stale.slice(0, 15).map(x => `<li><button class="linkish" data-edit-rec="${esc(x.r.id)}">${x.r.caseNo ? esc(x.r.caseNo) + ' ' : ''}${esc(x.r.title)}</button> <span class="hint">${esc(clientName(x.r.clientId))} · ${x.n}영업일${x.r.assignee ? ' · 담당 ' + esc(assigneeName(x.r.assignee)) : ''}</span></li>`).join('')}</ul>${stale.length > 15 ? `<p class="hint">외 ${stale.length - 15}건 — 홈 ‘전체’ 탭(참고 등급)</p>` : ''}</details>` : ''}
   <div class="act-layout">
     <section>
@@ -472,8 +499,13 @@ function amendSection(c){
 }
 
 function clientContactsSection(c){
-  const cc = c.contacts || [], rw = c.recentWork || [];
-  if(!cc.length && !rw.length) return `<p class="route-line">업체 담당자 없음 <button class="mini" data-scan="${esc(c.id)}">메일에서 담당자 스캔</button></p>`;   // 빈 칸은 한 줄로 (11/14 P3)
+  const cc = confirmedContacts(c), cand = (c.contacts || []).filter(p => !contactOk(p)), rw = c.recentWork || [];
+  const learned = (c.learned || []).filter(x => kwList(c).includes(String(x.key).toLowerCase()));
+  /* 11/16 A4·A5: 메일에서 찾은 담당자 후보(소속 미확인)와 자동으로 배운 검색어는 따로 — 확정하거나 뺄 수 있음 */
+  const extra = (cand.length ? `<details class="more fold"><summary>담당자 후보 ${cand.length}명 — 소속 확인 전(업체 알아보기에 쓰지 않음)</summary><ul class="plain">${cand.map(p => `<li>${esc(p.name || '')} <a href="mailto:${esc(p.email)}">${esc(p.email)}</a> <span class="hint">${p.count ? p.count + '통' : ''}</span> <button class="mini strong" data-cc-ok="${esc(c.id)}|${esc(p.email)}">이 업체 담당자</button><button class="mini" data-cc-del="${esc(c.id)}|${esc(p.email)}">빼기</button></li>`).join('')}</ul></details>` : '')
+    + ((c.bizHist || []).length ? `<details class="more fold"><summary>업체 정보 변경 이력 ${c.bizHist.length}건</summary><ul class="plain">${c.bizHist.slice(-8).reverse().map(h => `<li><span class="rec-date">${esc(String(h.at).slice(0, 10))}</span> ${esc(h.how || '사업자등록증')}${h.file ? ` <span class="hint">${esc(h.file)}</span>` : ''} ${(h.changes || []).map(x => `${esc(x.k)}: <s>${esc(x.old || '(빈 칸)')}</s> → ${esc(x.nw)}`).join(' · ')}</li>`).join('')}</ul></details>` : '')
+    + (learned.length ? `<p class="hint">메일 연결로 배운 검색어: ${learned.map(x => `<span class="tag">${esc(x.key)} <button class="linkish" data-kw-del="${esc(c.id)}|${esc(x.key)}" title="이 검색어 빼기">×</button></span>`).join(' ')}</p>` : '');
+  if(!cc.length && !rw.length) return `<p class="route-line">업체 담당자 없음 <button class="mini" data-scan="${esc(c.id)}">메일에서 담당자 스캔</button></p>${extra}`;   // 빈 칸은 한 줄로 (11/14 P3)
   return `<section class="items">
     <div class="sec-head"><h3>업체 담당자 <span class="cnt">${cc.length}명</span></h3><button class="mini" data-scan="${esc(c.id)}">메일에서 담당자 스캔</button></div>
     ${cc.length ? (() => {                                            // 대표 담당자 3명(메일 많은 순)만 먼저, 나머지는 펼치기 (11/9)
@@ -488,6 +520,7 @@ function clientContactsSection(c){
       const list = rw.slice(0, 10);
       return `<details class="more fold"><summary>최근 메일로 오간 업무 ${list.length}건</summary><ul class="pre-check">${list.map(li).join('')}</ul><p class="hint">마지막 스캔 ${esc(c.scannedAt || '')} 기준입니다.</p></details>`;
     })() : ''}
+    ${extra}
   </section>`;
 }
 async function scanContacts(cid){
@@ -511,7 +544,7 @@ async function scanContacts(cid){
     onSave(fd){
       const picked = new Set(fd.getAll('pick'));
       const map = new Map((c.contacts || []).map(p => [p.email, p]));
-      (j.contacts || []).filter(p => picked.has(p.email)).forEach(p => map.set(p.email, {...(map.get(p.email) || {}), ...p}));
+      (j.contacts || []).filter(p => picked.has(p.email)).forEach(p => map.set(p.email, {...(map.get(p.email) || {}), ...p, st:'ok', by:me ? me.id : ''}));   // 직접 고른 담당자 = 확정 (11/16)
       c.contacts = [...map.values()].sort((a,b) => (b.count || 0) - (a.count || 0));
       if(fd.get('saveWork') === 'on') c.recentWork = (j.subjects || []).slice(0,15);
       c.scannedAt = today();
@@ -570,7 +603,7 @@ function clientCands(text){
   const tiers = [[], [], []];
   db.clients.forEach(c => {
     const kws = kwList(c), doms = kws.filter(k => k.startsWith('@') && !FREE_MAIL.includes(k.slice(1)));
-    const mails = (c.contacts || []).map(p => String(p.email || '').toLowerCase().trim()).filter(e => e.includes('@'));   // 담당자 주소는 공용 메일(naver·kita.net 등)이어도 주소 전체가 같으면 인정 (11/11 c)
+    const mails = confirmedContacts(c).map(p => String(p.email || '').toLowerCase().trim()).filter(e => e.includes('@'));   // 11/16 A4: 확정 담당자만   // 담당자 주소는 공용 메일(naver·kita.net 등)이어도 주소 전체가 같으면 인정 (11/11 c)
     const m1 = Math.max(0, ...mails.filter(e => addrs.includes(e)).map(e => e.length), ...doms.filter(d => addrs.some(a => a.endsWith(d)) || t.includes(d)).map(d => d.length));
     if(m1) return tiers[0].push([c, m1]);
     const m2 = Math.max(0, ...kws.filter(k => !k.startsWith('@') && nameHit(t, compact, k)).map(k => k.length));
@@ -583,8 +616,13 @@ function clientCands(text){
   });
   for(const tier of tiers){
     if(!tier.length) continue;
-    const top = Math.max(...tier.map(x => x[1]));
-    return tier.filter(x => x[1] === top).map(x => x[0]);
+    const top = Math.max(...tier.map(x => x[1])), best = tier.filter(x => x[1] === top).map(x => x[0]);
+    /* 11/16 B1: 긴 이름이 이기는 건 짧은 쪽이 긴 쪽에 포함될 때만('레이' ⊂ '레이메디칼'). 서로 다른 업체가 함께 나오면 정하지 않고 후보로 */
+    const keyOf = c => nameKey(c.name).replace(/\s/g, ''), bk = best.map(keyOf);
+    const others = tier.filter(x => x[1] !== top && !bk.some(k => k.includes(keyOf(x[0])))).map(x => x[0]);
+    const all = others.length ? [...best, ...others] : best;
+    if(all.length > 1 && typeof isFwd === 'function'){ const nf = all.filter(c => !isFwd(c)); if(nf.length === 1) return nf; }   // 포워더 + 화주가 함께면 화주(포워더는 의뢰처로 따로 잡힘)
+    return all;
   }
   return [];
 }
@@ -613,49 +651,68 @@ async function bizImport(){
     do { j = await call({bizscan:1}); toast(`사업자등록증 읽는 중… ${j.items.length}/${j.total}`); } while(j.remaining > 0);
   }catch(e){toast('읽지 못했습니다: ' + e.message + ' (Apps Script 재배포와 Drive API 서비스 추가를 확인하세요)'); return;}
   const items = j.items.filter(x => x.name || x.biz);
-  const match = it => db.clients.find(c => (it.biz && c.bizNo === it.biz) || (it.name && normName(c.name) === normName(it.name)));
+  /* 11/16 A1·A2·A3: 업체 판별은 bizMatch(사업자번호 우선, 상호만 같고 번호 다르면 합치지 않음), 기존 값은 덮어쓰지 않고 변경분만 골라 반영, 팝업 안 검색 */
+  const FLD = [['name', 'name', '상호'], ['biz', 'bizNo', '사업자번호'], ['rep', 'rep', '대표자'], ['addr', 'address', '주소'], ['open', 'openDate', '개업일']];
+  const same = (k, a, b) => k === 'biz' ? bizKey(a) === bizKey(b) : k === 'name' ? normName(a) === normName(b) : String(a || '').replace(/\s+/g, '') === String(b || '').replace(/\s+/g, '');
+  const diffs = (it, c) => FLD.map(([ik, ck, lab]) => ({ik, ck, lab, old:c[ck] || '', nw:it[ik] || ''})).filter(x => x.nw && !same(x.ik, x.old, x.nw))
+    .map(x => ({...x, fill:!x.old, keep:!!(c.manualAt || {})[x.ck] && !x.fill, older:!x.fill && !!(it.fileAt && c.bizDocAt && it.fileAt < c.bizDocAt)}));
+  const plan = items.map(it => { const M = bizMatch(it); const sim = M.kind === 'new' && typeof similarClients === 'function' ? similarClients(it.name || '', it.biz || '') : []; return {it, M, sim}; });
+  const KIND = {same:'기존 업체(사업자번호 같음)', update:'기존 업체 · 정보 변경', link:'기존 업체 연결 후보(한쪽 번호 없음)', conflict:'⚠ 상호 같고 사업자번호 다름 — 별도 업체로', check:'⚠ 사업자번호 확인 필요', new:'새 업체'};
+  const rowHTML = ({it, M, sim}, i) => {
+    const base = ['same', 'update', 'link'].includes(M.kind) ? M.c : null;
+    const sel = M.kind === 'conflict' || (M.kind === 'check' && M.c) ? `<select name="to${i}">${opts([['', '새 업체로 추가'], [M.c.id, `기존 ‘${M.c.name}’에 반영(같은 회사일 때만)`]], '')}</select>`
+      : M.kind === 'new' && sim.length ? `<select name="to${i}" title="비슷한 기존 업체가 있습니다. 같은 회사면 그 업체에 반영하세요.">${opts([['', '새 업체로 추가'], ...sim.slice(0, 3).filter(x => !(bizKey(x.c.bizNo) && bizKey(it.biz) && bizKey(x.c.bizNo) !== bizKey(it.biz))).map(x => [x.c.id, `기존 ‘${x.c.name}’에 반영 (${x.why})`])], sim[0] && !bizKey(sim[0].c.bizNo) ? sim[0].c.id : '')}</select>` : '';
+    const ds = base ? diffs(it, base) : [];
+    const chg = ds.filter(x => !x.fill).map(x => `<label class="check chg"><input type="checkbox" name="chg${i}_${x.ck}"${x.keep || x.older ? '' : ' checked'}> ${x.lab}: <s>${esc(x.old)}</s> → <b>${esc(x.nw)}</b>${x.keep ? ' <span class="hint">(직접 입력한 값 — 기본 유지)</span>' : x.older ? ' <span class="hint">(더 예전 등록증 — 기본 유지)</span>' : ''}</label>`).join('');
+    const fill = ds.filter(x => x.fill).map(x => x.lab).join('·');
+    const q = [it.name, it.biz, bizKey(it.biz), it.rep, it.addr, base ? base.name : ''].join(' ').toLowerCase();
+    return `<tr data-q="${esc(q)}"><td><input type="checkbox" name="pick" value="${i}" data-old="${base || M.kind === 'conflict' ? 1 : 0}"${M.kind === 'check' ? '' : ' checked'}></td><td>${esc(it.name || '(상호 미인식)')}<div class="hint">${esc(bizFmt(it.biz || ''))}${it.fileAt ? ` · 파일 ${esc(it.fileAt)}` : ''} ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">원본</a>` : ''}</div></td><td>${esc(it.rep)}</td><td class="pre">${esc(it.addr)}</td>
+      <td><span class="tag ${['conflict', 'check'].includes(M.kind) ? 'bad' : ''}">${KIND[M.kind]}</span>${base ? ` <b>${esc(base.name)}</b>` : ''}${M.why && M.kind !== 'same' ? `<div class="hint">${esc(M.why)}</div>` : ''}${sel}${fill ? `<div class="hint">빈 칸 채움: ${fill}</div>` : ''}${chg}</td></tr>`;
+  };
   openDialog({
     title: `사업자등록증 ${items.length}건 반영`,
     saveLabel: '선택 항목 반영',
-    body: `<p class="hint">폴더의 파일 ${j.total}개 중 ${items.length}건을 읽었습니다${j.failed ? `(읽기 실패 ${j.failed}건)` : ''}. 반영할 업체를 고르세요. 기존 업체는 등록번호나 상호가 같으면 합칩니다.</p>
-      <label class="check"><input type="checkbox" name="mail" checked> 메일에서 업무담당자와 관련업무도 찾기 (업체당 몇 초씩 걸립니다)</label>
-      <div class="pick-bar"><button type="button" class="mini" data-x-pick="all">전체 선택</button><button type="button" class="mini" data-x-pick="none">전체 해제</button><button type="button" class="mini" data-x-pick="new">새 업체만</button><button type="button" class="mini" data-x-pick="old">기존 업체만</button><span class="hint" data-x-pick-n>${items.length} / ${items.length}건 선택</span></div>
-      <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-x-pick-all checked title="전체 선택 / 해제"></th><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>반영</th></tr></thead><tbody>
-      ${items.map((it, i) => { const m = match(it);
-        const sim = !m && typeof similarClients === 'function' ? similarClients(it.name || '', it.biz || '') : [];   // 비슷한 기존 업체 (11/14): 약칭으로 먼저 만든 업체가 있으면 거기에 반영 추천
-        const def = sim.length && !bizDigits(sim[0].c.bizNo) ? sim[0].c.id : '';
-        const to = m ? `기존: ${esc(m.name)}` : sim.length ? `<select name="to${i}" title="비슷한 기존 업체가 있습니다. 같은 회사면 그 업체에 반영하세요.">${opts([['', '새 업체로 추가'], ...sim.slice(0, 3).map(x => [x.c.id, `기존 ‘${x.c.name}’에 반영 (${x.why})`])], def)}</select>` : '새 업체';
-        return `<tr><td><input type="checkbox" name="pick" value="${i}" data-old="${m || def ? 1 : 0}" checked></td><td>${esc(it.name || '(상호 미인식)')}<div class="hint">${esc(it.biz || '')} ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">원본</a>` : ''}</div></td><td>${esc(it.rep)}</td><td class="pre">${esc(it.addr)}</td><td>${to}</td></tr>`; }).join('')}
+    body: `<p class="hint">폴더의 파일 ${j.total}개 중 ${items.length}건을 읽었습니다${j.failed ? `(읽기 실패 ${j.failed}건)` : ''}. <b>사업자번호가 같으면 기존 업체</b>, 상호만 같고 번호가 다르면 합치지 않습니다. 기존 값과 다른 칸은 고른 것만 바꾸고 이력에 남깁니다.</p>
+      <label class="check"><input type="checkbox" name="mail" checked> 메일에서 담당자 후보와 관련업무도 찾기 (업체당 몇 초씩, 담당자는 '후보'로 들어가고 업체 화면에서 확정)</label>
+      <div class="pick-bar"><input type="search" data-x-q class="item-q" placeholder="상호·사업자번호·대표자·주소 검색" style="max-width:16rem"><button type="button" class="mini" data-x-pick="all">전체 선택</button><button type="button" class="mini" data-x-pick="none">전체 해제</button><button type="button" class="mini" data-x-pick="new">새 업체만</button><button type="button" class="mini" data-x-pick="old">기존 업체만</button><span class="hint" data-x-pick-n></span></div>
+      <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-x-pick-all checked title="보이는 항목 전체 선택 / 해제"></th><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>판별·반영</th></tr></thead><tbody>
+      ${plan.map(rowHTML).join('')}
       </tbody></table></div>`,
-    onOpen(f){                                                              // 전체 선택·해제 (11/13 g)
-      const boxes = () => [...f.querySelectorAll('input[name="pick"]')];
-      const sync = () => { const b = boxes(), n = b.filter(x => x.checked).length, all = f.querySelector('[data-x-pick-all]'), lab = f.querySelector('[data-x-pick-n]');
-        if(all){ all.checked = n === b.length && n > 0; all.indeterminate = n > 0 && n < b.length; } if(lab) lab.textContent = `${n} / ${b.length}건 선택`; };
+    onOpen(f){                                                              // 전체 선택·해제는 검색으로 보이는 항목에만 (11/16)
+      const rows = () => [...f.querySelectorAll('tbody tr')], vis = () => rows().filter(tr => tr.style.display !== 'none').map(tr => tr.querySelector('input[name="pick"]'));
+      const sync = () => { const all = rows().map(tr => tr.querySelector('input[name="pick"]')), v = vis(), n = all.filter(x => x.checked).length, nv = v.filter(x => x.checked).length, box = f.querySelector('[data-x-pick-all]'), lab = f.querySelector('[data-x-pick-n]');
+        if(box){ box.checked = nv === v.length && nv > 0; box.indeterminate = nv > 0 && nv < v.length; } if(lab) lab.textContent = `${n} / ${all.length}건 선택${v.length !== all.length ? ` · 보이는 ${v.length}건` : ''}`; };
       f.addEventListener('click', e => { const b = e.target.closest('[data-x-pick]'); if(!b) return; e.preventDefault(); const k = b.dataset.xPick;
-        boxes().forEach(x => { x.checked = k === 'all' || (k === 'new' && x.dataset.old === '0') || (k === 'old' && x.dataset.old === '1'); }); sync(); });
-      f.addEventListener('change', e => { if(e.target.matches('[data-x-pick-all]')){ boxes().forEach(x => { x.checked = e.target.checked; }); } sync(); });
+        vis().forEach(x => { x.checked = k === 'all' || (k === 'new' && x.dataset.old === '0') || (k === 'old' && x.dataset.old === '1'); }); sync(); });
+      f.addEventListener('change', e => { if(e.target.matches('[data-x-pick-all]')){ vis().forEach(x => { x.checked = e.target.checked; }); } sync(); });
+      const q = f.querySelector('[data-x-q]');
+      if(q){ q.addEventListener('input', () => { const t = q.value.trim().toLowerCase(), td = t.replace(/[^0-9]/g, ''); rows().forEach(tr => { const s = tr.dataset.q || ''; tr.style.display = !t || s.includes(t) || (td.length >= 3 && s.includes(td)) ? '' : 'none'; }); sync(); });
+        q.addEventListener('keydown', e => { if(e.key === 'Enter') e.preventDefault(); }); }
+      sync();
     },
     onSave(fd){
       const picks = fd.getAll('pick').map(Number), withMail = fd.get('mail') === 'on';
       if(!picks.length){ toast('반영할 업체를 하나 이상 고르세요.'); return false; }
-      const touched = [];
+      const touched = []; let nNew = 0, nChg = 0;
       picks.forEach(i => {
-        const it = items[i]; let c = match(it);
-        if(!c && fd.get('to' + i)){                                         // 비슷한 기존 업체에 반영: 상호는 등록증 정식 상호로, 예전 이름은 검색어로 (11/14)
-          c = db.clients.find(x => x.id === fd.get('to' + i)) || null;
-          if(c && it.name && dupNameKey(it.name) !== dupNameKey(c.name)){ const old = c.name; c.name = it.name; c.keyword = [...new Set([...String(c.keyword || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean), old])].join(', '); c.updatedAt = nowIso(); }
-        }
-        if(!c){ c = {id:uid(), name: it.name || it.fileName, bizNo:'', industry:'', contact:'', keyword:'', notes:'', createdAt:nowIso()}; db.clients.push(c); }
-        if(it.biz) c.bizNo = it.biz;
-        if(it.rep) c.rep = it.rep;
-        if(it.addr) c.address = it.addr;
-        if(it.open) c.openDate = it.open;
+        const {it, M} = plan[i]; let c = ['same', 'update', 'link'].includes(M.kind) ? M.c : null;
+        if(!c && fd.get('to' + i)) c = db.clients.find(x => x.id === fd.get('to' + i)) || null;
+        if(c && bizKey(c.bizNo) && bizKey(it.biz) && bizKey(c.bizNo) !== bizKey(it.biz) && !fd.get('to' + i)) c = null;   // 번호가 다른 업체에는 사람이 고른 경우에만
+        if(!c){ c = {id:uid(), name:it.name || it.fileName, bizNo:bizFmt(it.biz || ''), rep:it.rep || '', address:it.addr || '', openDate:it.open || '', industry:[it.type, it.item].filter(Boolean).join(' / '), contact:'', keyword:'', notes:'', createdAt:nowIso(), bizDoc:safeUrl(it.link) ? it.link : '', bizDocAt:it.fileAt || today(), bizHist:[{at:nowIso(), by:me ? me.id : '', file:it.fileName || '', how:'사업자등록증으로 새로 등록'}]}; db.clients.push(c); nNew++; touched.push(c); return; }
+        const ds = diffs(it, c), done = [];
+        ds.forEach(x => { if(!x.fill && !fd.get(`chg${i}_${x.ck}`)) return;
+          if(x.ck === 'name' && x.old){ c.keyword = [...new Set([...String(c.keyword || '').split(/[,;\n]/).map(y => y.trim()).filter(Boolean), x.old])].join(', '); }   // 예전 상호는 검색어로 남김
+          c[x.ck] = x.ck === 'bizNo' ? bizFmt(x.nw) : x.nw; done.push({k:x.lab, old:x.old, nw:x.nw}); });
         if(!c.industry && (it.type || it.item)) c.industry = [it.type, it.item].filter(Boolean).join(' / ');
         if(safeUrl(it.link)) c.bizDoc = it.link;
+        if(!c.bizDocAt || (it.fileAt && it.fileAt > c.bizDocAt)) c.bizDocAt = it.fileAt || c.bizDocAt || today();
+        if(done.length){ c.bizHist = [...(c.bizHist || []), {at:nowIso(), by:me ? me.id : '', file:it.fileName || '', changes:done}].slice(-20); c.updatedAt = nowIso(); nChg++; }
         touched.push(c);
       });
       $('#dlg').close(); route = {name:'clientlist', id:null}; commit();
-      if(!withMail){ toast(`업체 ${touched.length}곳을 반영했습니다.`); return false; }
+      const msg = `업체 ${touched.length}곳 반영(새 업체 ${nNew}, 정보 변경 ${nChg})`;
+      if(typeof logProc === 'function') logProc('drive', '사업자등록증: ' + msg);
+      if(!withMail){ toast(msg + '.'); return false; }
       (async () => {
         let k = 0;
         for(const c of touched){
@@ -663,13 +720,13 @@ async function bizImport(){
           try{
             const r = await call({scan: primaryKw(c), days: 365});
             const map = new Map((c.contacts || []).map(p => [p.email, p]));
-            (r.contacts || []).filter(p => p.count >= 2).slice(0,5).forEach(p => map.set(p.email, {...(map.get(p.email) || {}), ...p}));
+            (r.contacts || []).filter(p => p.count >= 2).slice(0,5).forEach(p => { const o = map.get(p.email); map.set(p.email, {...(o || {}), ...p, st:o && o.st ? o.st : contactStatus(c, p.email, false)}); });   // 11/16 A4: 빈도로 확정하지 않음 — 업체 도메인 주소만 확정, 나머지는 후보
             c.contacts = [...map.values()].sort((a,b) => (b.count || 0) - (a.count || 0));
             if((r.subjects || []).length) c.recentWork = r.subjects.slice(0,15);
             c.scannedAt = today();
           }catch(e){}
         }
-        commit(); toast(`업체 ${touched.length}곳과 메일 담당자를 반영했습니다.`);
+        commit(); toast(`${msg}. 메일 담당자 후보를 넣었습니다(업체 화면에서 확정).`);
       })();
       return false;
     }

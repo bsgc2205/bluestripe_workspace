@@ -463,7 +463,7 @@ details.more.fold[open]>summary{margin-bottom:.45rem}
 .gs-more{margin:.3rem 0}.gs-more summary{cursor:pointer;color:var(--muted);font-size:.85rem}
 
 /* 진행 업무 보드 (11/11 d) */
-.board{max-width:100%;display:grid;grid-template-columns:repeat(7,minmax(200px,1fr));gap:.55rem;overflow-x:auto;padding-bottom:.6rem;align-items:start;margin-top:.5rem}
+.board{max-width:100%;display:grid;grid-template-columns:repeat(9,minmax(190px,1fr));gap:.55rem;overflow-x:auto;padding-bottom:.6rem;align-items:start;margin-top:.5rem}
 .bd-col{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:.45rem;min-height:120px}
 .bd-col.over{outline:2px dashed var(--accent);outline-offset:-3px}
 .bd-col header{display:flex;justify-content:space-between;align-items:center;padding:.1rem .2rem .4rem}
@@ -666,3 +666,11 @@ li.own{color:var(--prog)}
   .save-state{display:block;font-size:.75rem;flex-basis:100%;order:4}
 }
 @media (max-width:860px){.top .primary,.top .ghost{white-space:nowrap;padding:.35rem .6rem;font-size:.85rem}}
+/* ---- 11/16 업체 등록·수출 ---- */
+label.check.chg{display:block;margin:.25rem 0;font-size:.85rem;color:var(--ink)}
+label.check.chg input{margin-right:.3rem}
+.exp-tabs{margin-top:.2rem}
+.exp-tabs>.hint{margin-right:.3rem}
+.stg.pay-paid{border-color:var(--settle);color:var(--settle)}
+.stg.pay-part{border-color:var(--chk);color:var(--chk)}
+.exp-table td{vertical-align:top}

@@ -119,7 +119,10 @@ function mergeImport(obj){
   const byName = new Map(db.clients.map(c => [key(c.name), c]));
   const cMap = {}, iMap = {};
   (obj.clients || []).forEach(c => {
-    const ex = byName.get(key(c.name));
+    /* 11/16 A1: 사업자번호가 같으면 그 업체, 상호만 같고 번호가 둘 다 있는데 다르면 합치지 않고 새 업체 */
+    const bk = bizKey(c.bizNo), byBiz = bk ? db.clients.find(x => bizKey(x.bizNo) === bk) : null;
+    let ex = byBiz || byName.get(key(c.name));
+    if(ex && !byBiz && bk && bizKey(ex.bizNo) && bizKey(ex.bizNo) !== bk) ex = null;
     if(ex){
       cMap[c.id] = ex.id;
       if(c.notes && !(ex.notes || '').includes(c.notes.split('\n')[0])) ex.notes = (ex.notes ? ex.notes + '\n\n' : '') + c.notes;
