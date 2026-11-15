@@ -5,6 +5,24 @@
 const CASE_CODE = {'수입통관':'I', '요건확인·검역':'I', '화학물질':'I', '수출신고':'E', 'FTA원산지':'F', '관세환급':'R', 'AEO':'C', '품목분류':'C', '외환신고':'C'};
 const CASE_RE = /\b(20\d{2})-([IEFRCX])-(\d{3,4})\b/;
 function caseCode(type){ return CASE_CODE[type] || 'X'; }
+/* 11/16 수입·수출 근거: 신고번호 끝자리(X 수출·M 수입) → 필증 요약 → 유형. UNI-PASS 조회·보드 단계는 이 값을 따름 */
+function declIO(r){
+  const k = s => { const m = String(s || '').replace(/\s/g, '').match(/\d{5}-?\d{2}-?\d{6,7}([XM])$/); return m ? (m[1] === 'X' ? 'E' : 'I') : ''; };
+  return k(r.refNo) || (r.refs || []).filter(x => x.kind === 'decl').map(x => k(x.no)).find(Boolean) || ((r.certs || []).map(c => c.kind).find(x => x === 'E' || x === 'I')) || '';
+}
+function recIO(r){ const d = declIO(r); if(d) return d; const c = caseCode(r.type); return c === 'E' || c === 'I' ? c : ''; }
+/* 자동으로 정한 유형만 고침(직원이 창에서 유형을 바꾼 기록은 그대로) */
+function typeAuto(r){ return (r.createdBy === 'auto' || (r.tags || []).includes('자동접수') || (r.tags || []).includes('자동수집')) && !(r.history || []).some(h => h.by && /(^|, )유형 [^,]* → /.test(h.text || '')); }   // 창에서 바꾼 '유형 A → B'만(자동 정정 이력은 제외)
+function retypeRecord(r, type, why){
+  if(!type || r.type === type) return false;
+  const old = r.type, oldNo = r.caseNo;
+  r.type = type;
+  const used = oldNo && (r.mails || []).some(m => String(m.subject || '').includes(oldNo));   // 사건번호가 메일 제목에 쓰였으면 번호는 그대로
+  if(oldNo && !used && CASE_RE.exec(oldNo) && CASE_RE.exec(oldNo)[2] !== caseCode(type)){ r.caseNoOld = oldNo; r.caseNo = ''; ensureCaseNos(db); }
+  addHist(r, `업무 유형 자동 정정: ${old} → ${type} (${why})${r.caseNoOld === oldNo && r.caseNo !== oldNo ? ` · 사건번호 ${oldNo} → ${r.caseNo}` : ''}`);
+  delete r.typeChk; r.updatedAt = nowIso();
+  return true;
+}
 function ensureCaseNos(d){
   const max = {};
   d.records.forEach(r => { const m = CASE_RE.exec(r.caseNo || ''); if(m){ const k = m[1] + '-' + m[2]; max[k] = Math.max(max[k] || 0, Number(m[3])); } });
@@ -493,14 +511,14 @@ async function refreshCustoms0(force){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token) return;
   const cutoff = new Date(Date.now() - 12 * 3600e3).toISOString();
-  const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && ['I', 'E'].includes(caseCode(r.type)) && (r.bl || r.refNo || r.mdfy || r.reqApreNo || r.reqRqstNo)
+  const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && recIO(r) && (r.bl || r.refNo || r.mdfy || r.reqApreNo || r.reqRqstNo)
     && (force || !r.unipass || (r.unipass.at || '') < cutoff))
     .sort((a, b) => ((a.unipass || {}).at || '') < ((b.unipass || {}).at || '') ? -1 : 1).slice(0, 15);   // 한 번도 확인 안 한 기록(새로 접수한 건)부터 15건씩
   for(const r of list){
     const u = {...(r.unipass || {}), at:nowIso()};
     delete u.err;
     const before = JSON.stringify(r.stage || {}) + [(r.unipass || {}).last, (r.unipass || {}).mdfy, (r.unipass || {}).reqRqst, (r.unipass || {}).condTxt, (r.unipass || {}).ldp].join('|');
-    if(caseCode(r.type) === 'E') await checkExport(r, u); else await checkImport(r, u);
+    if(recIO(r) === 'E') await checkExport(r, u); else await checkImport(r, u);   // 11/16: 신고번호 끝자리가 유형보다 우선
     await checkExtra(r, u);
     r.unipass = u;
     ledgerCheck(r, u);

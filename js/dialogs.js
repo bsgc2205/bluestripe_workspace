@@ -49,7 +49,7 @@ function openRecord(r, preset = {}){
     Object.assign(rec, {clientId:c ? c.id : rec.clientId, title:m.subject || '', startDate:String((preset.thread ? preset.thread.ms[0] : m).date || today()).slice(0, 10), date:status === '완료' ? String(m.date || today()).slice(0, 10) : '', summary:m.snippet || '', bl:m.bl || '', refNo:m.declNo || findRefNo((m.subject||'') + ' ' + (m.snippet||'')), links:[]});
     (preset.thread ? preset.thread.ms : [m]).forEach(x => attachMail(rec, x));
     rec.title = String(m.subject || '').replace(/^\s*(\[[^\]\d]*\]\s*|(re|fw|fwd|답장|회신|전달)\s*[:：]\s*)+/i, '').trim() || rec.title;    const txt = (preset.thread ? preset.thread.ms : [m]).map(x => (x.subject || '') + ' ' + String(x.snippet || '').slice(0, 200)).join(' ');
-    if(!preset.type){ const g = guessType(txt, rec.clientId); if(g) rec.type = g; }          // 메일 내용으로 업무 유형·품목 추정 (창에서 바꿀 수 있음)
+    if(!preset.type){ const g = guessType(txt, rec.clientId, (preset.thread ? preset.thread.ms : [m]).map(x => x.subject || '').join(' ')); if(g) rec.type = g; }          // 메일 내용으로 업무 유형·품목 추정 (창에서 바꿀 수 있음)
     const gi = guessItem(txt, rec.clientId); if(gi) rec.itemId = gi.id;
   }
   if(isNew && preset.prefill) Object.assign(rec, preset.prefill);

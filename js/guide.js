@@ -164,14 +164,52 @@ function similarInquiries(target, sims = [], n = 3){
   }).filter(x => x.s >= 20).sort((a, b) => b.s - a.s).slice(0, n).map(x => x.q);
 }
 /* 메일 대화 → 기록 모양 */
-const TYPE_GUESS = [
-  ['FTA원산지', /원산지|(^|[^a-z])c\/?o([^a-z]|$)|fta|form\s?[ae]([^a-z]|$)|사후적용/i], ['관세환급', /환급/], ['수출신고', /수출|export|선적|적재|shipping/i],
-  ['화학물질', /화평법|화관법|화학물질|유해화학/], ['요건확인·검역', /검역|요건확인|식약처|수입식품|위생증명/], ['품목분류', /품목분류|사전심사|세번/],
-  ['외환신고', /외환|지급신고|송금/], ['AEO', /(^|[^a-z])aeo([^a-z]|$)/i], ['수입통관', /수입|import|도착|입항|arrival|b\/l/i]];
-function guessType(text, clientId){
-  const types = db.settings.taskTypes, hit = TYPE_GUESS.find(([ty, re]) => types.includes(ty) && re.test(String(text || '')));
-  if(hit) return hit[0];
-  const cnt = {}; db.records.filter(r => r.clientId === clientId).forEach(r => cnt[r.type] = (cnt[r.type] || 0) + 1);
+/* 11/16 업무 유형 판별 다시 — 수입·수출을 먼저 가르고, 특수 업무(FTA·요건·화학…)는 '제목'에 그 업무 자체를 요청할 때만.
+   예전: 본문에 '선적'·'shipping'만 있어도 수출, 'C/O'·'FTA'(수입 서류의 원산지증명서·협정세율)만 있어도 FTA원산지로 잡혀 수입 건이 섞였음.
+   ① 확실한 근거: 신고번호 끝자리(X 수출 · M 수입), 필증 종류(EXP_/IMP_, 수출·수입신고필증)
+   ② 제목 점수(×3) + 본문 앞부분 점수(×1): 수입(수입신고·A/N·arrival·도착·입항·ETA·D/O·통관예상경비·C/등록업체) vs 수출(수출신고·면장·면허·ETD·부킹·출항·적재·S/등록업체)
+   ③ 비기면 그 업체의 주 업무(수입·수출 중) → 그래도 없으면 수입통관 */
+const IO_IMP = [/수입\s*(신고|통관|면장|요건|화물|예정|건)?/g, /\bimport/gi, /(?<![a-z])a\s*\/\s*n(?![a-z])|arrival|도착\s*(안내|예정|통지)?|입항/gi, /(?<![a-z])eta(?![a-z])/gi, /(?<![a-z])d\s*\/?\s*o(\s*요청)?(?![a-z])/gi, /통관\s*예상\s*경비|관세\s*납부|반입|보세\s*운송|검역|통관\s*(요청|진행)|정식\s*통관|\bEMS\b|waybill|특송|customs?\s*clearance|shipping\s*doc(ument)?s?/gi];
+const IO_EXP = [/수출\s*(신고|면장|면허|통관|건)?/g, /\bexport/gi, /(?<!수입\s*)(면장|면허)/g, /(?<![a-z])etd(?![a-z])/gi, /부킹|booking|출항|적재|선적\s*(예정|일정|요청)|on\s*board|가면장/gi];
+const IO_DECL = s => { const m = String(s || '').replace(/\s/g, '').match(/\d{5}-?\d{2}-?\d{6,7}([XM])(?![A-Z0-9])/); return m ? (m[1] === 'X' ? 'E' : 'I') : ''; };
+function ioScore(text, w){ let i = 0, e = 0; const t = String(text || ''); IO_IMP.forEach(re => { i += (t.match(re) || []).length; }); IO_EXP.forEach(re => { e += (t.match(re) || []).length; }); return {i:i * w, e:e * w}; }
+/* 구간 표시 '호치민-인천', 'PVG- ICN', '부산-난통', 'SHANGHAI TO INCHEON': 도착이 한국 항구면 수입, 출발이 한국 항구면 수출 */
+const KR_PORT2 = /^(인천|부산|평택|광양|울산|김포|ICN|INC|SEL|PUS|BUSAN|INCHEON|PYEONGTAEK|KR[A-Z]{3})$/i;
+function ioRoute(subj){
+  const re = /([A-Za-z가-힣]{2,12})\s*(?:-|–|→|>|\bto\b)\s*([A-Za-z가-힣]{2,12})/g; let m, i = 0, e = 0;
+  while((m = re.exec(String(subj || '')))){ const a = KR_PORT2.test(m[1]), b = KR_PORT2.test(m[2]); if(b && !a) i++; else if(a && !b) e++; }
+  return i > e ? 'I' : e > i ? 'E' : '';
+}
+function ioPartyHint(subj){                                                  // 포워더 제목 'S/화주 C/수하인': 등록 업체가 C/면 수입, S/면 수출
+  const t = String(subj || ''), sm = t.match(/\bS\/([^/]{2,40}?)\s+C\//i), cm = t.match(/\bC\/([^/)]{2,40}?)(?:\s+H\/|\)|$|\s{2,})/i);
+  const reg = n => n && typeof findClient === 'function' && findClient(n);
+  return reg(cm && cm[1]) ? 'I' : reg(sm && sm[1]) ? 'E' : '';
+}
+function classifyIO(subj, body, clientId, hard){
+  if(hard === 'E' || hard === 'I') return {k:hard, why:'신고번호·필증', sure:true};
+  const d = IO_DECL(subj + ' ' + body); if(d) return {k:d, why:'신고번호 끝자리', sure:true};
+  if(/수출\s*신고\s*필증|EXP_/i.test(subj)) return {k:'E', why:'수출신고필증', sure:true};
+  if(/수입\s*신고\s*필증|IMP_/i.test(subj)) return {k:'I', why:'수입신고필증', sure:true};
+  const rt = ioRoute(subj);
+  if(rt) return {k:rt, why:`구간(${rt === 'I' ? '도착' : '출발'}이 한국 항구)`, sure:true};   // 구간(출발→도착)은 제목 낱말보다 강한 단서
+  const a = ioScore(subj, 3), b = ioScore(String(body || '').slice(0, 400), 1), ph = ioPartyHint(subj);
+  let i = a.i + b.i + (ph === 'I' ? 3 : 0), e = a.e + b.e + (ph === 'E' ? 3 : 0);
+  if(i !== e) return {k:i > e ? 'I' : 'E', why:`제목·본문 단서 수입 ${i} : 수출 ${e}`, sure:Math.abs(i - e) >= 3, i, e};
+  const n = {I:0, E:0}; db.records.filter(r => r.clientId === clientId).sort(byDateDesc).slice(0, 15).forEach(r => { const k = caseCode(r.type); if(k === 'I' || k === 'E') n[k]++; });
+  return {k:n.E > n.I ? 'E' : n.I ? 'I' : '', why:'업체 주 업무', sure:false, i, e};
+}
+const SPECIAL_TYPE = [                                                       // 제목에 그 업무 자체를 요청할 때만
+  ['FTA원산지', /원산지\s*(증명서?)?\s*(\(\s*C\/?O\s*\))?\s*(발급|신청|검토|판정|확인서)|\bC\/?O\)?\s*(발급|신청|발행)|사후\s*(적용|환급)|인증\s*수출자|원산지\s*소명/i],
+  ['관세환급', /(?<!사후\s*)환급\s*(신청|청구)?/], ['화학물질', /화평법|화관법|화학물질|유해화학|K-?REACH/i], ['요건확인·검역', /요건\s*확인|수입식품\s*신고|식약처|정밀\s*검역|검역\s*(신청|대상)/],
+  ['품목분류', /품목\s*분류|사전\s*심사|세번\s*(검토|문의)|HS\s*(코드)?\s*(검토|문의|확인)/i], ['외환신고', /외환|지급\s*신고|해외\s*송금/], ['AEO', /(^|[^a-z])aeo([^a-z]|$)/i]];
+function guessType(text, clientId, subj){
+  const types = db.settings.taskTypes, sj = subj != null ? String(subj) : String(text || '').split('\n')[0].slice(0, 200), body = String(text || '');
+  const declReq = /수입\s*신고|수출\s*신고|면장|면허|통관\s*(요청|진행)|A\/N|arrival|D\/O/i.test(sj);   // 신고 의뢰가 같이 있으면 특수 업무보다 수입·수출
+  const sp = !declReq && SPECIAL_TYPE.find(([ty, re]) => types.includes(ty) && re.test(sj));
+  if(sp) return sp[0];
+  const io = classifyIO(sj, body, clientId);
+  if(io.k) return io.k === 'E' ? '수출신고' : '수입통관';
+  const cnt = {}; db.records.filter(r => r.clientId === clientId && !['수입통관', '수출신고', 'FTA원산지'].includes(r.type)).forEach(r => cnt[r.type] = (cnt[r.type] || 0) + 1);   // 단서가 없으면 그 업체의 특수 업무(AEO·품목분류 등)만 따라감 — 예전 잘못 잡힌 FTA는 따르지 않음
   return Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || '';
 }
 function guessItem(text, clientId){
@@ -181,7 +219,7 @@ function guessItem(text, clientId){
 }
 function threadTarget(t){
   const c = threadClient(t), text = t.ms.map(m => (m.subject || '') + ' ' + stripMailNoise(String(m.snippet || '').slice(0, 300))).join(' ');
-  const it = c ? guessItem(text, c.id) : null, ty = guessType(text, c ? c.id : '');
+  const it = c ? guessItem(text, c.id) : null, ty = guessType(text, c ? c.id : '', t.ms.map(m => m.subject || '').join(' '));
   return {id:'', clientId:c ? c.id : '', type:ty, typeGuess:true, itemId:it ? it.id : '', title:t.ms.map(m => m.subject || '').join(' '), summary:t.ms.map(m => stripMailNoise(String(m.snippet || '').slice(0, 300))).join('\n'), bl:(t.ms.find(m => m.bl) || {}).bl || '', causes:[], createdBy:'auto'};
 }
 

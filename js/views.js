@@ -617,7 +617,7 @@ function clientCands(text){
   for(const tier of tiers){
     if(!tier.length) continue;
     const top = Math.max(...tier.map(x => x[1])), best = tier.filter(x => x[1] === top).map(x => x[0]);
-    /* 11/16 B1: 긴 이름이 이기는 건 짧은 쪽이 긴 쪽에 포함될 때만('레이' ⊂ '레이메디칼'). 서로 다른 업체가 함께 나오면 정하지 않고 후보로 */
+    /* 11/16 B1: 긴 이름이 이기는 건 짧은 쪽이 긴 쪽에 포함될 때만('가나' ⊂ '가나상사'). 서로 다른 업체가 함께 나오면 정하지 않고 후보로 */
     const keyOf = c => nameKey(c.name).replace(/\s/g, ''), bk = best.map(keyOf);
     const others = tier.filter(x => x[1] !== top && !bk.some(k => k.includes(keyOf(x[0])))).map(x => x[0]);
     const all = others.length ? [...best, ...others] : best;

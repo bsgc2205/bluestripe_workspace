@@ -133,7 +133,7 @@ function certQueue(){
 }
 /* 필증의 수입자·수출화주 업체 (11/12): 사업자번호 → 이름. 기록의 업체와 다르면 품목은 필증 쪽 업체에 넣는다(다른 업체 필증이 잘못 붙은 경우) */
 function certParty(d){ return (d.bizNo && clientByBiz(d.bizNo)) || (d.party ? findClient(d.party) || fuzzyClient(d.party) : null); }
-/* 11/15: 필증 글자 인식이 업체 이름 한 글자를 틀린 경우(훼로스→페로스, 두넥스→두비스) — 4글자 이상 이름에서 한 글자만 다르고 후보가 하나일 때만 */
+/* 11/15: 필증 글자 인식이 업체 이름 한 글자를 틀린 경우(예: 가나다→가니다) — 4글자 이상 이름에서 한 글자만 다르고 후보가 하나일 때만 */
 function fuzzyClient(name){
   const k = nameKey(name).replace(/\s/g, ''); if(k.length < 4) return null;
   const d1 = (a, b) => { if(a.length !== b.length) return 9; let n = 0; for(let i = 0; i < a.length; i++) if(a[i] !== b[i] && ++n > 1) return n; return n; };
@@ -162,6 +162,7 @@ function applyCert2Rec(r, d, fname){
   const cl = db.clients.find(c => c.id === r.clientId);                  // 필증의 수입자·수출화주가 이 업체면 사업자번호를 업체 정보에 채움
   if(cl && d.bizNo && !bizDigits(cl.bizNo) && (findClient(d.party || '') === cl || clientByBiz(d.bizNo) === null && nameKey(d.party || '').replace(/\s/g, '').includes(nameKey(cl.name).replace(/\s/g, '')))){ cl.bizNo = d.bizNo; cl.updatedAt = nowIso(); ch.push('업체 사업자번호'); setTimeout(() => checkClientsExt([cl], true), 1500); }
   if(d.kind && caseCode(r.type) === 'X'){ r.type = d.kind === 'E' ? '수출신고' : '수입통관'; ch.push('유형'); }
+  else if((d.kind === 'E' || d.kind === 'I') && caseCode(r.type) !== d.kind && mine && typeAuto(r) && retypeRecord(r, d.kind === 'E' ? '수출신고' : '수입통관', `필증 ${fname}`)) ch.push('유형 정정');   // 11/16
   r.certs = [...(r.certs || []).filter(x => x.declNo !== d.declNo), {file:fname, declNo:d.declNo, declDate:d.declDate, kind:d.kind, party:d.party, partner:d.partner, country:d.country, terms:d.terms, lines:(d.lines || []).slice(0, 12)}].slice(-10);
   let made = 0;
   const pc = certParty(d), other = pc && pc.id !== r.clientId ? pc : null;
@@ -251,7 +252,7 @@ function applyCertDocs(r, docs, file){
     const isMine = pc ? pc.id === r.clientId : (!d.party || partyIsClient(d.party, r.clientId) || (docs.length === 1 && !(d.lines || []).length));
     (isMine ? mine : others).push({d, pc});
   });
-  /* 11/15: 여러 장 묶음 파일에서 같은 업체 필증이 둘 이상이면(예: 레이 2건) 이 기록의 신고번호와 같은 장만 이 기록에, 나머지는 자기 기록으로 */
+  /* 11/15: 여러 장 묶음 파일에서 같은 업체 필증이 둘 이상이면(같은 업체 2건) 이 기록의 신고번호와 같은 장만 이 기록에, 나머지는 자기 기록으로 */
   if(docs.length > 1 && mine.length > 1){
     const keys = recKeys(r, 'decl').map(refTail), own = d => d.declNo && keys.some(k => k === refTail(d.declNo) || k.endsWith(refTail(d.declNo)) || refTail(d.declNo).endsWith(k));
     const keep = mine.filter(x => own(x.d)), rest = keep.length ? mine.filter(x => !own(x.d)) : mine.slice(1);

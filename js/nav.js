@@ -157,6 +157,9 @@ function checkGroups(){
     if(tb.length) g.push({k:'billtbd', s:'청구처 미정', title:'청구처 미정 — 포워더 의뢰 건', why:'청구서 메일·지난 건·기본값으로 정하지 못했습니다. 한 번 정하면 같은 화주·포워더의 다음 건은 따라갑니다', rows:tb.map(r => ({key:'bill:' + r.id, t1:`${r.caseNo || ''} ${r.title}`.trim(), t2:`${clientName(r.clientId)} · 의뢰 ${clientName(r.via)}`, lvl:'chk',
       acts:BTN.ok(`data-bill-set="${esc(r.id)}|via"`, '포워더 청구') + BTN.ok(`data-bill-set="${esc(r.id)}|self"`, '화주 청구') + BTN.later('bill:' + r.id)}))});
   }
+  const tc = db.records.filter(r => r.typeChk && r.typeChk.to && r.typeChk.to !== r.type && (r.status !== '완료' || recDate(r) >= addPeriod(today(), -60, 'd')));   // 11/16 업무 유형 확인
+  if(tc.length) g.push({k:'typechk', s:'업무 유형 확인', title:'업무 유형 확인 — 수입·수출·특수 업무 구분', why:'자동으로 정한 유형과 제목·메일 단서가 다릅니다. 유형에 따라 UNI-PASS 조회·단계·매뉴얼이 달라집니다', rows:tc.map(r => ({key:'type:' + r.id, t1:`${r.caseNo || ''} ${r.title}`.trim(), t2:`${clientName(r.clientId)} · 지금 ${r.type} → 단서 ${r.typeChk.to} (${r.typeChk.why})`, lvl:'chk',
+    acts:BTN.ok(`data-type-set="${esc(r.id)}|${esc(r.typeChk.to)}"`, `${r.typeChk.to}${josa(r.typeChk.to, "으로")}`) + BTN.link(`data-type-ok="${esc(r.id)}"`, `${r.type} 맞음`) + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later('type:' + r.id)}))});
   const sc = (db.syncConflicts || []).filter(x => !x.done);               // 11/15 D-01: 두 PC가 같은 칸을 다르게 고친 것
   const FLD = {title:'제목', status:'상태', refNo:'신고번호', bl:'B/L', summary:'요약', assignee:'담당자', clientId:'업체', fee:'수수료', via:'의뢰처', billTo:'청구처', type:'업무 유형', name:'이름', keyword:'검색어', date:'완료일', startDate:'시작일', due:'기한'};
   const confLab = x => { const ks = x.path.split('/').filter(Boolean), kind = ks[0], o = (db[kind] || []).find(y => y.id === ks[1]);
