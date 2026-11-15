@@ -69,7 +69,7 @@ function docsHTML(r){
 function filesHTML(r){
   const fs = (r.files || []).filter(f => f.name);
   if(!fs.length) return '';
-  return `<details class="rec-mails"><summary>자료 ${fs.length}개</summary><ul>${fs.map(f => `<li>${safeUrl(f.link) ? `<a href="${esc(f.link)}" target="_blank" rel="noopener noreferrer">${hl(f.name)}</a>` : hl(f.name)} <span class="hint">${esc(f.date || '')}${docType(f.name) ? ' · ' + esc(docType(f.name)) : ''}</span>${f.ver ? ` <span class="tag chk" title="같은 이름 자료의 새 버전(정정·수정)">v${f.ver}</span>` : ''}</li>`).join('')}</ul></details>`;
+  return `<details class="rec-mails"><summary>자료 ${fs.length}개</summary><ul>${fs.map(f => `<li>${safeUrl(f.link) ? `<a href="${esc(f.link)}" target="_blank" rel="noopener noreferrer">${hl(f.name)}</a>` : hl(f.name)} <span class="hint">${esc(f.date || '')}${docType(f.name) ? ' · ' + esc(docType(f.name)) : ''}</span>${f.ver ? ` <span class="tag chk" title="같은 이름 자료의 새 버전(정정·수정)">v${f.ver}</span>` : ''}${f.id ? ` <button class="mini link-mv" data-file-mv="${esc(r.id)}|${esc(f.id)}" title="다른 기록으로 옮기거나 연결을 끊습니다">옮기기·떼기</button>` : ''}</li>`).join('')}</ul></details>`;
 }
 function addFiles(r, items){
   r.files = r.files || [];
@@ -141,6 +141,16 @@ function stageHTML(r){
   if(u.shedTxt && !u.released) out.push(`<span class="stg" title="${esc(u.shedNm || '')}">${esc(u.shedTxt)}</span>`);
   if(r.autoDone) out.push(`<span class="stg auto" title="${esc(r.autoDone.reason || '')}">자동 완료</span>`);
   return out.length ? `<span class="stages">${out.join('')}</span>` : '';
+}
+/* 11/15 S-01: 단계별 근거 한 줄 — 무엇으로·언제·자동/직접·확정/확인 필요 */
+function stageWhyHTML(r){
+  const st = r.stage || {}, ks = ['accept', 'customs', 'settle'].filter(k => st[k]);
+  if(!ks.length && !r.autoDone) return '';
+  const src = by => /^UNI-PASS/.test(by) ? 'UNI-PASS' : /^메일/.test(by) ? '메일' : /필증|자동 수집/.test(by) ? '필증 자료' : by ? '직접' : '';
+  const li = ks.map(k => { const by = String(st[k + 'By'] || ''), chk = st[k + 'Lv'] === 'chk';
+    return `<li><b>${esc(stageName(r, k))}</b> ${esc(st[k])} · ${esc(src(by) || '근거 없음')}${chk ? ' <span class="tag chk">확인 필요</span>' : ''} <span class="hint">${esc(by.slice(0, 120))}</span></li>`; });
+  if(r.autoDone) li.push(`<li><b>자동 완료</b> ${esc(String(r.autoDone.at || '').slice(0, 10))} <span class="hint">${esc(r.autoDone.reason || '')}</span></li>`);
+  return `<details class="rec-mails stage-why"><summary>단계 근거 ${ks.length}</summary><ul>${li.join('')}</ul></details>`;
 }
 function stageActsHTML(r){
   if(r.status === '완료') return r.autoDone ? `<button class="mini" data-undo-auto="${esc(r.id)}">완료 되돌리기</button>` : '';
@@ -402,7 +412,13 @@ async function checkExtra(r, u){
     catch(e){ u.err003 = e.message; }
   }
 }
-async function refreshCustoms(force){
+let customsBusy = false;
+async function refreshCustoms(force){                                     // 11/15: 중복 실행 방지
+  if(customsBusy) return;
+  customsBusy = true;
+  try{ return await refreshCustoms0(force); } finally { customsBusy = false; }
+}
+async function refreshCustoms0(force){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token) return;
   const cutoff = new Date(Date.now() - 12 * 3600e3).toISOString();

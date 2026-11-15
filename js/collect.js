@@ -26,6 +26,17 @@ function caseFromItems(c, group){
     createdAt: nowIso(), updatedAt: nowIso(), createdBy: 'auto'
   };
 }
+/* 11/15: 폴더 자료로 새로 만든 기록 — 수리 후 필증 보관 폴더라 지난 자료는 '완료', 30일 안 자료는 진행 중(수입 통관완료·수출 수리완료 단계 = 정산 대기) */
+const COLLECT_OPEN_DAYS = 30;
+function collectNewRecord(c, group){
+  const r = caseFromItems(c, group), last = String(r.date || '').slice(0, 10);
+  if(!['수입통관','수출신고'].includes(r.type) || !last || daysLeft(last) < -COLLECT_OPEN_DAYS) return r;
+  const k = r.type === '수출신고' ? 'accept' : 'customs';
+  r.status = '진행중'; r.date = '';
+  r.stage = {[k]:last, [k + 'By']:'자동 수집: 신고필증 자료'};
+  r.history.push({at:nowIso(), by:'', text:`${COLLECT_OPEN_DAYS}일 안 자료 — 진행 중(${k === 'accept' ? '수리완료' : '통관완료'}, 정산 대기)으로 생성`});
+  return r;
+}
 /* 신고번호·B/L로 기존 기록 찾기: 파일명이 '300777M.pdf'처럼 신고번호 뒷자리뿐이어도 UNI-PASS로 채워진 기록의 신고번호(13675-26-300777M)와 맞춤 */
 const refTail = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
 /* 기록의 식별번호 전부(대표 B/L·신고번호 + 분할·정정으로 추가된 refs). kind: 'decl' | 'bl' | 없으면 전부 */
@@ -37,12 +48,15 @@ function refMatch(r, x){
   const d = refTail(x.declNo), b = refTail(x.bl);
   return (d.length >= 7 && recKeys(r, 'decl').map(refTail).some(rr => rr === d || rr.endsWith(d))) || (b.length >= 6 && recKeys(r, 'bl').map(refTail).includes(b));
 }
-function recordByRef(x){
+/* 11/15 M-02: 같은 번호 기록이 여러 건이면 진행 중이 딱 1건일 때만 자동 선택. 그 밖에는 고르지 않음(cands로 확인함 '후보 여러 건') */
+function refLookup(x){
   const hits = db.records.filter(r => refMatch(r, x));
-  if(hits.length <= 1) return hits[0] || null;
+  if(hits.length <= 1) return {r:hits[0] || null, cands:hits};
   const open = hits.filter(r => r.status !== '완료');
-  return open.length === 1 ? open[0] : hits.sort(byDateDesc)[0];
+  return {r:open.length === 1 ? open[0] : null, cands:hits.sort(byDateDesc)};
 }
+function recordByRef(x){ return refLookup(x).r; }
+const ambCands = L => !L.r && L.cands.length > 1 ? L.cands.slice(0, 6).map(r => r.id) : null;
 function collectText(x){ return `${x.name} ${x.path} ${x.party || ''} ${x.mail ? [x.mail.subject, x.mail.from, x.mail.snippet].filter(Boolean).join(' ') : ''}`; }
 const bizDigits = s => String(s || '').replace(/[^0-9]/g, '');
 function clientByBiz(biz){ const b = bizDigits(biz); return b.length === 10 ? db.clients.find(c => bizDigits(c.bizNo) === b) || null : null; }
@@ -52,8 +66,10 @@ function assignItems(list){
   const groups = {}, attach = {}, logs = {};
   let pend = 0;
   list.forEach(x => {
-    const hit = recordByRef(x);
+    if(x.blockRec){ db.collectPending.push(x); pend++; return; }                                   // 사람이 기록에서 뗀 자료는 자동으로 다시 넣지 않음
+    const L = refLookup(x), hit = L.r;
     if(hit){ (attach[hit.id] = attach[hit.id] || {r:hit, list:[]}).list.push(x); return; }
+    if(ambCands(L)){ x.cands = ambCands(L); db.collectPending.push(x); pend++; return; }       // 후보 여러 건 → 사람이 고름
     const c = clientByBiz(x.bizNo) || matchClientText(collectText(x));
     if(!c){ db.collectPending.push(x); pend++; return; }
     const weekly = !['수입','수출'].includes(x.kind);
@@ -77,7 +93,7 @@ function assignItems(list){
     const f = lst[0];
     const ex = db.records.find(r => r.clientId === c.id && refMatch(r, f));
     if(ex) merge(ex, c, lst);
-    else { const r = caseFromItems(c, lst); db.records.push(r); made++; if(r.special) sp++; }
+    else { const r = collectNewRecord(c, lst); db.records.push(r); made++; if(r.special) sp++; }
   });
   return {made, sp, upd, pend, log};
 }
@@ -188,11 +204,11 @@ function applyCertDocs(r, docs, file){
   /* 색인표에만 있고 본문을 못 읽은 필증 (11/13 g): 같은 신고번호 기록이 있으면 파일만 붙이고, 이 기록 번호면 그대로, 없으면 미분류(업체 선택) */
   docs.filter(d => d.idx).forEach(d => {
     if(d.declNo && recKeys(r, 'decl').map(refTail).includes(refTail(d.declNo))) return;
-    const t = recordByRef({declNo:d.declNo});
+    const L = refLookup({declNo:d.declNo}), t = L.r, amb = ambCands(L);
     if(t && t.id !== r.id){ addFiles(t, [{id:file.id, name:fname, link:file.link || '', created:file.date || ''}]); t.certRead = {...(t.certRead || {}), [file.id]:today()}; listed.push(`${clientName(t.clientId)} ${d.declNo}`); return; }
     if(t) return;
     db.collectPending = db.collectPending || [];
-    if(!db.collectPending.some(x => x.id === file.id && x.declNo === d.declNo)) db.collectPending.push({id:file.id, name:fname, link:file.link || '', created:file.date || '', kind:d.kind === 'I' ? '수입' : '수출', path:'(같은 파일 색인표에만 있는 필증 — 본문을 못 읽음)', declNo:d.declNo || '', bl:'', party:'', bizNo:'', certTried:true, splitOf:file.id});
+    if(!db.collectPending.some(x => x.id === file.id && x.declNo === d.declNo)) db.collectPending.push({...(amb ? {cands:amb} : {}), id:file.id, name:fname, link:file.link || '', created:file.date || '', kind:d.kind === 'I' ? '수입' : '수출', path:'(같은 파일 색인표에만 있는 필증 — 본문을 못 읽음)', declNo:d.declNo || '', bl:'', party:'', bizNo:'', certTried:true, splitOf:file.id});
     listed.push(`미분류 ${d.declNo}`);
   });
   if(listed.length) addHist(r, `필증 읽기(${fname}): 색인표에만 있는 신고번호 ${listed.length}건 — ${listed.join(', ')}`.slice(0, 280));
@@ -207,10 +223,17 @@ function applyCertDocs(r, docs, file){
   const moved = [];
   others.forEach(({d, pc}) => {
     if(pc){
-      let t = recordByRef({declNo:d.declNo, bl:d.bl});
+      const L = refLookup({declNo:d.declNo, bl:d.bl}); let t = L.r;
       if(t && t.clientId !== pc.id) t = null;
+      const amb = !t && L.cands.filter(x => x.clientId === pc.id).length > 1 ? L.cands.filter(x => x.clientId === pc.id).slice(0, 6).map(x => x.id) : null;
+      if(amb){
+        db.collectPending = db.collectPending || [];
+        if(!db.collectPending.some(x => x.id === file.id && x.declNo === d.declNo)) db.collectPending.push({cands:amb, id:file.id, name:fname, link:file.link || '', created:file.date || '', kind:d.kind === 'E' ? '수출' : '수입', declNo:d.declNo || '', bl:d.bl || '', sug:pc.id, path:'(같은 파일의 다른 필증 — 같은 번호 기록 여러 건)'});
+        moved.push(`${pc.name} ${d.declNo || ''} — 후보 여러 건(확인함)`);
+        return;
+      }
       if(!t){
-        t = caseFromItems(pc, [{id:file.id, name:fname, link:file.link || '', created:file.date || recDate(r), kind:d.kind === 'E' ? '수출' : '수입', declNo:d.declNo || '', bl:d.bl || ''}]);
+        t = collectNewRecord(pc, [{id:file.id, name:fname, link:file.link || '', created:file.date || recDate(r), kind:d.kind === 'E' ? '수출' : '수입', declNo:d.declNo || '', bl:d.bl || ''}]);
         t.history.push({at:nowIso(), by:'', text:`같은 파일(${fname})에 묶인 필증에서 생성 — ${clientName(r.clientId)} 기록과 같은 파일`});
         db.records.push(t);
       } else addFiles(t, [{id:file.id, name:fname, link:file.link || '', created:file.date || ''}]);
@@ -268,7 +291,13 @@ function recheckCombined(){
   db.settings.certMulti = '20261113g';
   return n;
 }
-async function certRead(manual){
+let certBusy = false;
+async function certRead(manual){                                          // 11/15: 같은 필증을 동시에 두 번 읽지 않게
+  if(certBusy){ if(manual) toast('필증을 읽는 중입니다.'); return null; }
+  certBusy = true;
+  try{ return await certRead0(manual); } finally { certBusy = false; }
+}
+async function certRead0(manual){
   const q = certQueue();
   if(!q.length){ if(manual) toast('새로 읽을 필증이 없습니다.'); return null; }
   let j;
@@ -288,10 +317,15 @@ async function certRead(manual){
   const rm = pend ? rematchPending() : null;
   typeof markRun === 'function' && markRun('cert', true);
   commit();
-  if(recs || items || (rm && (rm.made || rm.upd)) || manual) toast(`필증 읽기: 기록 ${recs}건 반영, 품목 DB ${items}개 추가${rm && (rm.made || rm.upd) ? `, 미분류 자료 ${rm.made + rm.upd}건 업체 확인` : ''}`);
+  const cmsg = `필증 읽기: 기록 ${recs}건 반영, 품목 DB ${items}개 추가${rm && (rm.made || rm.upd) ? `, 미분류 자료 ${rm.made + rm.upd}건 업체 확인` : ''}`;
+  if(recs || items || (rm && (rm.made || rm.upd))) logProc('cert', cmsg);
+  if(recs || items || (rm && (rm.made || rm.upd)) || manual) toast(cmsg);
   return {recs, items};
 }
+let collectBusy = false;
 async function runCollect(manual){
+  if(collectBusy){ if(manual) toast('자료를 확인하는 중입니다. 끝나면 결과가 보입니다.'); return; }   // 11/15 U-01: 중복 실행 방지
+  collectBusy = true;
   try{
     if(manual){ toast('수입·수출 폴더와 BSGC-Backup 변동사항을 확인하는 중입니다…'); await collectApi({collect:1}); await collectApi({weekly:1}); }
     const rc = recheckCombined(); if(rc) setTimeout(() => toast(`하루치를 한 파일로 묶은 필증 PDF ${rc}개를 필증별 업체로 다시 읽습니다(6개씩).`), 1500);
@@ -304,11 +338,12 @@ async function runCollect(manual){
     if(r || s2){
       commit();
       const msg = [r && `새 케이스 ${r.made}건(특이 ${r.sp}건), 보완 ${r.upd}건${r.log ? `, 업체 자료 갱신 이력 ${r.log}개` : ''}, 미분류 ${r.pend}건`, s2 && `주간 진행현황 ${s2.date} 반영(새 ${s2.made}건, 갱신 ${s2.upd}건)`].filter(Boolean).join(' / ');
-      toast('자동 수집: ' + msg);
+      toast('자동 수집: ' + msg); logProc('drive', msg);
     } else if(manual) toast('새로 반영할 자료가 없습니다.');
     typeof markRun === 'function' && markRun('drive', true);
     setTimeout(() => certRead(false), manual ? 2500 : 4000);
   }catch(e){ typeof markRun === 'function' && markRun('drive', false, e.message); if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
+  finally{ collectBusy = false; }
 }
 function viewInbox(){
   const pend = db.collectPending || [];
@@ -348,12 +383,19 @@ function applyStatus(st){
   return {made, upd, date: st.date};
 }
 
+function applyPendingRec(i, rid){                                         // 11/15 M-02: 후보 기록 중 하나로 확정
+  const x = db.collectPending[i], r = db.records.find(y => y.id === rid);
+  if(!x || !r){toast('기록을 고르세요.'); return;}
+  markVersions(r, [x]); r.links = [...new Set([...(r.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(r, [x]);
+  addHist(r, `자료 ${x.name} — 같은 번호 후보 ${(x.cands || []).length}건 중 이 기록으로 확정${me ? ` (${me.name})` : ''}`);
+  db.collectPending.splice(i, 1); commit(); toast(`${r.caseNo || ''} 기록에 넣었습니다.`);
+}
 function applyPending(i, cid){
   const x = db.collectPending[i], c = db.clients.find(y => y.id === cid);
   if(!x || !c){toast('업체를 고르세요.'); return;}
   const ex = db.records.find(r => r.clientId === c.id && refMatch(r, x));
   if(ex){ markVersions(ex, [x]); ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(ex, [x]); }
-  else db.records.push(caseFromItems(c, [x]));
+  else db.records.push(collectNewRecord(c, [x]));
   db.collectPending.splice(i, 1); commit(); toast(`${c.name} 기록으로 넣었습니다.`);
 }
 async function blInline(q){

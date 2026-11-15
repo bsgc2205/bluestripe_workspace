@@ -197,9 +197,9 @@ function caseTodayItems(mine, recLine){
   const out = [];
   db.records.filter(r => r.status !== '완료' && r.wait && r.wait.who && mine(r)).forEach(r => {
     const w = r.wait, rep = waitReply(r), lbl = WAIT_PARTY[w.who] || w.who;
-    if(rep) out.push({lvl:'chk', pri:1.5, kind:'회신 옴', title:`${lbl} 메일: ${rep.subject || ''}`, sub:`${recLine(r)}${w.note ? ' · 기다린 것: ' + w.note : ''}`,
+    if(rep) out.push({rid:r.id, lvl:'chk', pri:1.5, kind:'회신 옴', title:`${lbl} 메일: ${rep.subject || ''}`, sub:`${recLine(r)}${w.note ? ' · 기다린 것: ' + w.note : ''}`,
       acts:`<button class="mini strong" data-cs-clear="${esc(r.id)}">대기 해제</button><button class="mini" data-cs-wait="${esc(r.id)}">대기 수정</button>`});
-    else if(w.recheck && w.recheck <= today()) out.push({lvl:'act', pri:1.6, kind:'재확인', title:`${lbl} ${w.note || '회신'} — ${waitDays(w) ?? '-'}일째${w.recheck < today() ? ` (재확인일 ${mmdd(w.recheck)} 지남)` : ''}`, sub:recLine(r),
+    else if(w.recheck && w.recheck <= today()) out.push({rid:r.id, lvl:'act', pri:1.6, kind:'재확인', title:`${lbl} ${w.note || '회신'} — ${waitDays(w) ?? '-'}일째${w.recheck < today() ? ` (재확인일 ${mmdd(w.recheck)} 지남)` : ''}`, sub:recLine(r),
       acts:`<button class="mini strong" data-cs-later="${esc(r.id)}" title="재확인일을 2일 뒤로">2일 뒤 다시</button><button class="mini" data-cs-clear="${esc(r.id)}">대기 해제</button><button class="mini" data-edit-rec="${esc(r.id)}">기록</button>`});
   });
   return out;

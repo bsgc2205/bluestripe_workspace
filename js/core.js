@@ -379,7 +379,8 @@ function updateSaveState(){
     const d = sync.at ? new Date(sync.at) : null, p2 = n => String(n).padStart(2, '0');
     const at = d && !isNaN(d) ? `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}` : '';
     const by = sync.by && me && sync.by !== me.name && sync.by !== me.id ? ` · ${sync.by}` : '';
-    const map = {busy:'저장 중…', wait:'저장 대기 중', fail:'Drive 저장 실패, 잠시 뒤 다시 시도', offline:'서버 연결 안 됨 (이 PC에 보관 중)', mismatch:'Drive 자동 저장 꺼짐'};
+    const last = at ? ` (마지막 Drive 저장 ${at})` : '';                // 11/15 D-01: 이 PC 저장과 Drive 저장을 나눠 표시
+    const map = {busy:'이 PC 저장됨 · Drive 저장 중…', wait:'이 PC 저장됨 · Drive 저장 대기', fail:`이 PC에만 저장됨 · Drive 저장 실패, 다시 시도${last}`, offline:`이 PC에만 저장됨 · 서버 연결 안 됨${last}`, mismatch:'Drive 자동 저장 꺼짐'};
     text = map[sync.state] || `Drive 저장됨${at ? ' ' + at : ''}${by}`;
     dirty = ['fail','offline','mismatch'].includes(sync.state);
     el.textContent = text; el.classList.toggle('dirty', dirty); el.title = sync.state === 'mismatch' ? '이 PC와 Drive의 Workspace가 서로 다른 열쇠로 만들어져 있습니다. 눌러서 Drive 쪽으로 합치세요.' : (sync.err || '');

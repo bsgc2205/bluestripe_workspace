@@ -315,7 +315,7 @@ function mailRecords(m){
   if(first) out.push(first);
   const bls = mailBLs(m);
   if(bls.length >= 2) bls.forEach(b => { const r = recordByBL(b); if(r && !out.includes(r)) out.push(r); });
-  return out;
+  return out.filter(r => !mailBlocked(r.id, m.id));                       // 사람이 뗀 기록은 빼고 → 남는 게 없으면 미연결로 남아 확인함에 보임
 }
 /* 대화 키 (11/13 f): ① '자동 회신:'·'Automatic reply:'·'回复:' 같은 머리말도 뗀다(원래 대화와 한 줄로)
    ② 직원이 앞에 붙인 숫자 든 머리말 '[1차청구서 및 필증] RE: …', '(정정) RE: …', '[최종] 청구서 / RE: …'은 처음 RE:/FW: 앞을 통째로 뗀다
@@ -435,13 +435,13 @@ function autoIntake0(opts){
     if(!c) return;                                                                          // 업체 미인식 → 메일 화면 표시, 업체 등록 후 다음 불러오기 때 접수
     if(why === 'cert' || bls.length <= 1){
       if(t.ms.some(x => mailRecord(x))) return;                                             // 이미 있는 건은 autoAttachMails가 붙임
-      if(ci.length && recordByRef({declNo:ci[0].cm.decl})) return;
+      if(ci.length && refLookup({declNo:ci[0].cm.decl}).cands.length) return;   // 같은 번호 기록이 있으면(여러 건이어도) 새로 만들지 않음
     }
     const targets = why === 'cert' || !bls.length ? [''] : bls;
     targets.forEach(bl => {
       const ex = bl ? recordByBL(bl) : null;
       if(opts.dry){ if(!ex && !(bl && newBL.has(bl))){ plan.push({client:c.name, bl, why, subject:t.ms[0].subject, date:String(t.ms[0].date).slice(0, 10)}); if(bl) newBL.add(bl); } return; }
-      if(ex){ let n = 0; t.ms.forEach(x => { if(attachMail(ex, x)) n++; seeMail(x.id); }); if(n){ addHist(ex, `메일 ${n}통 연결 (B/L ${bl}, ${WHY_LABEL[why]})`); linked.push(ex); } return; }
+      if(ex){ let n = 0; t.ms.forEach(x => { if(mailBlocked(ex.id, x.id)) return; if(attachMail(ex, x)) n++; seeMail(x.id); }); if(n){ addHist(ex, `메일 ${n}통 연결 (B/L ${bl}, ${WHY_LABEL[why]})`); linked.push(ex); } return; }
       const r = intakeRecord(t, c, why, bl, bls, ci);
       if(f.how && f.how !== 'manual') addHist(r, `업체 추정: ${HOW_LABEL[f.how] || f.how}${f.howWhy ? ` (${f.howWhy})` : ''} — 업체가 틀리면 기록에서 업체를 바꾸세요`);
       made.push(r);
@@ -474,7 +474,7 @@ function intakeRecord(t, c, why, bl, bls, ci){
   const who = src.fromName || src.fwdFrom || src.from, at = String(src.date).slice(0, 16);
   addHist(r, cm ? `자동 접수: ${cm.who}가 필증 송부 (${cm.date}, 신고 ${cm.decl})`
     : `자동 접수(${WHY_LABEL[why]}): “${src.subject}” (${who}, ${at})${multi ? ` — 같은 메일의 B/L ${bls.length}건을 하나씩 접수` : ''}`);
-  t.ms.forEach(x => { attachMail(r, x); seeMail(x.id); });
+  t.ms.forEach(x => { attachMail(r, x, mailHowOf(r, x) || 'intake'); seeMail(x.id); });
   ci.forEach(x => applyCert(r, x.cm));
   if(!r.lawSnap) snapLaws(r);
   db.records.push(r);
@@ -541,13 +541,30 @@ function mailRecord(m){
   const open = hits.filter(r => r.status !== '완료');
   return open.length === 1 ? open[0] : null;            // 여러 건이면 추측하지 않음
 }
-function attachMail(r, m){
+/* 11/15 M-01: 연결 근거. 확정 = 사건번호·신고번호·B/L·직접 지정, 추정 = 같은 대화·같은 번호(PO 등)·자동 접수 */
+const MAIL_HOW = {case:'사건번호', decl:'신고번호 일치', bl:'B/L 일치', manual:'직접 지정', thread:'같은 대화', tok:'같은 번호(PO 등)', intake:'자동 접수'};
+const MAIL_HOW_SURE = new Set(['case', 'decl', 'bl', 'manual']);
+function mailHowOf(r, m){
+  const cm = CASE_RE.exec(m.caseNo || m.subject || '');
+  if(cm && cm[0] === r.caseNo) return 'case';
+  const d = refKey(mailDecl(m) || '');
+  if(d.length >= 7 && recKeys(r, 'decl').some(x => { const k = refKey(x); return k === d || k.endsWith(d); })) return 'decl';
+  const bls = mailBLs(m).map(refKey);
+  if(bls.length && recKeys(r, 'bl').some(x => bls.includes(refKey(x)))) return 'bl';
+  if(threadRecId(m.subject) === r.id) return 'thread';
+  return '';
+}
+function mailBlocked(rid, mid){ return ((db.mailBlock || {})[mid] || []).includes(rid); }
+function attachMail(r, m, how){
   r.mails = r.mails || [];
+  if(mailBlocked(r.id, m.id) && how !== 'manual') return false;            // 사람이 뗀 메일은 자동으로 다시 붙이지 않음
+  if(how === 'manual' && db.mailBlock && db.mailBlock[m.id]){ db.mailBlock[m.id] = db.mailBlock[m.id].filter(x => x !== r.id); if(!db.mailBlock[m.id].length) delete db.mailBlock[m.id]; }
   db.mailThreads = db.mailThreads || {};
+  if(r.mails.some(x => x.id === m.id)){ const k = threadKey(m.subject); if(k.length >= 4) db.mailThreads[k] = r.id; return false; }
+  const hw = how || mailHowOf(r, m);
   const k = threadKey(m.subject);
   if(k.length >= 4) db.mailThreads[k] = r.id;
-  if(r.mails.some(x => x.id === m.id)) return false;
-  r.mails.push({id:m.id, date:m.date || '', from:m.fwdFrom || (m.fromName ? `${m.fromName} <${m.from}>` : m.from), subject:m.subject || '', files:realFiles(m).slice(0, 6)});   // 서명 이미지 빼고 6개까지 (11/14 데이터 줄이기)
+  r.mails.push({id:m.id, date:m.date || '', from:m.fwdFrom || (m.fromName ? `${m.fromName} <${m.from}>` : m.from), subject:m.subject || '', files:realFiles(m).slice(0, 6), ...(hw ? {how:hw} : {})});   // 서명 이미지 빼고 6개까지 (11/14 데이터 줄이기)
   r.mails.sort((a, b) => a.date < b.date ? -1 : 1);
   if(!r.bl){ const b = mailBLs(m); if(b.length === 1) r.bl = b[0]; else if(!b.length && m.bl) r.bl = m.bl; }   // B/L이 여러 개인 메일은 기록의 B/L을 함부로 정하지 않음
   if(!r.refNo && mailDecl(m)) r.refNo = mailDecl(m);
@@ -562,7 +579,8 @@ function pruneThreads(){
 function mailsHTML(r){
   const ms = r.mails || [];
   if(!ms.length) return '';
-  return `<details class="rec-mails"><summary>customs@ 메일 ${ms.length}통</summary><ul>${ms.map(x => `<li><span class="rec-date">${esc(String(x.date).replace('T', ' '))}</span> ${hl(x.subject)} <span class="hint">${esc(x.from)}</span>${(x.files || []).length ? `<div class="hint">첨부: ${esc(x.files.join(', '))}</div>` : ''}</li>`).join('')}</ul></details>`;
+  const tag = x => x.how ? `<span class="tag how ${MAIL_HOW_SURE.has(x.how) ? 'sure' : 'guess'}" title="연결 근거${MAIL_HOW_SURE.has(x.how) ? '' : ' (추정)'}">${esc(MAIL_HOW[x.how] || x.how)}</span>` : '';
+  return `<details class="rec-mails"><summary>customs@ 메일 ${ms.length}통</summary><ul>${ms.map(x => `<li><span class="rec-date">${esc(String(x.date).replace('T', ' '))}</span> ${hl(x.subject)} ${tag(x)} <span class="hint">${esc(x.from)}</span> <button class="mini link-mv" data-mail-mv="${esc(r.id)}|${esc(x.id)}" title="다른 기록으로 옮기거나 연결을 끊습니다">옮기기·떼기</button>${(x.files || []).length ? `<div class="hint">첨부: ${esc(x.files.join(', '))}</div>` : ''}</li>`).join('')}</ul></details>`;
 }
 function mailThreadsList(){ const seen = new Set(db.mailSeen); return threadsOf((mailCache || []).filter(m => !seen.has(m.id))); }
 function threadsOf(list){
@@ -801,12 +819,18 @@ function autoAttachMails0(){
   mailThreadsList().forEach(t => {                                               // 같은 번호(PO·인보이스·작업번호·운송장)로 기록 하나 (11/13 f)
     const hit = threadTokenRecord(t);
     if(!hit) return;
-    let k = 0; t.ms.forEach(m => { if(attachMail(hit.r, m)) k++; seeMail(m.id); });
+    let k = 0; t.ms.forEach(m => { if(mailBlocked(hit.r.id, m.id)) return; if(attachMail(hit.r, m, 'tok')) k++; seeMail(m.id); });
     if(k){ addHist(hit.r, `메일 ${k}통 연결 (같은 번호 ${hit.why}): “${t.last.subject || ''}”`.slice(0, 200)); n += k; }
   });
   return n;
 }
-async function loadMail(manual = true){
+let mailRun = null;
+function loadMail(manual = true){                                          // 11/15 U-01: 실행 중이면 같은 작업을 기다림(중복 실행·중복 반영 방지)
+  if(mailRun){ if(manual) toast('메일을 불러오는 중입니다.'); return mailRun; }
+  mailRun = loadMail0(manual).finally(() => { mailRun = null; });
+  return mailRun;
+}
+async function loadMail0(manual){
   mailLoading = true; mailErr = ''; if(route.name === 'mail') renderView();
   try{
     const j = await collectApi({mails:1, days:60});
@@ -819,7 +843,7 @@ async function loadMail(manual = true){
     if(fx || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu || rt){ pruneThreads(); commit(); }
     if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
-    if(fx || n || made.length || ln || cs || ev.done || cu) toast([fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '));
+    if(fx || n || made.length || ln || cs || ev.done || cu){ const tmsg = [fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '); toast(tmsg); logProc('mail', tmsg); }
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(typeof markRun === 'function') markRun('mail', false, e.message);
@@ -839,7 +863,7 @@ function openAttachMail(t){
     onSave(fd){
       const r = db.records.find(x => x.id === fd.get('rid'));
       if(!r) return false;
-      t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
+      t.ms.forEach(m => { attachMail(r, m, 'manual'); seeMail(m.id); });
       const lk = learnClient(r.clientId, t.ms);
       toast(`기록에 메일 ${t.ms.length}통을 붙였습니다.${lk.length ? ` 다음부터 ${lk[0]} 메일은 ${clientName(r.clientId)}로 알아봅니다.` : ''}`);
     }
@@ -870,7 +894,7 @@ function openMailClient(t){
 function mailToRecord(key, rid){
   const t = findThread(key), r = db.records.find(x => x.id === rid);
   if(!t || !r) return;
-  t.ms.forEach(m => { attachMail(r, m); seeMail(m.id); });
+  t.ms.forEach(m => { attachMail(r, m, 'manual'); seeMail(m.id); });
   addHist(r, `메일 ${t.ms.length}통 연결: “${t.last.subject || ''}”`);
   if(r.clientId) learnClient(r.clientId, t.ms);
   if(typeof applyCautions === 'function') applyCautions();
@@ -973,4 +997,87 @@ function openAudit(){
         db.clients.push(c); finish('새 업체 추가'); $('#dlg').close(); openClient(c);
       });
     }});
+}
+
+/* ---------- 11/15 M-01: 잘못 붙은 메일·자료 옮기기·떼기 ----------
+   원본 메일·파일은 지우지 않는다. 뗀 메일은 db.mailBlock[메일 id]에 기록 id를 남겨 자동으로 다시 붙지 않게 하고, 받을 기록이 없으면 미연결(확인함)로 돌린다. */
+function moveTargets(r){
+  const same = db.records.filter(x => x.id !== r.id && x.clientId === r.clientId).sort((a, b) => (a.status === '완료') - (b.status === '완료') || byDateDesc(a, b)).slice(0, 40);
+  const open = db.records.filter(x => x.id !== r.id && x.clientId !== r.clientId && x.status !== '완료').sort(byDateDesc).slice(0, 60);
+  const lab = x => `${x.status === '완료' ? '' : '[진행] '}${x.caseNo ? x.caseNo + ' · ' : ''}${clientName(x.clientId)} · ${x.title || ''}`.slice(0, 70);
+  return `<option value="">— 고르세요 —</option><option value="__none">연결만 끊기 (확인함 '연결 안 된 메일'로)</option><optgroup label="같은 업체">${same.map(x => `<option value="${esc(x.id)}">${esc(lab(x))}</option>`).join('')}</optgroup><optgroup label="다른 업체 진행 중">${open.map(x => `<option value="${esc(x.id)}">${esc(lab(x))}</option>`).join('')}</optgroup>`;
+}
+function openMailMove(rid, mid){
+  const r = db.records.find(x => x.id === rid), e = r && (r.mails || []).find(x => x.id === mid);
+  if(!e) return;
+  const k = threadKey(e.subject), sib = (r.mails || []).filter(x => x.id !== mid && k.length >= 4 && threadKey(x.subject) === k);
+  openDialog({
+    title:'메일 옮기기·떼기', saveLabel:'적용',
+    body:`<p><b>${esc(e.subject || '')}</b><br><span class="hint">${esc(String(e.date).replace('T', ' '))} · ${esc(e.from || '')} · 지금 근거: ${esc(MAIL_HOW[e.how] || '기록 전')}</span></p>
+      <label>옮길 기록<select name="to">${moveTargets(r)}</select></label>
+      ${sib.length ? `<label class="check"><input type="checkbox" name="all" checked> 같은 대화 메일 ${sib.length}통도 함께</label>` : ''}
+      <label>사유 (선택)<input name="why" placeholder="예: 다른 B/L 건, 같은 업체 다른 건"></label>
+      <p class="hint">메일 원본은 지우지 않습니다. 뗀 메일은 이 기록에 자동으로 다시 붙지 않고, 이력에 남습니다.</p>`,
+    onSave(fd){
+      if(!fd.get('to')){ toast('옮길 기록이나 ‘연결만 끊기’를 고르세요.'); return false; }
+      const to = db.records.find(x => x.id === fd.get('to')) || null, ids = [mid, ...(fd.get('all') ? sib.map(x => x.id) : [])];
+      const n = moveMails(r, ids, to, String(fd.get('why') || '').trim());
+      toast(to ? `메일 ${n}통을 ${to.caseNo || '선택한 기록'}으로 옮겼습니다.` : `메일 ${n}통의 연결을 끊었습니다. 확인함에서 다시 처리할 수 있습니다.`);
+    }
+  });
+}
+function moveMails(r, ids, to, why){
+  const set = new Set(ids), moved = (r.mails || []).filter(x => set.has(x.id));
+  if(!moved.length) return 0;
+  r.mails = r.mails.filter(x => !set.has(x.id));
+  db.mailBlock = db.mailBlock || {};
+  moved.forEach(x => { db.mailBlock[x.id] = [...new Set([...(db.mailBlock[x.id] || []), r.id])]; });
+  const keys = new Set(moved.map(x => threadKey(x.subject)).filter(k => k.length >= 4));
+  keys.forEach(k => { if((db.mailThreads || {})[k] === r.id && !(r.mails || []).some(x => threadKey(x.subject) === k)) delete db.mailThreads[k]; });
+  const who = me ? me.name : '', sfx = `${why ? ` — 사유: ${why}` : ''}${who ? ` (${who})` : ''}`;
+  if(to){
+    moved.forEach(x => attachMail(to, (mailCache || []).find(m => m.id === x.id) || x, 'manual'));
+    addHist(to, `메일 ${moved.length}통 받음 ← ${r.caseNo || r.title}: “${moved[0].subject || ''}”${sfx}`.slice(0, 280));
+    to.updatedAt = nowIso();
+  } else {
+    db.mailSeen = (db.mailSeen || []).filter(id => !set.has(id));          // 미연결 목록(확인함)으로 돌려 사람이 다시 판단
+  }
+  ['accept', 'customs', 'settle'].forEach(k => {                          // 단계 근거였던 메일이 빠지면 그 단계는 다시 확인 필요 (S-01)
+    const st = r.stage || {}, by = String(st[k + 'By'] || '');
+    if(!st[k] || st[k + 'Lv'] === 'chk' || !/^메일/.test(by) || !moved.some(x => x.subject && by.includes(String(x.subject).slice(0, 30)))) return;
+    st[k + 'Lv'] = 'chk'; addHist(r, `${stageName(r, k)} — 근거 메일이 빠져 다시 확인 필요`);
+    if(r.autoDone) undoAuto(r);
+  });
+  addHist(r, `메일 ${moved.length}통 ${to ? `옮김 → ${to.caseNo || to.title}` : '연결 끊음'}: “${moved[0].subject || ''}”${sfx}`.slice(0, 280));
+  r.updatedAt = nowIso();
+  if(typeof autoLog === 'function') autoLog('mailMove', moved.length, {from:r.id, to:to ? to.id : ''});
+  logProc('move', `메일 ${moved.length}통 ${r.caseNo || r.title} → ${to ? to.caseNo || to.title : '연결 끊음'}${why ? ` (${why})` : ''}`);
+  commit();
+  return moved.length;
+}
+function openFileMove(rid, fid){
+  const r = db.records.find(x => x.id === rid), f = r && (r.files || []).find(x => x.id === fid);
+  if(!f) return;
+  openDialog({
+    title:'자료 옮기기·떼기', saveLabel:'적용',
+    body:`<p><b>${esc(f.name || '')}</b> <span class="hint">${esc(f.date || '')}</span></p>
+      <label>옮길 기록<select name="to">${moveTargets(r).replace("연결만 끊기 (확인함 '연결 안 된 메일'로)", "연결만 끊기 (확인함 '미분류 자료'로)")}</select></label>
+      <label>사유 (선택)<input name="why"></label>
+      <p class="hint">Drive 파일은 그대로 두고 연결만 바꿉니다.</p>`,
+    onSave(fd){
+      if(!fd.get('to')){ toast('옮길 기록이나 ‘연결만 끊기’를 고르세요.'); return false; }
+      const to = db.records.find(x => x.id === fd.get('to')) || null, why = String(fd.get('why') || '').trim();
+      r.files = r.files.filter(x => x.id !== fid);
+      if(r.certRead && r.certRead[fid]) delete r.certRead[fid];
+      const sfx = `${why ? ` — 사유: ${why}` : ''}${me ? ` (${me.name})` : ''}`;
+      if(to){ addFiles(to, [{id:f.id, name:f.name, link:f.link || '', created:f.date || '', ...(f.ver ? {ver:f.ver} : {})}]); addHist(to, `자료 받음 ← ${r.caseNo || r.title}: ${f.name}${sfx}`); to.updatedAt = nowIso(); }
+      else { db.collectPending = db.collectPending || []; db.collectPending.push({id:f.id, name:f.name, link:f.link || '', created:f.date || '', kind:caseCode(r.type) === 'E' ? '수출' : '수입', path:`(${r.caseNo || ''} 기록에서 뗀 자료)`, sug:r.clientId, blockRec:r.id}); }
+      addHist(r, `자료 ${to ? `옮김 → ${to.caseNo || to.title}` : '연결 끊음(미분류로)'}: ${f.name}${sfx}`.slice(0, 280));
+      r.updatedAt = nowIso();
+      if(typeof autoLog === 'function') autoLog('fileMove', 1, {from:r.id, to:to ? to.id : ''});
+      logProc('move', `자료 ${f.name} ${r.caseNo || r.title} → ${to ? to.caseNo || to.title : '미분류'}${why ? ` (${why})` : ''}`);
+      commit();
+      toast(to ? '자료를 옮겼습니다.' : '자료 연결을 끊었습니다. 확인함 미분류 자료에서 다시 넣을 수 있습니다.');
+    }
+  });
 }

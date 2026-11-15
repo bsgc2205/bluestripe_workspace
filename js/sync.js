@@ -64,7 +64,17 @@ function setBase(blob, data){
 
 /* 3자 병합: 기준(base)에서 한쪽만 바뀐 값은 바뀐 쪽, 둘 다 바뀐 항목은 칸 단위로 합치고 같은 칸이면 내 값.
    지운 항목은 상대가 고치지 않았을 때만 지운다. */
-function mergeVal(b, l, r){
+/* 11/15 D-01: 같은 칸을 두 PC가 다르게 고친 경우 내 값을 남기되 상대 값을 mergeConf에 모아 기록 이력·확인함 '동시 수정'으로 보존.
+   id 없는 목록(이력·문자열 목록)은 3자 집합 병합 — 한쪽이 지운 것은 지우고, 양쪽에서 더한 것은 모두 남김(예전: 문자열은 합집합, 객체는 내 쪽만). */
+let mergeConf = null;
+const CONF_IGNORE = /\/(updatedAt|createdAt|at|doneAt|lastSeen|certRead|unipass|autoDone)(\/|$)/;
+function mergeSet(b, l, r){
+  const key = x => typeof x === 'string' ? 's' + x : 'j' + jstr(x), B = new Set((Array.isArray(b) ? b : []).map(key)), L = new Set(l.map(key));
+  const R = new Set(r.map(key)), out = l.filter(x => R.has(key(x)) || !B.has(key(x))), O = new Set(out.map(key));
+  r.forEach(x => { const k = key(x); if(!L.has(k) && !B.has(k) && !O.has(k)){ out.push(x); O.add(k); } });
+  return out;
+}
+function mergeVal(b, l, r, path = ''){
   if(jstr(l) === jstr(r)) return l;
   if(jstr(b) === jstr(l)) return r;
   if(jstr(b) === jstr(r)) return l;
@@ -72,21 +82,21 @@ function mergeVal(b, l, r){
   if(r === undefined) return l;
   if(Array.isArray(l) && Array.isArray(r)){
     const all = l.concat(r);
-    if(all.length && all.every(x => x && typeof x === 'object' && x.id)) return mergeById(Array.isArray(b) ? b : [], l, r);
-    if(all.every(x => typeof x === 'string')) return [...new Set(r.concat(l))];
-    return l;
+    if(all.length && all.every(x => x && typeof x === 'object' && x.id)) return mergeById(Array.isArray(b) ? b : [], l, r, path);
+    return mergeSet(b, l, r);
   }
   if(l && r && typeof l === 'object' && typeof r === 'object'){
     const bb = b && typeof b === 'object' && !Array.isArray(b) ? b : {}, out = {};
-    new Set([...Object.keys(r), ...Object.keys(l)]).forEach(k => { const v = mergeVal(bb[k], l[k], r[k]); if(v !== undefined) out[k] = v; });
+    new Set([...Object.keys(r), ...Object.keys(l)]).forEach(k => { const v = mergeVal(bb[k], l[k], r[k], path + '/' + k); if(v !== undefined) out[k] = v; });
     return out;
   }
+  if(mergeConf && /^\/(records|clients|items|procedures)\//.test(path) && !CONF_IGNORE.test(path) && (typeof l !== 'object' || l === null) && (typeof r !== 'object' || r === null)) mergeConf.push({path, mine:l, theirs:r});
   return l;
 }
-function mergeById(b, l, r){
+function mergeById(b, l, r, path = ''){
   const B = new Map(b.filter(x => x && x.id).map(x => [x.id, x])), L = new Map(l.map(x => [x.id, x])), R = new Map(r.map(x => [x.id, x]));
   const out = [];
-  [...new Set([...l.map(x => x.id), ...r.map(x => x.id)])].forEach(id => { const v = mergeVal(B.get(id), L.get(id), R.get(id)); if(v !== undefined) out.push(v); });
+  [...new Set([...l.map(x => x.id), ...r.map(x => x.id)])].forEach(id => { const v = mergeVal(B.get(id), L.get(id), R.get(id), path + '/' + id); if(v !== undefined) out.push(v); });
   return out;
 }
 /* 기준이 없을 때(이 PC에서 처음 맞출 때): 최신 쪽을 바탕으로, 다른 쪽에만 있는 항목을 더하고 같은 항목은 수정 시각이 늦은 것 */
@@ -129,11 +139,37 @@ function tidyMerged(d){
   });
   return d;
 }
+/* 3자 병합 + 동시 수정 보존 */
+function merge3(base, mine, srv, by){
+  mergeConf = [];
+  let out;
+  try{ out = mergeVal(base, mine, srv, ''); } finally { var conf = mergeConf; mergeConf = null; }
+  if(conf.length){
+    out.syncConflicts = out.syncConflicts || [];
+    const at = nowIso();
+    conf.slice(0, 50).forEach(x => {
+      out.syncConflicts.push({id:uid(), at, by:by || '', path:x.path, mine:x.mine, theirs:x.theirs});
+      const m = /^\/records\/([^/]+)\/(.+)$/.exec(x.path), rec = m && (out.records || []).find(r => r.id === m[1]);
+      if(rec){ rec.history = rec.history || []; rec.history.push({at, by:'', text:`동시 수정: ${m[2]} — 이 PC 값 “${String(x.mine).slice(0, 40)}” 유지, ${by || '다른 PC'} 값 “${String(x.theirs).slice(0, 40)}” (확인함에서 바꿀 수 있음)`}); }
+    });
+    out.syncConflicts = out.syncConflicts.slice(-100);
+  }
+  return out;
+}
+/* 확인함 '동시 수정'에서 상대 값으로 바꾸기: 경로의 목록은 id로 찾음 */
+function setByPath(d, path, val){
+  const ks = path.split('/').filter(Boolean); let o = d;
+  for(let i = 0; i < ks.length - 1; i++){ o = Array.isArray(o) ? o.find(x => x && x.id === ks[i]) : o ? o[ks[i]] : null; if(!o) return false; }
+  const last = ks[ks.length - 1];
+  if(Array.isArray(o)) return false;
+  if(val === undefined) delete o[last]; else o[last] = val;
+  return true;
+}
 /* 서버에 더 새 저장본이 있을 때 내 변경과 합친다 */
 async function absorb(blob){
   const srv = migrate(await decryptServer(blob));
   const before = jstr(db);
-  db = tidyMerged(clone(sync.base ? mergeVal(sync.base, db, srv) : mergeNoBase(db, srv)));
+  db = tidyMerged(clone(sync.base ? merge3(sync.base, db, srv, blob.savedBy) : mergeNoBase(db, srv)));
   accounts = mergeAccounts(sync.baseAcc, accounts, blob.accounts);
   setBase(blob, srv);
   if(me && !accounts.some(a => a.id === me.id)) toast('이 계정이 다른 PC에서 삭제되었습니다. 작업을 마치고 관리자에게 확인하세요.');
@@ -163,7 +199,7 @@ async function syncStart(pre){
     if(!blob){ sync.rev = 0; sync.base = null; sync.baseAcc = null; }     // 서버에 파일이 없거나 예전 형식이면 내 내용을 올린다
     else{
       if(!(base && baseRev === (blob.rev || 0))){                         // 마지막으로 맞춘 뒤 서버가 바뀌었으면 합친다
-        db = tidyMerged(clone(base ? mergeVal(base, db, srv) : mergeNoBase(db, srv)));
+        db = tidyMerged(clone(base ? merge3(base, db, srv, blob.savedBy) : mergeNoBase(db, srv)));
         accounts = mergeAccounts(base ? baseAcc : null, accounts, blob.accounts);
       }
       setBase(blob, srv);
