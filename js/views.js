@@ -46,12 +46,14 @@ function viewState(v){
   const a = document.activeElement, st = {focus:null, det:new Map()};
   if(a && v.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ const k = elKey(a); if(k) st.focus = {k, val:a.value, s:a.selectionStart, e:a.selectionEnd}; }
   v.querySelectorAll('details').forEach(d => { const sm = d.querySelector('summary'), k = (sm ? sm.textContent : '').replace(/\d+/g, '#').trim().slice(0, 60); if(!k) return; const x = st.det.get(k) || []; x.push(d.open); st.det.set(k, x); });
+  st.sel = new Map(); v.querySelectorAll('select').forEach(s => { const k = elKey(s); if(k && s.dataset.touched) st.sel.set(k, s.value); });   // 11/15 b: 사람이 고른 선택값(고유 키 기준)
   return st;
 }
 function restoreView(v, st){
   const seen = new Map();
   v.querySelectorAll('details').forEach(d => { const sm = d.querySelector('summary'), k = (sm ? sm.textContent : '').replace(/\d+/g, '#').trim().slice(0, 60); if(!k || !st.det.has(k)) return; seen.set(k, (seen.get(k) || []).concat(d)); });
   seen.forEach((ds, k) => { const was = st.det.get(k); if(was.length === ds.length) ds.forEach((d, i) => { if(d.open !== was[i]) d.open = was[i]; }); });
+  (st.sel || new Map()).forEach((val, k) => { let s = null; try{ s = v.querySelector(k); }catch(e){} if(s && s.value !== val && [...s.options].some(o => o.value === val)){ s.value = val; s.dataset.touched = '1'; } });
   if(st.focus){ let el = null; try{ el = v.querySelector(st.focus.k); }catch(e){}
     if(el){ if(el.value !== st.focus.val && el.tagName !== 'SELECT') el.value = st.focus.val; el.focus({preventScroll:true}); try{ if(st.focus.s != null) el.setSelectionRange(st.focus.s, st.focus.e); }catch(e){} } }
 }
@@ -262,6 +264,7 @@ function viewHome(){
 
 let activeMode = 'list', activeSort = {k:'band', dir:1}, activePage = 0, activeQ = '', activeAutoOpen = false;
 function activeTableHTML(rows){
+  if(activePage * 20 >= rows.length) activePage = Math.max(0, Math.ceil(rows.length / 20) - 1);
   const order = {act:0, prog:1, ship:2, settle:3, hold:4};
   const nextDl = r => (r.deadlines || []).filter(d => !d.done).sort((a, b) => a.due.localeCompare(b.due))[0];
   const val = {band:r => order[recBand(r).k], client:r => clientName(r.clientId), title:r => r.title || '', type:r => r.type || '', who:r => assigneeName(r.assignee) || '', dday:r => { const d = nextDl(r); return d ? d.due : '9999'; },
@@ -270,22 +273,30 @@ function activeTableHTML(rows){
   const sorted = rows.slice().sort((a, b) => { const x = f(a), y = f(b); return (x < y ? -1 : x > y ? 1 : 0) * activeSort.dir || (a.startDate || '').localeCompare(b.startDate || ''); });
   const th = (key, label, cls = '') => `<th class="${cls}"><button class="th-sort${activeSort.k === key ? ' on' : ''}" data-asort="${key}">${label}${activeSort.k === key ? (activeSort.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`;
   return `<div class="table-wrap"><table class="grid act-table"><thead><tr>${th('band', '단계')}${th('caseNo', '케이스')}${th('client', '업체')}${th('title', '제목')}${th('type', '유형')}${th('who', '담당')}${th('dday', '다음 기한')}${th('quiet', '최근 변화')}${th('start', '접수일')}</tr></thead><tbody>
-    ${sorted.map(r => { const b = recBand(r), d = nextDl(r), q = bizDaysSince(lastActivity(r)), c = db.clients.find(x => x.id === r.clientId);
+    ${sorted.slice(activePage * 20, (activePage + 1) * 20).map(r => { const b = recBand(r), d = nextDl(r), q = bizDaysSince(lastActivity(r)), c = db.clients.find(x => x.id === r.clientId);
       return `<tr class="b-${b.k}"><td><span class="band-dot ${b.k}"></span>${esc(b.t)}</td><td class="hs">${esc(r.caseNo || '')}</td><td>${c ? `<button class="linkish" data-go="client" data-id="${esc(c.id)}">${esc(c.name)}</button>${cautionBadge(c)}` : ''}</td>
         <td><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.title)}</button>${r.special ? ' <span class="stamp sm">특이</span>' : ''}${typeof caseNextLine === 'function' ? caseNextLine(r) : ''}</td><td>${esc(r.type)}</td><td>${esc(assigneeName(r.assignee) || '-')}</td>
         <td>${d ? `${ddayHTML(d.due)} <span class="hint">${esc(d.kind)}</span>` : '<span class="hint">-</span>'}</td><td class="${q >= STALE_DAYS ? 'bad' : ''}">${q === 0 ? '오늘' : q + '영업일 전'}</td><td>${esc(r.startDate || '')}</td></tr>`; }).join('')}
-  </tbody></table></div>`;
+  </tbody></table></div>${pagerHTML('act-page', activePage, sorted.length)}`;
+}
+/* 11/15 b: 쪽 넘김 공통 — 20건 단위 */
+function pagerHTML(attr, page, total, size = 20){
+  const pages = Math.max(1, Math.ceil(total / size));
+  return pages > 1 ? `<div class="pager"><button class="mini" data-${attr}="${page - 1}"${page ? '' : ' disabled'}>‹ 이전</button><span>${page + 1} / ${pages} 쪽 · ${total}건</span><button class="mini" data-${attr}="${page + 1}"${page < pages - 1 ? '' : ' disabled'}>다음 ›</button></div>` : '';
 }
 /* 11/15: 홈에서 옮겨 온 것 — 자동 완료(7일, 되돌리기)·최근 완료·특이 처리 사례. 접어 두고 필요할 때만 그림 */
-function activeDoneHTML(){
-  const auto = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).sort((a, b) => (b.autoDone.at || '').localeCompare(a.autoDone.at || ''));
-  const done = db.records.filter(r => r.status === '완료').sort(byDateDesc), sp = done.filter(r => r.special);
+function activeDoneHTML(){                                               // 11/15 b: 접힌 영역은 펼칠 때 그림(lazyHTML)
+  const auto = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).length;
+  const done = db.records.filter(r => r.status === '완료'), sp = done.filter(r => r.special).length;
+  const box = (k, label, open) => `<details class="home-more" data-lazy="${k}"${k === 'auto' ? ' id="autoDoneBox"' : ''}${open ? ' open' : ''}><summary>${label}</summary><div class="lazy-body">${open ? lazyHTML(k) : ''}</div></details>`;
+  return `<div class="done-more">${auto ? box('auto', `자동 처리 확인 — 7일 자동 완료 ${auto}건`, activeAutoOpen) : ''}${box('done', `최근 완료 기록 ${Math.min(done.length, 10)}건`)}${box('sp', `특이 처리 사례 ${Math.min(sp, 10)}건`)}</div>`;
+}
+function lazyHTML(k){
   const li = r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(clientName(r.clientId))} · ${esc(recDate(r))}</span></li>`;
-  return `<div class="done-more">
-    ${auto.length ? `<details class="home-more" id="autoDoneBox"${activeAutoOpen ? ' open' : ''}><summary>자동 처리 확인 — 7일 자동 완료 ${auto.length}건</summary><ul class="plain">${auto.map(r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(clientName(r.clientId))} · ${esc(r.autoDone.reason)}</span> <button class="mini" data-undo-auto="${esc(r.id)}">되돌리기</button></li>`).join('')}</ul></details>` : ''}
-    <details class="home-more"><summary>최근 완료 기록 ${Math.min(done.length, 10)}건</summary><ul class="plain">${done.slice(0, 10).map(li).join('') || '<li class="hint">아직 없습니다.</li>'}</ul></details>
-    <details class="home-more"><summary>특이 처리 사례 ${Math.min(sp.length, 10)}건</summary><ul class="plain">${sp.slice(0, 10).map(li).join('') || '<li class="hint">일반 절차와 다르게 처리한 건을 기록하면 여기에 모입니다.</li>'}</ul><p class="hint">더 찾을 때는 위 검색(/)이나 매뉴얼 화면.</p></details>
-  </div>`;
+  if(k === 'auto') return `<ul class="plain">${db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).sort((a, b) => (b.autoDone.at || '').localeCompare(a.autoDone.at || '')).map(r => `<li><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.caseNo || '')} ${esc(r.title)}</button> <span class="hint">${esc(clientName(r.clientId))} · ${esc(r.autoDone.reason)}</span> <button class="mini" data-undo-auto="${esc(r.id)}">되돌리기</button></li>`).join('')}</ul>`;
+  if(k === 'done' || k === 'sp'){ const xs = db.records.filter(r => r.status === '완료' && (k === 'done' || r.special)).sort(byDateDesc).slice(0, 10); return `<ul class="plain">${xs.map(li).join('') || `<li class="hint">${k === 'sp' ? '일반 절차와 다르게 처리한 건을 기록하면 여기에 모입니다.' : '아직 없습니다.'}</li>`}</ul>${k === 'sp' ? '<p class="hint">더 찾을 때는 위 검색(/)이나 매뉴얼 화면.</p>' : ''}`; }
+  if(k === 'hold'){ const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id); const xs = db.records.filter(r => r.status === '보류' && mine(r)).sort((a, b) => (a.startDate || '').localeCompare(b.startDate || '')); return `<div class="rec-grid wide">${xs.slice(0, 20).map(r => recordHTML(r, {showClient:true})).join('')}</div>${xs.length > 20 ? `<p class="hint">외 ${xs.length - 20}건 — 위 검색칸이나 표 보기</p>` : ''}`; }
+  return '';
 }
 function viewActive(){
   const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id);
@@ -313,7 +324,7 @@ function viewActive(){
       <div class="sec-head"><h3>진행중 <span class="cnt">${act.length}건${actQl ? ` · 찾음 ${actHit.length}` : ''} · 급한 순</span></h3><input type="search" id="actQ" class="item-q" placeholder="업체·제목·B/L·신고번호 검색" value="${esc(activeQ)}"></div>
       <div class="rec-grid wide">${actShow.length ? actShow.map(r => recordHTML(r, {showClient:true})).join('') : `<p class="empty">${actQl ? '찾는 업무가 없습니다.' : '진행중인 업무가 없습니다.'}</p>`}</div>
       ${aPages > 1 ? `<div class="pager"><button class="mini" data-act-page="${activePage - 1}"${activePage ? '' : ' disabled'}>‹ 이전</button><span>${activePage + 1} / ${aPages} 쪽 · ${actSorted.length}건</span><button class="mini" data-act-page="${activePage + 1}"${activePage < aPages - 1 ? '' : ' disabled'}>다음 ›</button></div>` : ''}
-      ${hold.length ? `<div class="sec-head" style="margin-top:2rem"><h3>보류 <span class="cnt">${hold.length}건</span></h3></div><div class="rec-grid wide">${hold.map(r => recordHTML(r, {showClient:true})).join('')}</div>` : ''}
+      ${hold.length ? `<details class="home-more" style="margin-top:2rem" data-lazy="hold"><summary>보류 ${hold.length}건</summary><div class="lazy-body"></div></details>` : ''}
       ${activeDoneHTML()}
     </section>
     <aside class="side-col"><section><div class="sec-head"><h3>가까운 기한 <span class="cnt">${dls.length}건 중 ${Math.min(dls.length, 15)}</span></h3>${dls.length > 15 ? '<button class="mini" data-amode="table">표 보기에서 전체</button>' : ''}</div>

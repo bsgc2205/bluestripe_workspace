@@ -189,7 +189,7 @@ function openCaseNext(r){
 /* ---- ④ 근거 등급 확인 / ⑤ 메일↔UNI-PASS 불일치 ---- */
 function confirmStage(r, k){
   if(!r || !r.stage || !r.stage[k]) return;
-  r.stage[k + 'Lv'] = 'ok';
+  r.stage[k + 'Lv'] = 'ok'; delete r.stage[k + 'Re'];
   r.stage[k + 'By'] = `${r.stage[k + 'By'] || ''} → 직원 확인(${me ? me.name : ''})`;
   addHist(r, `${stageName(r, k)} 확인함 (직원이 근거 확인)`);
   r.updatedAt = nowIso();

@@ -30,11 +30,13 @@ function caseFromItems(c, group){
 const COLLECT_OPEN_DAYS = 30;
 function collectNewRecord(c, group){
   const r = caseFromItems(c, group), last = String(r.date || '').slice(0, 10);
-  if(!['수입통관','수출신고'].includes(r.type) || !last || daysLeft(last) < -COLLECT_OPEN_DAYS) return r;
+  if(!['수입통관','수출신고'].includes(r.type) || !last) return r;
+  if(daysLeft(last) < -COLLECT_OPEN_DAYS){ r.history.push({at:nowIso(), by:'', text:`폴더 자료 기준 완료(${COLLECT_OPEN_DAYS}일 지난 보관 자료 — 실제 처리일·정산은 확인 전)`}); r.collectDone = true; return r; }
+  /* 11/15 b ④: 단계는 '확인 필요'로 — 날짜는 자료를 올린 날일 뿐. UNI-PASS·필증 읽기 결과가 오면 그 날짜로 확정(setStage 등급 올림) */
   const k = r.type === '수출신고' ? 'accept' : 'customs';
   r.status = '진행중'; r.date = '';
-  r.stage = {[k]:last, [k + 'By']:'자동 수집: 신고필증 자료'};
-  r.history.push({at:nowIso(), by:'', text:`${COLLECT_OPEN_DAYS}일 안 자료 — 진행 중(${k === 'accept' ? '수리완료' : '통관완료'}, 정산 대기)으로 생성`});
+  r.stage = {[k]:last, [k + 'By']:'자동 수집: 필증 자료(올린 날 기준, UNI-PASS 확인 전)', [k + 'Lv']:'chk', [k + 'Src']:{file:group.map(x => x.id).filter(Boolean)}};
+  r.history.push({at:nowIso(), by:'', text:`${COLLECT_OPEN_DAYS}일 안 자료 — 진행 중으로 생성(${k === 'accept' ? '수리완료' : '통관완료'}? 확인 필요, 정산 대기). UNI-PASS·필증으로 확인되면 실제 날짜로 확정`});
   return r;
 }
 /* 신고번호·B/L로 기존 기록 찾기: 파일명이 '300777M.pdf'처럼 신고번호 뒷자리뿐이어도 UNI-PASS로 채워진 기록의 신고번호(13675-26-300777M)와 맞춤 */
@@ -49,11 +51,13 @@ function refMatch(r, x){
   return (d.length >= 7 && recKeys(r, 'decl').map(refTail).some(rr => rr === d || rr.endsWith(d))) || (b.length >= 6 && recKeys(r, 'bl').map(refTail).includes(b));
 }
 /* 11/15 M-02: 같은 번호 기록이 여러 건이면 진행 중이 딱 1건일 때만 자동 선택. 그 밖에는 고르지 않음(cands로 확인함 '후보 여러 건') */
+/* 11/15 b: 진행 중 1건이어도 자료의 업체(사업자번호·필증 수입자·파일명)가 그 기록 업체와 같다고 확인될 때만 자동. 모르면 확인함 */
 function refLookup(x){
   const hits = db.records.filter(r => refMatch(r, x));
   if(hits.length <= 1) return {r:hits[0] || null, cands:hits};
   const open = hits.filter(r => r.status !== '완료');
-  return {r:open.length === 1 ? open[0] : null, cands:hits.sort(byDateDesc)};
+  const c = clientByBiz(x.bizNo) || (x.party ? findClient(x.party) : null) || (x.name || x.path ? findClient(`${x.name || ''} ${x.path || ''} ${x.party || ''}`) : null);
+  return {r:open.length === 1 && c && open[0].clientId === c.id ? open[0] : null, cands:hits.sort(byDateDesc)};
 }
 function recordByRef(x){ return refLookup(x).r; }
 const ambCands = L => !L.r && L.cands.length > 1 ? L.cands.slice(0, 6).map(r => r.id) : null;
@@ -352,7 +356,7 @@ function viewInbox(){
     ${updateRecsBanner()}
     ${pend.length ? `<div class="table-wrap" style="margin-top:1rem"><table class="grid"><thead><tr><th>자료</th><th>폴더</th><th>올린 날</th><th>메일</th><th>업체 지정</th></tr></thead><tbody>
       ${pend.map((x,i) => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}${(x.special || []).length ? ` <span class="stamp sm">특이</span>` : ''}</td><td>${esc(x.kind)} / ${esc(x.path)}</td><td>${esc(x.created)}</td><td>${x.mail ? esc(x.mail.subject) : ''}</td>
-        <td><div class="btn-row"><select data-pend-client="${i}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), x.sug || '')}</select><button class="mini strong" data-pend-apply="${i}">반영</button><button class="mini" data-pend-drop="${i}">무시</button></div></td></tr>`).join('')}
+        <td><div class="btn-row"><select data-pend-client="${esc(pendKey(x))}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), x.sug || '')}</select><button class="mini strong" data-pend-apply="${esc(pendKey(x))}">반영</button><button class="mini ghosty" data-pend-drop="${esc(pendKey(x))}">업무 아님</button></div></td></tr>`).join('')}
     </tbody></table></div>` : '<p class="empty">미분류 자료가 없습니다.</p>'}
     <p class="hint">자료는 ① 신고번호·B/L이 같은 기록(파일명이 ‘300777M.pdf’처럼 신고번호 뒷자리뿐이어도 UNI-PASS로 채워진 신고번호와 맞춤) ② 파일명·폴더명·연결된 메일의 업체명·약칭·보낸 사람 메일 순으로 업체를 찾습니다. 업체 정보의 검색어에 약칭과 담당자 메일 주소를 넣고 ‘지금 확인’을 누르면 미분류 자료를 다시 맞춰 봅니다.</p>`;
 }
@@ -383,10 +387,14 @@ function applyStatus(st){
   return {made, upd, date: st.date};
 }
 
+/* 11/15 b ⑤: 미분류 자료는 순서 번호 대신 고유 키(파일 id|신고번호)로 가리킴 — 목록이 바뀌어도 선택·버튼이 엉뚱한 자료를 가리키지 않게 */
+const pendKey = x => `${x.id}|${x.declNo || ''}`;
+function pendIdx(key){ return (db.collectPending || []).findIndex(x => pendKey(x) === key); }
+function unblockFile(fid, rid){ const fb = db.fileBlock || {}; if(fid && fb[fid]){ fb[fid] = fb[fid].filter(x => x !== rid); if(!fb[fid].length) delete fb[fid]; } }   // 사람이 직접 넣으면 차단 풀기
 function applyPendingRec(i, rid){                                         // 11/15 M-02: 후보 기록 중 하나로 확정
   const x = db.collectPending[i], r = db.records.find(y => y.id === rid);
   if(!x || !r){toast('기록을 고르세요.'); return;}
-  markVersions(r, [x]); r.links = [...new Set([...(r.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(r, [x]);
+  unblockFile(x.id, r.id); markVersions(r, [x]); r.links = [...new Set([...(r.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(r, [x]);
   addHist(r, `자료 ${x.name} — 같은 번호 후보 ${(x.cands || []).length}건 중 이 기록으로 확정${me ? ` (${me.name})` : ''}`);
   db.collectPending.splice(i, 1); commit(); toast(`${r.caseNo || ''} 기록에 넣었습니다.`);
 }
@@ -394,6 +402,7 @@ function applyPending(i, cid){
   const x = db.collectPending[i], c = db.clients.find(y => y.id === cid);
   if(!x || !c){toast('업체를 고르세요.'); return;}
   const ex = db.records.find(r => r.clientId === c.id && refMatch(r, x));
+  if(ex) unblockFile(x.id, ex.id);
   if(ex){ markVersions(ex, [x]); ex.links = [...new Set([...(ex.links || []), x.link].filter(u => safeUrl(u)))]; addFiles(ex, [x]); }
   else db.records.push(collectNewRecord(c, [x]));
   db.collectPending.splice(i, 1); commit(); toast(`${c.name} 기록으로 넣었습니다.`);

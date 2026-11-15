@@ -365,15 +365,16 @@ function certMail(m){
   const byText = /필증|면장/.test(head) && /송부|드립니다|드려요|첨부|보내/.test(head) && !/요청|부탁|주시/.test(String(m.snippet || '').slice(0, 80));
   if(!f && !byText) return null;
   const kind = f ? (f[1].toUpperCase() === 'EXP' ? 'E' : 'I') : /수출|export/i.test(head) ? 'E' : /수입|import/i.test(head) ? 'I' : '';
-  return {kind, decl:mailDecl(m), date:String(m.date || '').slice(0, 10), who:m.fromName || from, fix:/정정/.test(head), byFile:!!f};   // byFile: 필증 파일 첨부(확정) / 글만(확인 필요)
+  return {kind, decl:mailDecl(m), date:String(m.date || '').slice(0, 10), who:m.fromName || from, fix:/정정/.test(head), byFile:!!f, mid:m.id};   // byFile: 필증 파일 첨부(확정) / 글만(확인 필요)
 }
 function applyCert(r, cm){
   const code = caseCode(r.type);
   if(code !== 'E' && code !== 'I') return false;
   let ch = false;
   const lv = cm.byFile ? 'ok' : 'chk', how = cm.byFile ? '필증 파일 첨부' : '글만 — 첨부 확인 필요';
-  if(code === 'E'){ if(setStage(r, 'accept', cm.date, `메일: 필증 송부 (${cm.who}, ${how})`, lv)){ setLoadDue(r, r.stage.accept); ch = true; } }
-  else if(setStage(r, 'customs', cm.date, `메일: 수입필증 송부 (${cm.who}, ${how})`, lv)) ch = true;
+  const src = cm.mid ? {mail:cm.mid} : null;                              // 11/15 b ①: 근거 메일 id
+  if(code === 'E'){ if(setStage(r, 'accept', cm.date, `메일: 필증 송부 (${cm.who}, ${how})`, lv, src)){ setLoadDue(r, r.stage.accept); ch = true; } }
+  else if(setStage(r, 'customs', cm.date, `메일: 수입필증 송부 (${cm.who}, ${how})`, lv, src)) ch = true;
   if(cm.fix && !(r.tags || []).includes('정정필증')){ r.tags = [...(r.tags || []), '정정필증']; addHist(r, `정정된 필증 송부 메일 (${cm.who}, ${cm.date})`); ch = true; }
   if(!r.refNo && cm.decl){ r.refNo = cm.decl; ch = true; }
   else if(cm.decl && addRef(r, cm.decl, 'decl', `필증 송부 메일 (${cm.date})${cm.fix ? ' — 정정' : ' — 분할·추가'}`)) ch = true;
@@ -1042,12 +1043,7 @@ function moveMails(r, ids, to, why){
   } else {
     db.mailSeen = (db.mailSeen || []).filter(id => !set.has(id));          // 미연결 목록(확인함)으로 돌려 사람이 다시 판단
   }
-  ['accept', 'customs', 'settle'].forEach(k => {                          // 단계 근거였던 메일이 빠지면 그 단계는 다시 확인 필요 (S-01)
-    const st = r.stage || {}, by = String(st[k + 'By'] || '');
-    if(!st[k] || st[k + 'Lv'] === 'chk' || !/^메일/.test(by) || !moved.some(x => x.subject && by.includes(String(x.subject).slice(0, 30)))) return;
-    st[k + 'Lv'] = 'chk'; addHist(r, `${stageName(r, k)} — 근거 메일이 빠져 다시 확인 필요`);
-    if(r.autoDone) undoAuto(r);
-  });
+  stageSrcLost(r, 'mail', moved.map(x => ({...x, files:x.files || []})), to ? `${to.caseNo || '다른 기록'}으로 옮김` : '연결 끊음');   // S-01: 근거 메일 id로 판단 (11/15 b)
   addHist(r, `메일 ${moved.length}통 ${to ? `옮김 → ${to.caseNo || to.title}` : '연결 끊음'}: “${moved[0].subject || ''}”${sfx}`.slice(0, 280));
   r.updatedAt = nowIso();
   if(typeof autoLog === 'function') autoLog('mailMove', moved.length, {from:r.id, to:to ? to.id : ''});
@@ -1069,6 +1065,10 @@ function openFileMove(rid, fid){
       const to = db.records.find(x => x.id === fd.get('to')) || null, why = String(fd.get('why') || '').trim();
       r.files = r.files.filter(x => x.id !== fid);
       if(r.certRead && r.certRead[fid]) delete r.certRead[fid];
+      db.fileBlock = db.fileBlock || {}; db.fileBlock[fid] = [...new Set([...(db.fileBlock[fid] || []), r.id])];   // 11/15 b: 이 기록에 자동으로 다시 붙지 않게
+      if(f.link && !(r.files || []).some(x => x.link === f.link)) r.links = (r.links || []).filter(u => u !== f.link);
+      if(to && db.fileBlock[fid]) { db.fileBlock[fid] = db.fileBlock[fid].filter(x => x !== to.id); }
+      stageSrcLost(r, 'file', [f], to ? `${to.caseNo || '다른 기록'}으로 옮김` : '연결 끊음');
       const sfx = `${why ? ` — 사유: ${why}` : ''}${me ? ` (${me.name})` : ''}`;
       if(to){ addFiles(to, [{id:f.id, name:f.name, link:f.link || '', created:f.date || '', ...(f.ver ? {ver:f.ver} : {})}]); addHist(to, `자료 받음 ← ${r.caseNo || r.title}: ${f.name}${sfx}`); to.updatedAt = nowIso(); }
       else { db.collectPending = db.collectPending || []; db.collectPending.push({id:f.id, name:f.name, link:f.link || '', created:f.date || '', kind:caseCode(r.type) === 'E' ? '수출' : '수입', path:`(${r.caseNo || ''} 기록에서 뗀 자료)`, sug:r.clientId, blockRec:r.id}); }

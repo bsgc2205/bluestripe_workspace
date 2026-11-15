@@ -78,8 +78,10 @@ function mergeVal(b, l, r, path = ''){
   if(jstr(l) === jstr(r)) return l;
   if(jstr(b) === jstr(l)) return r;
   if(jstr(b) === jstr(r)) return l;
-  if(l === undefined) return r;
-  if(r === undefined) return l;
+  if(l === undefined || r === undefined){                                  // 한쪽은 지우고 다른 쪽은 고침 → 고친 쪽을 살리고 충돌로 남김 (11/15 b ②)
+    if(mergeConf && /^\/(records|clients|items|procedures)\//.test(path) && !CONF_IGNORE.test(path)) mergeConf.push({path, mine:l, theirs:r, del:l === undefined ? 'mine' : 'theirs'});
+    return l === undefined ? r : l;
+  }
   if(Array.isArray(l) && Array.isArray(r)){
     const all = l.concat(r);
     if(all.length && all.every(x => x && typeof x === 'object' && x.id)) return mergeById(Array.isArray(b) ? b : [], l, r, path);
@@ -147,12 +149,17 @@ function merge3(base, mine, srv, by){
   if(conf.length){
     out.syncConflicts = out.syncConflicts || [];
     const at = nowIso();
-    conf.slice(0, 50).forEach(x => {
-      out.syncConflicts.push({id:uid(), at, by:by || '', path:x.path, mine:x.mine, theirs:x.theirs});
-      const m = /^\/records\/([^/]+)\/(.+)$/.exec(x.path), rec = m && (out.records || []).find(r => r.id === m[1]);
-      if(rec){ rec.history = rec.history || []; rec.history.push({at, by:'', text:`동시 수정: ${m[2]} — 이 PC 값 “${String(x.mine).slice(0, 40)}” 유지, ${by || '다른 PC'} 값 “${String(x.theirs).slice(0, 40)}” (확인함에서 바꿀 수 있음)`}); }
+    const short = v => v === undefined ? '(지움)' : typeof v === 'object' ? (v && (v.title || v.name) ? `${v.title || v.name}` : '(묶음 값)') : String(v).slice(0, 40);
+    conf.forEach(x => {                                                     // 미해결 충돌은 개수 제한 없이 보존 (화면은 쪽으로 나눔)
+      out.syncConflicts.push(x.del ? {id:uid(), at, by:by || '', path:x.path, mine:null, theirs:null, del:x.del, label:short(x.mine === undefined ? x.theirs : x.mine)}   // 지움 충돌은 값 통째로 두지 않음(살린 값은 데이터에 있음)
+        : {id:uid(), at, by:by || '', path:x.path, mine:x.mine === undefined ? null : x.mine, theirs:x.theirs === undefined ? null : x.theirs});
+      const m = /^\/records\/([^/]+)(?:\/(.+))?$/.exec(x.path), rec = m && (out.records || []).find(r => r.id === m[1]);
+      if(rec){ rec.history = rec.history || []; rec.history.push({at, by:'', text:x.del
+        ? `동시 수정: ${m[2] || '기록'} — ${x.del === 'mine' ? '이 PC에서 지웠지만' : `${by || '다른 PC'}에서 지웠지만`} 다른 쪽이 고쳐서 살려 둠 (확인함 ‘동시 수정’에서 다시 지울 수 있음)`
+        : `동시 수정: ${m[2]} — 이 PC 값 “${short(x.mine)}” 유지, ${by || '다른 PC'} 값 “${short(x.theirs)}” (확인함에서 바꿀 수 있음)`}); }
     });
-    out.syncConflicts = out.syncConflicts.slice(-100);
+    const open = out.syncConflicts.filter(x => !x.done), done = out.syncConflicts.filter(x => x.done).slice(-100);   // 처리한 것만 최근 100개
+    out.syncConflicts = [...done, ...open];
   }
   return out;
 }
@@ -161,8 +168,12 @@ function setByPath(d, path, val){
   const ks = path.split('/').filter(Boolean); let o = d;
   for(let i = 0; i < ks.length - 1; i++){ o = Array.isArray(o) ? o.find(x => x && x.id === ks[i]) : o ? o[ks[i]] : null; if(!o) return false; }
   const last = ks[ks.length - 1];
-  if(Array.isArray(o)) return false;
-  if(val === undefined) delete o[last]; else o[last] = val;
+  if(Array.isArray(o)){                                                    // 목록 안 항목(기록·업체 등): id로 지우기·바꾸기
+    const i = o.findIndex(x => x && x.id === last); if(i < 0) return val === undefined;
+    if(val === undefined || val === null) o.splice(i, 1); else o[i] = val;
+    return true;
+  }
+  if(val === undefined || val === null) delete o[last]; else o[last] = val;
   return true;
 }
 /* 서버에 더 새 저장본이 있을 때 내 변경과 합친다 */

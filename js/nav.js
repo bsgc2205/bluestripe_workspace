@@ -47,7 +47,9 @@ function logProc(kind, text){
   if(last && last.kind === kind && last.text === t && hoursSince(last.at) < 6) { last.n = (last.n || 1) + 1; last.at = nowIso(); return; }
   L.push({id:uid(), at:nowIso(), kind, text:t, by:me ? me.name || me.id : ''});
   if(L.length > 200) db.procLog = L.slice(-200);
+  if(typeof schedulePersist === 'function'){ schedulePersist(); if(typeof scheduleSync === 'function' && kind !== 'fail') scheduleSync(); }   // 11/15 b: 기록을 남기면 바로 저장 예약(실패 기록은 이 PC 먼저)
 }
+let procPage = 0;
 function markRun(k, ok, err){
   const s = runStat[k] = runStat[k] || {};
   if(ok){ s.ok = nowIso(); delete s.err; s.fails = 0; }
@@ -91,10 +93,12 @@ function viewStatus(){
 }
 
 function procLogHTML(){
-  const L = (db.procLog || []).slice(-40).reverse();
-  if(!L.length) return '';
+  const all = (db.procLog || []).slice().reverse();
+  if(!all.length) return '';
+  if(procPage * 20 >= all.length) procPage = 0;
+  const L = all.slice(procPage * 20, (procPage + 1) * 20);
   const lab = {mail:'메일', drive:'Drive 자료', cert:'필증 읽기', fail:'실패', move:'연결 변경', uni:'UNI-PASS'};
-  return `<details class="proc-log"><summary>최근 처리 기록 <span class="cnt">${(db.procLog || []).length}</span></summary><ul class="plain">${L.map(x => `<li><span class="rec-date">${esc(kstT(x.at))}</span> <span class="tag${x.kind === 'fail' ? ' bad' : ''}">${esc(lab[x.kind] || x.kind)}</span> ${esc(x.text)}${x.n > 1 ? ` <span class="hint">×${x.n}</span>` : ''} <span class="hint">${esc(x.by || '')}</span></li>`).join('')}</ul></details>`;
+  return `<details class="proc-log"><summary>최근 처리 기록 <span class="cnt">${(db.procLog || []).length}</span></summary><ul class="plain">${L.map(x => `<li><span class="rec-date">${esc(kstT(x.at))}</span> <span class="tag${x.kind === 'fail' ? ' bad' : ''}">${esc(lab[x.kind] || x.kind)}</span> ${esc(x.text)}${x.n > 1 ? ` <span class="hint">×${x.n}</span>` : ''} <span class="hint">${esc(x.by || '')}</span></li>`).join('')}</ul>${pagerHTML('proc-page', procPage, all.length)}</details>`;
 }
 /* ---- 확인함 ---- */
 /* 11/15: 확인함 처리 뜻 통일 — 확정(근거 보고 반영) · 연결 변경(기록·업체 바꿈) · 나중에(날짜까지 숨김) · 업무 아님(목록에서 빼되 '나중에·제외' 탭에서 복구)
@@ -121,19 +125,24 @@ function checkGroups(){
   const amb = pend.map((x, i) => ({x, i})).filter(({x}) => (x.cands || []).some(id => db.records.some(r => r.id === id)));
   const recLab = r => `${r.caseNo ? r.caseNo + ' · ' : ''}${clientName(r.clientId)} · ${r.status} · ${recDate(r)}`;
   if(amb.length) g.push({k:'amb', s:'후보 여러 건', title:'같은 번호 기록이 여러 건 — 자료를 넣을 기록 고르기', why:'정정·분할·같은 B/L의 다른 건일 수 있어 자동으로 고르지 않았습니다', rows:amb.map(({x, i}) => ({key:pk(x), t1:x.name, t2:`${x.declNo || x.bl || ''} · 후보 ${x.cands.length}건 · ${x.created || ''}`, lvl:'chk',
-    acts:`<select data-pend-cand="${i}">${x.cands.map(id => db.records.find(r => r.id === id)).filter(Boolean).map(r => `<option value="${esc(r.id)}">${esc(recLab(r))}</option>`).join('')}</select>` + BTN.ok(`data-pend-rec="${i}"`) + BTN.later(pk(x)) + BTN.no(`data-pend-drop="${i}"`)}))});
+    acts:`<select data-pend-cand="${esc(pendKey(x))}">${x.cands.map(id => db.records.find(r => r.id === id)).filter(Boolean).map(r => `<option value="${esc(r.id)}">${esc(recLab(r))}</option>`).join('')}</select>` + BTN.ok(`data-pend-rec="${esc(pendKey(x))}"`) + BTN.later(pk(x)) + BTN.no(`data-pend-drop="${esc(pendKey(x))}"`)}))});
   const pendN = pend.map((x, i) => ({x, i})).filter(({x}) => !(x.cands || []).some(id => db.records.some(r => r.id === id)));
   if(pendN.length) g.push({k:'pend', s:'미분류 자료', title:'자동 수집 미분류 자료', why:'신고번호·B/L이 없거나 업체를 알아보지 못한 Drive 자료', rows:pendN.map(({x, i}) => ({key:pk(x), t1:x.name, t2:`${x.kind} / ${x.path || ''} · ${x.created || ''}`, lvl:'ref',
-    acts:`<select data-pend-client="${i}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), x.sug || '')}</select>` + BTN.ok(`data-pend-apply="${i}"`) + BTN.later(pk(x)) + BTN.no(`data-pend-drop="${i}"`)}))});
+    acts:`<select data-pend-client="${esc(pendKey(x))}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), x.sug || '')}</select>` + BTN.ok(`data-pend-apply="${esc(pendKey(x))}"`) + BTN.later(pk(x)) + BTN.no(`data-pend-drop="${esc(pendKey(x))}"`)}))});
   const cm = db.records.filter(r => r.certMismatch && !r.certMismatch.ok);
   if(cm.length) g.push({k:'cert', s:'필증 업체 다름', title:'필증의 업체가 기록과 다름', why:'다른 업체 필증이 이 기록에 붙었을 수 있습니다 — 틀리면 기록을 열어 자료를 옮기세요', rows:cm.map(r => ({key:'cert:' + r.id, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} 기록 ← 필증 ${r.certMismatch.file} (${r.certMismatch.party})`, lvl:'chk',
     acts:BTN.ok(`data-cm-ok="${esc(r.id)}"`, '확정(맞음)') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '연결 변경') + BTN.later('cert:' + r.id)}))});
-  const chk = db.records.filter(r => r.status !== '완료' && ['customs', 'accept'].some(k => (r.stage || {})[k + 'Lv'] === 'chk'));
+  const chkK = r => ['accept', 'customs', 'settle'].find(k => (r.stage || {})[k + 'Lv'] === 'chk' && (r.status !== '완료' || (r.stage || {})[k + 'Re']));   // 11/15 b: 근거가 빠진 완료 기록(Re)도
+  const isColl = (r, k) => /^자동 수집/.test(String((r.stage || {})[k + 'By'] || ''));
+  const chkAll = db.records.filter(r => chkK(r)), chk = chkAll.filter(r => !isColl(r, chkK(r))), coll = chkAll.filter(r => isColl(r, chkK(r)));
+  if(coll.length) g.push({k:'collchk', s:'UNI-PASS 확인 대기', title:'폴더 자료로 생긴 기록 — UNI-PASS·필증 확인 대기', why:'자료를 올린 날로 단계를 임시 표시했습니다. UNI-PASS 조회(12시간마다)나 필증 읽기로 실제 날짜가 확인되면 저절로 빠집니다', rows:coll.map(r => { const k = chkK(r);
+    return {key:`stage:${r.id}|${k}`, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} (자료 올린 날)`, lvl:'ref',
+      acts:BTN.ok(`data-stage-ok="${esc(r.id)}|${k}"`) + BTN.link(`data-run-uni`, 'UNI-PASS 지금 확인') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later(`stage:${r.id}|${k}`)}; })});
   const led = openAlerts().filter(a => a.kind === 'ledger');
-  if(chk.length || led.length) g.push({k:'ledger', s:'단계 근거 확인', title:'메일만 근거인 단계 · UNI-PASS와 다름', why:'필증 파일 없이 글로만 “필증 송부”한 메일 — UNI-PASS나 필증으로 확인', rows:[
+  if(chk.length || led.length) g.push({k:'ledger', s:'단계 근거 확인', title:'근거 확인이 필요한 단계 · UNI-PASS와 다름', why:'필증 파일 없이 글로만 “필증 송부”한 메일, 근거 메일·자료가 빠진 단계 — UNI-PASS나 필증으로 확인', rows:[
     ...led.map(a => ({key:'alert:' + a.id, t1:a.title, t2:String(a.text || '').split('\n')[0], lvl:'act', acts:`${alertTargetHTML(a)}` + BTN.ok(`data-alert-done="${esc(a.id)}"`) + BTN.later('alert:' + a.id)})),
-    ...chk.filter(r => !led.some(a => a.tid === r.id)).map(r => { const k = (r.stage || {}).customsLv === 'chk' ? 'customs' : 'accept';
-      return {key:`stage:${r.id}|${k}`, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} — ${(r.stage || {})[k + 'By'] || ''}`, lvl:'chk',
+    ...chk.filter(r => !led.some(a => a.tid === r.id)).map(r => { const k = chkK(r), re = (r.stage || {})[k + 'Re'];
+      return {key:`stage:${r.id}|${k}`, t1:`${r.caseNo || ''} ${r.title}${r.status === '완료' ? ' (완료 기록)' : ''}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} — ${re ? `근거 자료가 빠짐(${re}) · ` : ''}${(r.stage || {})[k + 'By'] || ''}`, lvl:'chk',
         acts:BTN.ok(`data-stage-ok="${esc(r.id)}|${k}"`) + BTN.link(`data-unstage="${esc(r.id)}|${k}"`, '틀림(취소)') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later(`stage:${r.id}|${k}`)}; })]});
   const pv = db.records.filter(r => r.status !== '완료' && typeof procVerHTML === 'function' && / 새 버전/.test(procVerHTML(r)));
   if(pv.length) g.push({k:'pver', s:'매뉴얼 변경', title:'매뉴얼이 바뀐 진행 중 업무', why:'시작한 뒤 매뉴얼이 고쳐졌습니다 — 차이를 보고 필요한 단계만 넣으세요', rows:pv.map(r => ({key:'pver:' + r.id, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${(r.procVer || {}).s || ''}`, lvl:'ref', acts:BTN.ok(`data-proc-diff="${esc(r.id)}"`, '차이 보기') + BTN.later('pver:' + r.id)}))});
@@ -152,9 +161,13 @@ function checkGroups(){
   const FLD = {title:'제목', status:'상태', refNo:'신고번호', bl:'B/L', summary:'요약', assignee:'담당자', clientId:'업체', fee:'수수료', via:'의뢰처', billTo:'청구처', type:'업무 유형', name:'이름', keyword:'검색어', date:'완료일', startDate:'시작일', due:'기한'};
   const confLab = x => { const ks = x.path.split('/').filter(Boolean), kind = ks[0], o = (db[kind] || []).find(y => y.id === ks[1]);
     const who = kind === 'records' ? (o ? `${o.caseNo || ''} ${o.title || ''}`.trim() : '지운 기록') : kind === 'clients' ? (o ? o.name : '지운 업체') : (o ? o.name || o.title || kind : kind);
-    return `${who} · ${ks.slice(2).map(k => FLD[k] || k).join(' › ')}`; };
-  if(sc.length) g.push({k:'conflict', s:'동시 수정', title:'동시 수정 — 두 PC가 같은 칸을 다르게 고침', why:'이 PC 값을 남겼습니다. 다른 PC 값이 맞으면 바꾸세요', rows:sc.map(x => ({key:'conf:' + x.id, t1:confLab(x), t2:`이 PC: “${String(x.mine ?? '(비움)').slice(0, 40)}” · ${x.by || '다른 PC'}: “${String(x.theirs ?? '(비움)').slice(0, 40)}” · ${String(x.at).slice(5, 16).replace('T', ' ')}`, lvl:'chk',
-    acts:BTN.ok(`data-conf-ok="${esc(x.id)}"`, '이대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '다른 PC 값으로')}))});
+    return `${who} · ${ks.slice(2).map(k => FLD[k] || k).join(' › ') || '기록 전체'}`; };
+  const cv = v => v == null ? '(비움)' : typeof v === 'object' ? (v.title || v.name || '(묶음 값)') : String(v);
+  if(sc.length) g.push({k:'conflict', s:'동시 수정', title:'동시 수정 — 두 PC가 같은 칸을 다르게 고침', why:'이 PC 값을 남겼습니다. 다른 PC 값이 맞으면 바꾸세요', rows:sc.map(x => ({key:'conf:' + x.id, t1:confLab(x), t2:x.del
+      ? `${x.del === 'mine' ? '이 PC에서 지움' : `${x.by || '다른 PC'}에서 지움`} ↔ 다른 쪽에서 고침 → 고친 쪽을 살려 둠 · ${String(x.at).slice(5, 16).replace('T', ' ')}`
+      : `이 PC: “${cv(x.mine).slice(0, 40)}” · ${x.by || '다른 PC'}: “${cv(x.theirs).slice(0, 40)}” · ${String(x.at).slice(5, 16).replace('T', ' ')}`, lvl:'chk',
+    acts:x.del ? BTN.ok(`data-conf-ok="${esc(x.id)}"`, '살린 대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '지우기')
+      : BTN.ok(`data-conf-ok="${esc(x.id)}"`, '이대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '다른 PC 값으로')}))});
   const rf = runFails();
   if(rf.length) g.push({k:'run', s:'수집 실패', title:'수집 실패', why:'자동 수집·확인이 실패하고 있습니다', rows:rf.map(x => ({key:'run:' + x.label, t1:x.label, t2:`${x.s.fail ? kstT(x.s.fail) + ' · ' : ''}${x.s.err}`, lvl:'act', acts:`<button class="mini" data-go="status">수집 상태</button>`}))});
   const L = db.checkLater || {}, td = today();                             // '나중에' 날짜가 남은 행은 빼서 later로
@@ -175,9 +188,9 @@ function checkOffRows(g){
   const rows = (g.later || []).map(r => ({t1:r.t1, t2:`${r.grp} · ${r.until}까지 숨김`, lvl:'ref', acts:`<button class="mini" data-chk-unlater="${esc(r.key)}">지금 보기</button>`}));
   if(mailCache){
     const ig = new Set(db.mailIgnored || []);
-    threadsOf(mailCache.filter(m => ig.has(m.id))).slice(0, 100).forEach(t => rows.push({t1:t.last.subject || '(제목 없음)', t2:`업무 아님(메일) · ${t.ms.length}통 · ${String(t.last.date || '').slice(0, 10)}`, lvl:'ref', acts:`<button class="mini" data-mail-unignore="${esc(t.key)}">복구</button>`}));
+    threadsOf(mailCache.filter(m => ig.has(m.id))).forEach(t => rows.push({t1:t.last.subject || '(제목 없음)', t2:`업무 아님(메일) · ${t.ms.length}통 · ${String(t.last.date || '').slice(0, 10)}`, lvl:'ref', acts:`<button class="mini" data-mail-unignore="${esc(t.key)}">복구</button>`}));
   }
-  (db.collectDropped || []).slice(-100).reverse().forEach(x => rows.push({t1:x.name, t2:`업무 아님(자료) · ${String(x.droppedAt || '').slice(0, 10)}${x.droppedBy ? ' · ' + x.droppedBy : ''}`, lvl:'ref', acts:`<button class="mini" data-pend-undrop="${esc(x.id)}|${esc(x.declNo || '')}">복구</button>`}));
+  (db.collectDropped || []).slice().reverse().forEach(x => rows.push({t1:x.name, t2:`업무 아님(자료) · ${String(x.droppedAt || '').slice(0, 10)}${x.droppedBy ? ' · ' + x.droppedBy : ''}`, lvl:'ref', acts:`<button class="mini" data-pend-undrop="${esc(x.id)}|${esc(x.declNo || '')}">복구</button>`}));
   return rows;
 }
 function viewCheck(){
@@ -222,7 +235,7 @@ const NAV_VIEWS = {check:viewCheck, status:viewStatus, tools:viewTools};
 const renderViewBase4 = renderView;
 renderView = function(){
   const v = $('#view');
-  if(NAV_VIEWS[route.name]){ hlRe = null; v.innerHTML = NAV_VIEWS[route.name](); }
+  if(NAV_VIEWS[route.name]){ hlRe = null; const vs = viewState(v), y = window.scrollY; v.innerHTML = NAV_VIEWS[route.name](); restoreView(v, vs); if(Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y); }   // 11/15 b ⑤: 확인함·수집 상태도 위치·선택값 보존
   else renderViewBase4();
   const tabs = navTabsHTML();
   if(tabs) v.insertAdjacentHTML('afterbegin', tabs);

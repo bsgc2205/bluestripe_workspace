@@ -217,16 +217,20 @@ async function storeSet(k, v){
 }
 async function storeDel(k){ await idbDel(k); try{ localStorage.removeItem(k); }catch(e){} }
 let persistT = null, persistBusy = null;
+/* 11/15 b ③: 이 PC 저장의 실제 결과 — pending(0.7초 대기) · saving · ok · fail. 저장 표시는 이 값으로만 '이 PC 저장됨'을 말한다 */
+const localSave = {state:'ok', at:'', err:''};
+function setLocalSave(st, err){ localSave.state = st; if(st === 'ok') { localSave.at = nowIso(); localSave.err = ''; } if(err) localSave.err = err; if(typeof updateSaveState === 'function' && $('#saveState')) updateSaveState(); }
 async function persistLocal(){
   clearTimeout(persistT); persistT = null;
   const run = async () => {
-    try{ const b = await encryptDb('', {zip:true}); if(!(await storeSet(LS_KEY, b))) throw new Error('quota'); localBlob = b; }
-    catch(e){ toast('이 PC 저장에 실패했습니다. Drive 자동 저장은 계속됩니다. 걱정되면 데이터 → 백업 받기를 해 두세요.'); }
+    setLocalSave('saving');
+    try{ const b = await encryptDb('', {zip:true}); if(!(await storeSet(LS_KEY, b))) throw new Error('quota'); localBlob = b; setLocalSave(persistT ? 'pending' : 'ok'); }
+    catch(e){ setLocalSave('fail', e.message || '저장 실패'); toast('이 PC 저장에 실패했습니다. Drive 자동 저장은 계속됩니다. 걱정되면 데이터 → 백업 받기를 해 두세요.'); }
   };
   persistBusy = (persistBusy || Promise.resolve()).then(run, run);
   return persistBusy;
 }
-function schedulePersist(){ clearTimeout(persistT); persistT = setTimeout(persistLocal, 700); }   // 고칠 때마다 바로 암호화·저장하지 않고 0.7초 모아서
+function schedulePersist(){ clearTimeout(persistT); persistT = setTimeout(persistLocal, 700); if(localSave.state !== 'fail') localSave.state = 'pending'; }   // 고칠 때마다 바로 암호화·저장하지 않고 0.7초 모아서
 function flushPersist(){ if(persistT) persistLocal(); }
 
 /* ---------- data ---------- */
@@ -380,15 +384,18 @@ function updateSaveState(){
     const at = d && !isNaN(d) ? `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}` : '';
     const by = sync.by && me && sync.by !== me.name && sync.by !== me.id ? ` · ${sync.by}` : '';
     const last = at ? ` (마지막 Drive 저장 ${at})` : '';                // 11/15 D-01: 이 PC 저장과 Drive 저장을 나눠 표시
-    const map = {busy:'이 PC 저장됨 · Drive 저장 중…', wait:'이 PC 저장됨 · Drive 저장 대기', fail:`이 PC에만 저장됨 · Drive 저장 실패, 다시 시도${last}`, offline:`이 PC에만 저장됨 · 서버 연결 안 됨${last}`, mismatch:'Drive 자동 저장 꺼짐'};
-    text = map[sync.state] || `Drive 저장됨${at ? ' ' + at : ''}${by}`;
-    dirty = ['fail','offline','mismatch'].includes(sync.state);
+    const L = localSave.state, pc = L === 'fail' ? '이 PC 저장 실패' : L === 'ok' ? '이 PC 저장됨' : '이 PC 저장 중';
+    const map = {busy:`${pc} · Drive 저장 중…`, wait:`${pc} · Drive 저장 대기`, fail:`${L === 'ok' ? '이 PC에만 저장됨' : pc} · Drive 저장 실패, 다시 시도${last}`, offline:`${L === 'ok' ? '이 PC에만 저장됨' : pc} · 서버 연결 안 됨${last}`, mismatch:'Drive 자동 저장 꺼짐'};
+    text = map[sync.state] || (L === 'fail' ? `이 PC 저장 실패 · Drive 저장됨${at ? ' ' + at : ''}` : `Drive 저장됨${at ? ' ' + at : ''}${by}`);
+    if(L === 'fail' && ['fail', 'offline'].includes(sync.state)) text = `⚠ 저장 안 됨 — 이 PC·Drive 모두 실패. 창을 닫지 말고 데이터 → 백업 받기${last}`;
+    dirty = ['fail','offline','mismatch'].includes(sync.state) || L === 'fail';
     el.textContent = text; el.classList.toggle('dirty', dirty); el.title = sync.state === 'mismatch' ? '이 PC와 Drive의 Workspace가 서로 다른 열쇠로 만들어져 있습니다. 눌러서 Drive 쪽으로 합치세요.' : (sync.err || '');
     return;
   }
   if(remoteUpdatedAt && db.meta.updatedAt === remoteUpdatedAt) text = '연 파일과 같습니다';
   else if(exportedAt === db.meta.updatedAt) text = '최신 파일을 받아 두었습니다';
   else {text = 'Drive에 저장할 변경이 있습니다'; dirty = true;}
+  if(localSave.state === 'fail'){ text = `⚠ 이 PC 저장 실패 · ${text}`; dirty = true; }
   el.textContent = text; el.classList.toggle('dirty', dirty);
   el.title = syncCfg() ? '자동 저장이 꺼져 있습니다. 눌러서 다시 연결합니다.' : 'Drive 자동 저장이 연결되지 않았습니다. 데이터 → Apps Script 연동에서 웹 앱 주소와 이 PC의 토큰을 확인하세요.';
 }

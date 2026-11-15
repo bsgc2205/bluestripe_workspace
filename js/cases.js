@@ -74,7 +74,9 @@ function filesHTML(r){
 function addFiles(r, items){
   r.files = r.files || [];
   let n = 0;
-  items.forEach(x => { if(x.name && !r.files.some(f => f.id === x.id || (f.name === x.name && f.link === x.link))){ r.files.push({id:x.id || uid(), name:x.name, link:x.link || '', date:x.created || x.date || '', ...(x.ver ? {ver:x.ver} : {})}); n++; } });
+  const fb = db.fileBlock || {};
+  items.forEach(x => { if(x.id && (fb[x.id] || []).includes(r.id)) return;          // 사람이 뗀 자료는 그 기록에 다시 붙이지 않음 (11/15 b)
+ if(x.name && !r.files.some(f => f.id === x.id || (f.name === x.name && f.link === x.link))){ r.files.push({id:x.id || uid(), name:x.name, link:x.link || '', date:x.created || x.date || '', ...(x.ver ? {ver:x.ver} : {})}); n++; } });
   return n;
 }
 
@@ -100,12 +102,20 @@ function setLoadDue(r, base, due){
 }
 /* lv: 'ok'(확정 — UNI-PASS·필증 파일 메일·정산서 메일·직원 표시) | 'chk'(메일 글만 근거 — 확인 필요, 자동 완료 안 함).
    이미 'chk'로 표시된 단계에 확정 근거가 오면 등급만 올린다(UNI-PASS 날짜가 있으면 그 날짜로). */
-function setStage(r, k, date, by, lv){
+/* 11/15 b ①: src = {mail:[메일 id], file:[파일 id]} — 단계의 근거 자료. 그 메일·파일을 떼거나 옮기면 stageSrcLost가 단계를 다시 '확인 필요'로 */
+function addStageSrc(st, k, src){
+  if(!src) return;
+  const o = st[k + 'Src'] || {};
+  ['mail', 'file'].forEach(t => { const v = [].concat(src[t] || []).filter(Boolean); if(v.length) o[t] = [...new Set([...(o[t] || []), ...v])]; });
+  if(o.mail || o.file) st[k + 'Src'] = o;
+}
+function setStage(r, k, date, by, lv, src){
   r.stage = r.stage || {};
   lv = lv === 'chk' ? 'chk' : 'ok';
   if(r.stage[k]){
+    addStageSrc(r.stage, k, src);
     if(r.stage[k + 'Lv'] !== 'chk' || lv !== 'ok') return false;
-    delete r.stage[k + 'Lv'];
+    delete r.stage[k + 'Lv']; delete r.stage[k + 'Re'];
     if(/^UNI-PASS/.test(by) && date) r.stage[k] = String(date).slice(0, 10);
     r.stage[k + 'By'] = `${r.stage[k + 'By'] || ''} → ${by}`;
     addHist(r, `${stageName(r, k)} 확인됨 (${by})`);
@@ -113,6 +123,7 @@ function setStage(r, k, date, by, lv){
     return true;
   }
   r.stage[k] = String(date || today()).slice(0, 10); r.stage[k + 'By'] = by;
+  addStageSrc(r.stage, k, src);
   if(lv === 'chk') r.stage[k + 'Lv'] = 'chk';
   addHist(r, `${stageName(r, k)} ${r.stage[k]} (${by}${lv === 'chk' ? ' — 메일 글만 근거, 확인 필요' : ''})`);
   r.updatedAt = nowIso();
@@ -235,15 +246,41 @@ function evalStages(){
   let n = 0, done = 0, ck = 0;
   db.records.filter(r => r.status !== '완료' && r.status !== '보류').forEach(r => {
     const m = (r.mails || []).filter(x => SETTLE_RE.test(x.subject || '')).slice(-1)[0];
-    if(m && setStage(r, 'settle', m.date, `메일: ${m.subject}`)) n++;
+    if(m && setStage(r, 'settle', m.date, `메일: ${m.subject}`, 'ok', {mail:m.id})) n++;
     if(autoChecklist(r)) ck++;
     if(autoComplete(r)) done++;
   });
   return {n, done, ck};
 }
+/* 근거 자료가 빠졌을 때: UNI-PASS로 따로 확인된 단계는 그대로, 아니면 남은 근거가 없을 때 '확인 필요'(+Re: 완료 기록도 확인함에) + 자동 완료 되돌림.
+   예전 기록(Src 없음)은 근거 글이 '메일'이고 뗀 메일이 필증 송부·정산서 메일이거나 제목이 근거 글에 있으면 같은 처리. */
+function stageSrcLost(r, kind, gone, why){
+  const st = r.stage || {}, ids = new Set(gone.map(x => x.id)), out = [];
+  ['accept', 'customs', 'settle'].forEach(k => {
+    if(!st[k]) return;
+    const by = String(st[k + 'By'] || ''), src = st[k + 'Src'];
+    let hit = false;
+    if(src && (src[kind] || []).some(id => ids.has(id))){
+      src[kind] = src[kind].filter(id => !ids.has(id)); if(!src[kind].length) delete src[kind];
+      const left = (src.mail || []).some(id => (r.mails || []).some(m => m.id === id)) || (src.file || []).some(id => (r.files || []).some(f => f.id === id));
+      hit = !left;
+      if(!src.mail && !src.file) delete st[k + 'Src'];
+    } else if(!src && kind === 'mail' && /^메일/.test(by)){
+      hit = gone.some(x => (x.subject && by.includes(String(x.subject).slice(0, 30))) || (k === 'settle' ? SETTLE_RE.test(x.subject || '') : typeof certMail === 'function' && certMail({...x, files:x.files || []})));
+    } else if(!src && kind === 'file' && /자동 수집|필증 자료/.test(by)) hit = true;
+    if(!hit || /UNI-PASS/.test(by)) return;
+    if(st[k + 'Lv'] === 'chk' && st[k + 'Re']) return;
+    st[k + 'Lv'] = 'chk'; st[k + 'Re'] = today();
+    addHist(r, `${stageName(r, k)} — 근거 ${kind === 'mail' ? '메일이' : '자료가'} 빠져 다시 확인 필요${why ? ` (${why})` : ''}`);
+    out.push(stageName(r, k));
+  });
+  if(out.length && r.autoDone) undoAuto(r);
+  if(out.length) r.updatedAt = nowIso();
+  return out;
+}
 function unsetStage(r, k, why){
   if(!r.stage) return;
-  delete r.stage[k]; delete r.stage[k + 'By']; delete r.stage[k + 'Lv'];
+  delete r.stage[k]; delete r.stage[k + 'By']; delete r.stage[k + 'Lv']; delete r.stage[k + 'Re']; delete r.stage[k + 'Src'];
   addHist(r, `${stageName(r, k)} 표시 취소${why ? ` (사유: ${why})` : ''}`);
   if(r.autoDone) undoAuto(r);
   r.updatedAt = nowIso();

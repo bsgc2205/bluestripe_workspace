@@ -1,7 +1,8 @@
 'use strict';
 /* ---------- events ---------- */
-const CLICK_SEL = '[data-home-tab],[data-home-page],[data-act-page],[data-chk-later],[data-chk-unlater],[data-chk-tab],[data-chk-page],[data-mail-unignore],[data-pend-undrop],[data-conf-ok],[data-conf-theirs],[data-mail-mv],[data-file-mv],[data-pend-rec],[data-rdup-merge],[data-rdup-swap],[data-rdup-no],[data-rdup-undo],[data-bill-set],[data-fwd-move],[data-clist-fwd],[data-act-more],[data-crec-more],[data-client-dup],[data-client-unmerge],[data-dl-done],[data-today-mine],[data-amode],[data-asort],[data-man-scope],[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-mail-backfill],[data-unstage],[data-stage],[data-intake-undo],[data-client-ext],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-mail-client],[data-mail-to],[data-open-data],.rec-sum';
-document.addEventListener('click', e => { if(e.target.closest('summary button, summary a')) e.preventDefault(); }, true);   // 11/15: 행 요약 안의 버튼은 펼치기와 따로
+const CLICK_SEL = '[data-proc-page],[data-home-tab],[data-home-page],[data-act-page],[data-chk-later],[data-chk-unlater],[data-chk-tab],[data-chk-page],[data-mail-unignore],[data-pend-undrop],[data-conf-ok],[data-conf-theirs],[data-mail-mv],[data-file-mv],[data-pend-rec],[data-rdup-merge],[data-rdup-swap],[data-rdup-no],[data-rdup-undo],[data-bill-set],[data-fwd-move],[data-clist-fwd],[data-act-more],[data-crec-more],[data-client-dup],[data-client-unmerge],[data-dl-done],[data-today-mine],[data-amode],[data-asort],[data-man-scope],[data-mail-audit],[data-ext-items],[data-ext-all],[data-api-ping],[data-law-check],[data-alert-done],[data-alert-all],[data-man-open],[data-kc-check],[data-sim-copy],[data-inq-new],[data-inq-edit],[data-inq-rec],[data-inq-topic],[data-inq-hs],[data-req-badge],[data-pp-apply],[data-pp-drop],[data-man-draft],[data-man-review],[data-man-print],[data-mail-old-clear],[data-mail-backfill],[data-unstage],[data-stage],[data-intake-undo],[data-client-ext],[data-undo-auto],[data-copy-case],[data-sug],[data-sug-off],[data-mine],[data-mail-attach],[data-collect-now],[data-pend-apply],[data-pend-drop],[data-bl-q],[data-biz-import],[data-scan],[data-cc-del],[data-contact-new],[data-contact-edit],[data-contact-cat],[data-fee-new],[data-fee-edit],[data-fee-copy],[data-bl-go],[data-bl-cargo],[data-acct-new],[data-acct-edit],[data-letter],[data-go],[data-new-rec],[data-edit-rec],[data-complete],[data-reflect],[data-new-proc],[data-edit-proc],[data-start-proc],[data-new-client],[data-edit-client],[data-new-item],[data-edit-item],[data-chip],[data-month],[data-csv],[data-mail-load],[data-mail-make],[data-mail-ignore],[data-mail-client],[data-mail-to],[data-open-data],.rec-sum';
+document.addEventListener('click', e => { if(e.target.closest('summary button, summary a')) e.preventDefault(); }, true);
+document.addEventListener('change', e => { if(e.target && e.target.tagName === 'SELECT') e.target.dataset.touched = '1'; }, true);   // 다시 그려도 사람이 고른 값 유지 (11/15 b)   // 11/15: 행 요약 안의 버튼은 펼치기와 따로
 document.addEventListener('click', e => {
   const t = e.target.closest(CLICK_SEL);
   if(!t || !db || t.closest('dialog')) return;
@@ -33,16 +34,19 @@ document.addEventListener('click', e => {
   if('collectNow' in d){runCollect(true); return;}
   if('confOk' in d || 'confTheirs' in d){const x = (db.syncConflicts || []).find(y => y.id === (d.confOk || d.confTheirs)); if(!x) return;
     const m = /^\/records\/([^/]+)\//.exec(x.path), r = m && findRec(m[1]);
-    if('confTheirs' in d){ if(!setByPath(db, x.path, x.theirs)){ toast('그 항목이 지워져 바꿀 수 없습니다.'); } else if(r){ addHist(r, `동시 수정 정리: 다른 PC 값으로 — “${String(x.theirs).slice(0, 40)}”`); r.updatedAt = nowIso(); } }
+    if('confTheirs' in d){
+      if(x.del){ if(!isAdmin() && /^\/records\/[^/]+$/.test(x.path)){ toast('기록 삭제는 관리자만 할 수 있습니다.'); return; } setByPath(db, x.path, undefined); if(r && db.records.includes(r)){ addHist(r, `동시 수정 정리: ${x.path.split('/').slice(3).join('/') || '기록'} 지움`); r.updatedAt = nowIso(); } }
+      else if(!setByPath(db, x.path, x.theirs)){ toast('그 항목이 지워져 바꿀 수 없습니다.'); } else if(r){ addHist(r, `동시 수정 정리: 다른 PC 값으로 — “${String(x.theirs).slice(0, 40)}”`); r.updatedAt = nowIso(); } }
     x.done = 'confTheirs' in d ? 'theirs' : 'mine'; x.doneAt = nowIso(); x.doneBy = me ? me.id : ''; commit(); return;}
+  if('procPage' in d){procPage = Math.max(0, Number(d.procPage)); renderView(); return;}
   if('homeTab' in d){homeTab = d.homeTab; homePage = 0; renderView(); return;}
   if('homePage' in d){homePage = Math.max(0, Number(d.homePage)); renderView(); window.scrollTo(0, 0); return;}
   if('actPage' in d){activePage = Math.max(0, Number(d.actPage)); renderView(); window.scrollTo(0, 0); return;}
   if('mailMv' in d){openMailMove(...d.mailMv.split('|')); return;}
   if('fileMv' in d){openFileMove(...d.fileMv.split('|')); return;}
-  if('pendRec' in d){applyPendingRec(Number(d.pendRec), $(`[data-pend-cand="${d.pendRec}"]`).value); return;}
-  if('pendApply' in d){applyPending(Number(d.pendApply), $(`[data-pend-client="${d.pendApply}"]`).value); return;}
-  if('pendDrop' in d){const x = db.collectPending.splice(Number(d.pendDrop), 1)[0]; if(x){ db.collectDropped = [...(db.collectDropped || []), {...x, droppedAt:nowIso(), droppedBy:me ? me.name || me.id : ''}].slice(-300); } commit(); toast('업무 아님으로 뺐습니다. 확인함 ‘나중에·제외’ 탭에서 복구할 수 있습니다.'); return;}
+  if('pendRec' in d){const i = pendIdx(d.pendRec), s = [...document.querySelectorAll('[data-pend-cand]')].find(x => x.dataset.pendCand === d.pendRec); if(i >= 0 && s) applyPendingRec(i, s.value); return;}
+  if('pendApply' in d){const i = pendIdx(d.pendApply), s = [...document.querySelectorAll('[data-pend-client]')].find(x => x.dataset.pendClient === d.pendApply); if(i >= 0 && s) applyPending(i, s.value); return;}
+  if('pendDrop' in d){const pi = pendIdx(d.pendDrop); if(pi < 0) return; const x = db.collectPending.splice(pi, 1)[0]; if(x){ db.collectDropped = [...(db.collectDropped || []), {...x, droppedAt:nowIso(), droppedBy:me ? me.name || me.id : ''}].slice(-300); } commit(); toast('업무 아님으로 뺐습니다. 확인함 ‘나중에·제외’ 탭에서 복구할 수 있습니다.'); return;}
   if('pendUndrop' in d){const [id, dn] = d.pendUndrop.split('|'), i = (db.collectDropped || []).findIndex(x => x.id === id && (x.declNo || '') === dn); if(i >= 0){ const x = db.collectDropped.splice(i, 1)[0]; delete x.droppedAt; delete x.droppedBy; db.collectPending.push(x); commit(); toast('미분류 자료로 되돌렸습니다.'); } return;}
   if('chkLater' in d){openCheckLater(d.chkLater); return;}
   if('chkUnlater' in d){if(db.checkLater) delete db.checkLater[d.chkUnlater]; commit(); return;}
@@ -167,6 +171,7 @@ document.addEventListener('toggle', e => {
   if(el.matches && el.matches('details[data-ck-rec]')){const id = el.dataset.ckRec; el.open ? openCk.add(id) : openCk.delete(id);}
   if(el.matches && el.matches('details[data-more-rec]')){const id = el.dataset.moreRec; el.open ? moreOpen.add(id) : moreOpen.delete(id);}
   if(el.matches && el.matches('details[data-items-more]')){const id = el.dataset.itemsMore; el.open ? itemMoreOpen.add(id) : itemMoreOpen.delete(id);}
+  if(el.matches && el.matches('details[data-lazy]') && el.open){ const b = el.querySelector('.lazy-body'); if(b && !b.childElementCount) b.innerHTML = lazyHTML(el.dataset.lazy); }   // 11/15 b: 펼칠 때 그림
   if(el.matches && el.matches('details[data-sim-rec]')){const id = el.dataset.simRec; if(el.open){ simOpen.add(id); simOpen.delete('x' + id); } else { simOpen.delete(id); simOpen.add('x' + id); }}
   if(el.matches && el.matches('details[data-folder]')) folderOpen[el.dataset.folder] = el.open;
 }, true);
