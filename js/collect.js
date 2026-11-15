@@ -124,14 +124,22 @@ function rematchPending(){
 const CERT_HINT = /필증|면장|신고서|\d{5}-?\d{2}-?\d{6}|\b\d{6}[A-Z]\b|(^|[^A-Z])(EXP|IMP)[_-]?\d/i;
 function certQueue(){
   const cut = addPeriod(today(), -60, 'd'), q = [];
-  (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !x.certTried && x.id) q.push({id:x.id, pend:x, hint:CERT_HINT.test(x.name)}); });
+  const errWait = (o, id) => { const e = (o.certErr || {})[id]; return e && e.n >= 3 && e.at === today(); };   // 3번 넘게 실패한 파일은 하루 한 번만 다시
+  (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !x.certTried && x.id && !errWait(x, x.id)) q.push({id:x.id, pend:x, hint:CERT_HINT.test(x.name)}); });
   db.records.filter(r => r.status !== '완료' || recDate(r) >= cut || r.certAgain).forEach(r => (r.files || []).forEach(f => {
-    if(/\.pdf$/i.test(f.name || '') && f.id && String(f.id).length > 15 && !(r.certRead || {})[f.id]) q.push({id:f.id, rec:r, file:f, hint:CERT_HINT.test(f.name)});
+    if(/\.pdf$/i.test(f.name || '') && f.id && String(f.id).length > 15 && !(r.certRead || {})[f.id] && !errWait(r, f.id)) q.push({id:f.id, rec:r, file:f, hint:CERT_HINT.test(f.name)});
   }));
   return q.sort((a, b) => b.hint - a.hint).slice(0, 6);
 }
 /* 필증의 수입자·수출화주 업체 (11/12): 사업자번호 → 이름. 기록의 업체와 다르면 품목은 필증 쪽 업체에 넣는다(다른 업체 필증이 잘못 붙은 경우) */
-function certParty(d){ return (d.bizNo && clientByBiz(d.bizNo)) || (d.party ? findClient(d.party) : null); }
+function certParty(d){ return (d.bizNo && clientByBiz(d.bizNo)) || (d.party ? findClient(d.party) || fuzzyClient(d.party) : null); }
+/* 11/15: 필증 글자 인식이 업체 이름 한 글자를 틀린 경우(훼로스→페로스, 두넥스→두비스) — 4글자 이상 이름에서 한 글자만 다르고 후보가 하나일 때만 */
+function fuzzyClient(name){
+  const k = nameKey(name).replace(/\s/g, ''); if(k.length < 4) return null;
+  const d1 = (a, b) => { if(a.length !== b.length) return 9; let n = 0; for(let i = 0; i < a.length; i++) if(a[i] !== b[i] && ++n > 1) return n; return n; };
+  const hits = db.clients.filter(c => { const ck = nameKey(c.name).replace(/\s/g, ''); return ck.length >= 4 && d1(ck, k) === 1; });
+  return hits.length === 1 ? hits[0] : null;
+}
 function itemFromLine(cid, ln, d){
   const nm = ln.trade || ln.name, hs = hsDigits(ln.hs);
   if(!nm && !hs) return null;
@@ -312,7 +320,7 @@ function fixMisplacedItems(r, mineDocs, others){
 /* 한 번만: 예전에 한 장짜리로 읽은 '날짜 이름' 같은 묶음 PDF(파일명에 신고번호·EXP/IMP 없음)를 다시 읽게 함 */
 /* 11/13 g: 견본 필증('견본(수출)'로 시작, '수출신고필증' 제목 없음)과 색인표 신고번호를 잘못 나누던 것을 고쳐(Apps Script cert3_) 한 번 더 다시 읽음 */
 function recheckCombined(){                                               // 11/15: 수출신고서(갑지·을지) 머리·신고번호 앞 배치 대응으로 묶음 PDF를 한 번 더 다시 읽음
-  if(db.settings.certMulti === '20261115') return 0;
+  if(db.settings.certMulti === '20261115d') return 0;
   let n = 0;
   db.records.forEach(r => {
     const fs = (r.files || []).filter(f => /\.pdf$/i.test(f.name || '') && !CERT_HINT.test(f.name || '') && (r.certRead || {})[f.id]);
@@ -320,10 +328,10 @@ function recheckCombined(){                                               // 11/
     fs.forEach(f => { delete r.certRead[f.id]; }); r.certAgain = true; n += fs.length;
   });
   (db.collectPending || []).forEach(x => { if(/\.pdf$/i.test(x.name || '') && !CERT_HINT.test(x.name || '') && x.certTried && !x.splitOf){ x.certTried = false; n++; } });
-  db.settings.certMulti = '20261115';
+  db.settings.certMulti = '20261115d';
   return n;
 }
-let certBusy = false;
+let certBusy = false, certLaterN = 0;
 async function certRead(manual){                                          // 11/15: 같은 필증을 동시에 두 번 읽지 않게
   if(certBusy){ if(manual) toast('필증을 읽는 중입니다.'); return null; }
   certBusy = true;
@@ -335,9 +343,14 @@ async function certRead0(manual){
   let j;
   try{ j = await collectApi({certread:q.map(x => x.id).join(',')}); }
   catch(e){ typeof markRun === 'function' && markRun('cert', false, e.message); if(manual || !/허용|알 수 없/.test(e.message)) console.warn('필증 읽기', e.message); if(manual) toast('필증을 읽지 못했습니다: ' + e.message); return null; }
-  let recs = 0, items = 0, pend = 0;
+  let recs = 0, items = 0, pend = 0, later = 0;
   (j.items || []).forEach(res => {
-    if(res.later || res.err) return;                                     // 오류는 다음에 다시 시도
+    if(res.later){ later++; return; }                                    // 11/15 d: 큰 묶음 PDF 나눠 읽는 중 → 곧 이어서
+    if(res.err){                                                         // 오류는 다음에 다시 시도 + 처리 기록에 남김(3번째부터는 하루 한 번만 다시)
+      q.filter(x => x.id === res.id).forEach(x => { const o = x.pend || x.rec; const n = ((o.certErr || {})[res.id] || {}).n || 0; o.certErr = {...(o.certErr || {}), [res.id]:{n:n + 1, at:today(), err:res.err}};
+        if(typeof logProc === 'function') logProc('fail', `필증 읽기 실패: ${(x.file || x.pend || {}).name || res.id} — ${res.err}`); });
+      return;
+    }
     q.filter(x => x.id === res.id).forEach(x => {
       const docs = (res.docs && res.docs.length ? res.docs : [res.doc]).filter(d => d && (d.declNo || (d.lines || []).length));   // 한 파일에 필증 여러 장(11/13 e)
       if(x.pend){ x.pend.certTried = true; if(docs.length){ splitPending(x.pend, docs); pend++; } return; }
@@ -348,6 +361,7 @@ async function certRead0(manual){
   });
   const rm = pend ? rematchPending() : null;
   typeof markRun === 'function' && markRun('cert', true);
+  if(later && (certLaterN = (certLaterN || 0) + 1) <= 12) setTimeout(() => certRead(false), 4000); else if(!later) certLaterN = 0;   // 나눠 읽기 이어서(최대 12번)
   commit();
   const cmsg = `필증 읽기: 기록 ${recs}건 반영, 품목 DB ${items}개 추가${rm && (rm.made || rm.upd) ? `, 미분류 자료 ${rm.made + rm.upd}건 업체 확인` : ''}`;
   if(recs || items || (rm && (rm.made || rm.upd))) logProc('cert', cmsg);
