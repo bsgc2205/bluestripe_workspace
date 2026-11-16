@@ -293,12 +293,14 @@ async function checkLaws(silent){
   });
   let na = 0;
   db.procedures.forEach(p => {
-    if(!p.reviewedAt) return;
+    const rvAt = p.lawReviewedAt || p.reviewedAt;                          // 11/16 d: 법령 검토일(없으면 내용 검토일) 기준
+    if(!rvAt || isOverlay(p)) return;
     lawRefs(p).forEach(r => {
       const li = db.lawInfo[lawKey(r.name)];
       if(!li || li.err || li.miss) return;
       const last = [li.promul, li.effect].filter(d => d && d <= today()).sort().slice(-1)[0];
-      if(last && last > p.reviewedAt && addAlert({key:`law|${p.id}|${lawKey(r.name)}|${li.promul}|${li.effect}`, kind:'law', ttype:'proc', tid:p.id, title:`법령 개정 확인 필요: ${p.title} — ${r.name}`, text:`공포(발령) ${li.promul || '-'} · 시행 ${li.effect || '-'} / 절차 최종 검토 ${p.reviewedAt}\n개정 내용을 확인해 절차를 고친 뒤 매뉴얼에서 ‘오늘 검토함’을 누르세요.`})) na++;
+      if(last && last > rvAt && addAlert({key:`law|${p.id}|${lawKey(r.name)}|${li.promul}|${li.effect}`, kind:'law', ttype:'proc', tid:p.id, title:`법령 개정 확인 필요: ${p.title} — ${r.name}`, text:`공포(발령) ${li.promul || '-'} · 시행 ${li.effect || '-'} / 절차 최종 검토 ${p.reviewedAt}\n개정 내용을 확인해 절차를 고친 뒤 매뉴얼에서 ‘오늘 검토함’을 누르세요.`})) na++;
+      if(last && last > rvAt && !p.reviewNeed) p.reviewNeed = {at:today(), why:`${r.name} 개정(시행 ${li.effect || '-'})`};   // 목록에 '재검토 필요'
       if(li.effect && li.effect > today() && addAlert({key:`lawf|${p.id}|${lawKey(r.name)}|${li.effect}`, kind:'law', ttype:'proc', tid:p.id, title:`시행 예정 개정: ${p.title} — ${r.name}`, text:`${li.effect} 시행 예정. 진행 중인 건에 적용 시점을 확인하세요.`})) na++;
     });
   });
@@ -325,7 +327,7 @@ function lawLinesHTML(p){
     let tag = '';
     if(li && li.err) tag = `<span class="kc-chip bad" title="${esc(li.err)}">조회 오류</span>`;
     else if(li && li.miss) tag = `<span class="kc-chip warn" title="검색 결과: ${esc((li.cands || []).join(', '))}">이름 불일치 — 정식 명칭 확인</span>`;
-    else if(li){ const last = [li.promul, li.effect].filter(d => d && d <= today()).sort().slice(-1)[0]; const rev = p.reviewedAt && last && last > p.reviewedAt;
+    else if(li){ const last = [li.promul, li.effect].filter(d => d && d <= today()).sort().slice(-1)[0]; const rva = p.lawReviewedAt || p.reviewedAt, rev = rva && last && last > rva;
       tag = `<span class="kc-chip${rev ? ' bad' : ''}">${rev ? '개정 확인 필요 · ' : ''}시행 ${esc(li.effect || '-')}${li.effect > today() ? ' (예정)' : ''}</span>`; }
     return `<li>${esc(r.line)} ${tag}</li>`;
   }).join('')}</ul>`;

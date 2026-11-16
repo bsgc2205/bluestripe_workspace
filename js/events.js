@@ -15,7 +15,7 @@ document.addEventListener('click', e => {
   if('todayMine' in d){todayMine = !todayMine; render(); return;}
   if('amode' in d){activeMode = d.amode; renderView(); return;}
   if('asort' in d){activeSort = activeSort.k === d.asort ? {k:d.asort, dir:-activeSort.dir} : {k:d.asort, dir:1}; renderView(); return;}
-  if('manScope' in d){manualScope = d.manScope; renderView(); return;}
+  if('manScope' in d){manualScope = d.manScope; manPage = 0; manSel = ''; renderView(); return;}
   if('mailAudit' in d){openAudit(); return;}
   if('extItems' in d){const ids = d.extItems.split(','); checkItemsExt(db.items.filter(i => ids.includes(i.id)), false); return;}
   if('extAll' in d){const due = db.items.filter(i => itemReqs(i).length && (!i.ext || daysLeft(String(i.ext.at).slice(0, 10)) < -30)).slice(0, 30); if(!due.length){ toast('30일 안에 모두 확인했거나, HS 10단위·CAS·원재료명이 있는 품목이 없습니다.'); return; } db.settings.extPause = ''; checkItemsExt(due, false); return;}
@@ -23,7 +23,7 @@ document.addEventListener('click', e => {
   if('lawCheck' in d){db.settings.extPause = ''; checkLaws(false); return;}
   if('alertDone' in d){const a = (db.alerts || []).find(x => x.id === d.alertDone); if(a){ a.status = 'done'; a.doneAt = nowIso(); a.doneBy = me ? me.id : ''; commit(); } return;}
   if('alertAll' in d){if(confirm('열린 알림을 모두 확인함으로 바꿀까요?')){ openAlerts().forEach(a => { a.status = 'done'; a.doneAt = nowIso(); a.doneBy = me ? me.id : ''; }); commit(); } return;}
-  if('manOpen' in d){const p = db.procedures.find(x => x.id === d.manOpen); manualQ = p ? p.title : ''; $('#q').value = ''; go('manual'); return;}
+  if('manOpen' in d){const p = db.procedures.find(x => x.id === d.manOpen); manSel = p ? p.id : ''; manTab = 'list'; manualQ = ''; $('#q').value = ''; go('manual'); return;}
   if('simCopy' in d){const [rid, sid] = d.simCopy.split('|'), r = findRec(rid), src = findRec(sid); if(r && src){ const n = copyFromRecord(r, src); openCk.add(rid); commit(); toast(n ? `${src.caseNo || src.title}의 단계·서류 ${n}개를 체크리스트에 더했습니다.` : '이미 모두 들어 있습니다.'); } return;}
   if('inqNew' in d){openInquiry(null, {rec: d.inqNew ? findRec(d.inqNew) : null}); return;}
   if('inqEdit' in d){const q = (db.inquiries || []).find(x => x.id === d.inqEdit); if(q) openInquiry(q); return;}
@@ -120,7 +120,7 @@ document.addEventListener('click', e => {
   else if('ppApply' in d){const pp = (db.procProposals || []).find(x => x.id === d.ppApply); if(pp && applyProposal(pp, readPick(pp.id))){ commit(); toast('절차에 반영했습니다. 개정 이력에 남았습니다.'); } else toast('고른 항목이 없습니다.');}
   else if('ppDrop' in d){const pp = (db.procProposals || []).find(x => x.id === d.ppDrop); if(pp){ pp.status = 'dropped'; commit(); }}
   else if('manDraft' in d){const [cid, ty] = d.manDraft.split('|'), dr = draftFromRecords(cid, ty); if(!dr.steps.length){ toast('완료 기록에 공통으로 나온 단계가 없습니다. 절차를 직접 추가하세요.'); openProc(null, {clientId:cid, type:ty}); } else { db.procProposals = db.procProposals || []; db.procProposals.push({id:uid(), recId:'', caseNo:`완료 ${dr.n}건 기준`, clientId:cid, type:ty, procId:null, at:nowIso(), by:me ? me.id : '', status:'pending', add:dr.steps, skip:[], docs:[], caution:''}); commit(); toast('초안을 개정 제안에 올렸습니다. 확인 후 반영하세요.'); }}
-  else if('manReview' in d){const p = db.procedures.find(x => x.id === d.manReview); if(p){ p.reviewedAt = today(); p.history = [...(p.history || []), {at:nowIso(), by:me ? me.id : '', text:'근거 법령 검토'}].slice(-50); openAlerts().filter(x => x.kind === 'law' && x.tid === p.id && !/^시행 예정/.test(x.title)).forEach(x => { x.status = 'done'; x.doneAt = nowIso(); x.doneBy = me ? me.id : ''; }); commit(); }}
+  else if('manReview' in d){const p = db.procedures.find(x => x.id === d.manReview); if(p) openManReview(p);}
   else if('manPrint' in d){const p = db.procedures.find(x => x.id === d.manPrint); if(p) printManual(p);}
   else if('mailOldClear' in d){const isRef = d.mailOldClear === 'ref', olds = mailThreadsList().filter(t => { const f = threadFlags(t); return isRef ? !f.old && f.ref : f.old; }); if(confirm(`${isRef ? '참고 메일' : '기준일 이전 대화'} ${olds.length}건을 모두 목록에서 뺄까요? 메일 색인에는 그대로 남습니다.`)){ olds.forEach(t => t.ms.forEach(m => seeMail(m.id))); commit(); toast(`${olds.length}건을 정리했습니다.`); }}
   else if('stage' in d){const [rid, k] = d.stage.split('|'), r = findRec(rid); if(r){ setStage(r, k, today(), '직접 표시'); if(k === 'accept') setLoadDue(r, r.stage.accept); if(k === 'customs') (r.deadlines || []).filter(x => x.kind === '수출물품 적재기한').forEach(x => x.done = true); const done = autoComplete(r); commit(); toast(done ? '통관·정산이 모두 확인되어 완료 처리했습니다.' : `${stageName(r, k)}로 표시했습니다.${k === 'accept' ? ' 적재기한(수리일 + 30일)을 등록했습니다.' : ''}`); }}
@@ -148,7 +148,7 @@ $('#view').addEventListener('input', e => {
     return;
   }
   if(el.id === 'inqQ' || el.id === 'itemQ'){ const id = el.id; if(id === 'inqQ') inqQ = el.value; else itemQ = el.value; clearTimeout(window._gq); window._gq = setTimeout(() => { renderView(); const q = $('#' + id); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
-  if(el.id === 'manQ'){ manualQ = el.value; clearTimeout(window._manT); window._manT = setTimeout(() => { renderView(); const q = $('#manQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
+  if(el.id === 'manQ'){ manualQ = el.value; manPage = 0; manSel = ''; clearTimeout(window._manT); window._manT = setTimeout(() => { renderView(); const q = $('#manQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 300); return; }
   if(el.id === 'kcQ'){ $('#kcTable').innerHTML = kcTableHTML(kcRowsFor(el.dataset.kcClient, el.value), false, el.value.trim() ? 10 : 5); return; }
   if(el.dataset && el.dataset.fee && el.dataset.fee !== 'pid'){
     if(el.dataset.fee === 'amount'){ const n = num(el.value); el.value = n ? n.toLocaleString('ko-KR') : ''; }
@@ -167,7 +167,7 @@ document.addEventListener('change', e => {
     const x = (kind === 'c' ? r.checklist : r.docs)[Number(i)]; if(!x) return;
     if(!el.checked && x.auto) x.autoOff = true;                         // 자동 체크를 해제하면 다시 자동 체크하지 않음
     delete x.auto;
-    x.done = el.checked; x.doneAt = el.checked ? today() : null; r.updatedAt = nowIso();
+    x.done = el.checked; x.doneAt = el.checked ? today() : null; if(el.checked) delete x.na; r.updatedAt = nowIso();
     openCk.add(rid); commit();
   } else if(el.matches('[data-dl]')){
     const [rid, did] = el.dataset.dl.split('|');

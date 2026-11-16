@@ -73,11 +73,11 @@ function nextAction(r){
   if(st.customsLv === 'chk' || st.acceptLv === 'chk') return a('필증·UNI-PASS로 수리 확인 (메일 글만 근거)');
   if(ph === 'fix') return a('보완·정정 요구 대응');
   if(ph === 'insp') return a('검사·검역 결과 확인');
-  const io = ['I', 'E'].includes(caseCode(r.type));
+  const io = !!recIO(r);
   if(!(io && (st.customs || st.accept))){
     const miss = ['recv', 'docs'].includes(ph) ? docStatus(r).list.filter(x => !x.ok).map(x => x.label) : [];   // 직접 신고진행 이후로 옮겼으면 서류 대기로 보지 않음
     if(miss.length) return a(`서류 받기: ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ` 외 ${miss.length - 3}` : ''}`);
-    const ck = (r.checklist || []).find(x => !x.done && !(isExp(r) && isLogiItem(r, x.text)));   // 통관만 맡은 수출 건은 물류 항목을 남은 일로 보지 않음 (11/16)
+    const ck = (r.checklist || []).find(x => ckOpen(x) && !(isExp(r) && isLogiItem(r, x.text)));   // 통관만 맡은 수출 건은 물류 항목을 남은 일로 보지 않음 (11/16)
     if(ck) return a(ck.text);
   }
   if(!io) return a(caseCode(r.type) === 'C' ? '검토 의견 회신 후 완료 처리' : '완료 처리');
@@ -247,11 +247,30 @@ function exportState(r){
     return {k:'ship', t:`선적 대기 · 예정일 ${mmdd(etd)}${w && w.recheck ? ` / 다음 확인 ${mmdd(w.recheck)}` : ''}${ldTxt}`, blk, act:`선적 예정 ${mmdd(etd)} — 선적 여부 확인`};
   }
   const u = r.unipass || {}, fixing = (u.mdfy && !/승인|완료|수리|취하|반려/.test(u.mdfy));
-  const open = (r.checklist || []).filter(x => !x.done && !isLogiItem(r, x.text));
+  const open = (r.checklist || []).filter(x => ckOpen(x) && !isLogiItem(r, x.text));
   if(fixing || open.length) return {k:'after', t:`후속 처리 · ${fixing ? '정정 진행' : String(open[0].text).slice(0, 24)}`, blk, act:fixing ? '정정 진행 확인' : open[0].text};
   const b = billState(r);
   return {k:'closeable', t:`업무 종결 가능 · ${b.t}`, blk, act:b.k === 'none' ? '정산서(청구서) 발송' : '완료 처리'};
 }
+/* 11/16 c 수입 단계: 신고 전(서류·신고) → 수리·통관 확인 → 후속 처리 → 종결 가능 (수출 exportState와 같은 틀) */
+function importState(r){
+  if(!isImp(r)) return null;
+  if(r.status === '완료') return {k:'close', t:'종결', blk:[]};
+  const st = stageOf(r), ph = recPhase(r).k, w = typeof waitOf === 'function' ? waitOf(r) : null, u = r.unipass || {}, blk = [];
+  if(ph === 'fix') blk.push('세관 보완 대기'); if(ph === 'insp') blk.push('검사·검역 대응');
+  if(w && w.who) blk.push(`${WAIT_PARTY[w.who] || w.who} 회신 대기`);
+  const dl = (r.deadlines || []).find(x => !x.done && /신고기한|반입/.test(x.kind || ''));
+  const dlTxt = dl ? ` · ${dl.kind} ${mmdd(dl.due)}${daysLeft(dl.due) <= 7 ? (daysLeft(dl.due) < 0 ? ' 지남' : ' 임박') : ''}` : '';
+  if(r.status === '보류') return {k:'pre', t:'보류', blk};
+  if(!st.accept && !st.customs) return {k:'pre', t:(['recv', 'docs'].includes(ph) ? '접수·서류 확인' : '신고 진행') + dlTxt, blk};
+  if(!st.customs) return {k:'clr', t:`수리완료 · ${u.cleared ? '납부·반출 확인' : '통관 확인 대기'}`, blk, act:u.cleared ? '납부·반출 확인' : '수리·통관 확인'};
+  const fixing = (u.mdfy && !/승인|완료|수리|취하|반려/.test(u.mdfy)), open = (r.checklist || []).filter(ckOpen);
+  if(fixing || open.length) return {k:'after', t:`후속 처리 · ${fixing ? '정정 진행' : String(open[0].text).slice(0, 24)}`, blk, act:fixing ? '정정 진행 확인' : open[0].text};
+  const b = billState(r);
+  return {k:'closeable', t:`업무 종결 가능 · ${b.t}`, blk, act:b.k === 'none' ? '정산서(청구서) 발송' : '완료 처리'};
+}
+function ioState(r){ return exportState(r) || importState(r); }
+function ioLine(r){ const s = ioState(r); return s ? s.t + (s.blk.length ? ' · ' + s.blk.join(' · ') : '') : ''; }
 function exportLine(r){ const es = exportState(r); return es ? es.t + (es.blk.length ? ' · ' + es.blk.join(' · ') : '') : ''; }
 function setEtd(r, etd){
   r.ship = r.ship || {};

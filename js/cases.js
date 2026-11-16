@@ -4,13 +4,19 @@
    번호가 없는 기록은 저장(commit)할 때 접수일 순서로 자동 부여한다. 한 번 붙은 번호는 유형을 바꿔도 그대로 둔다. */
 const CASE_CODE = {'수입통관':'I', '요건확인·검역':'I', '화학물질':'I', '수출신고':'E', 'FTA원산지':'F', '관세환급':'R', 'AEO':'C', '품목분류':'C', '외환신고':'C'};
 const CASE_RE = /\b(20\d{2})-([IEFRCX])-(\d{3,4})\b/;
-function caseCode(type){ return CASE_CODE[type] || 'X'; }
+function caseCode(type){ if(CASE_CODE[type]) return CASE_CODE[type]; const t = String(type || ''); return /수출|export/i.test(t) ? 'E' : /수입|import|통관/i.test(t) ? 'I' : 'X'; }   // 11/16 c: 직접 만든 유형 이름(수출통관·수입신고 등)도 수입·수출로
 /* 11/16 수입·수출 근거: 신고번호 끝자리(X 수출·M 수입) → 필증 요약 → 유형. UNI-PASS 조회·보드 단계는 이 값을 따름 */
 function declIO(r){
   const k = s => { const m = String(s || '').replace(/\s/g, '').match(/\d{5}-?\d{2}-?\d{6,7}([XM])$/); return m ? (m[1] === 'X' ? 'E' : 'I') : ''; };
   return k(r.refNo) || (r.refs || []).filter(x => x.kind === 'decl').map(x => k(x.no)).find(Boolean) || ((r.certs || []).map(c => c.kind).find(x => x === 'E' || x === 'I')) || '';
 }
-function recIO(r){ const d = declIO(r); if(d) return d; const c = caseCode(r.type); return c === 'E' || c === 'I' ? c : ''; }
+const ioMemo = new WeakMap();                                              // 화면 그리기 중 반복 계산 줄이기 (번호·필증·유형이 바뀌면 다시)
+function recIO(r){
+  const sig = `${r.type}|${r.refNo}|${(r.refs || []).length}|${(r.certs || []).length}`, m = ioMemo.get(r);
+  if(m && m.sig === sig) return m.v;
+  const d = declIO(r), c = caseCode(r.type), v = d || (c === 'E' || c === 'I' ? c : '');
+  ioMemo.set(r, {sig, v}); return v;
+}
 /* 자동으로 정한 유형만 고침(직원이 창에서 유형을 바꾼 기록은 그대로) */
 function typeAuto(r){ return (r.createdBy === 'auto' || (r.tags || []).includes('자동접수') || (r.tags || []).includes('자동수집')) && !(r.history || []).some(h => h.by && /(^|, )유형 [^,]* → /.test(h.text || '')); }   // 창에서 바꾼 '유형 A → B'만(자동 정정 이력은 제외)
 function retypeRecord(r, type, why){
@@ -107,7 +113,8 @@ function addFiles(r, items){
 const SETTLE_RE = /정산서/;
 const kDecl = s => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 function stageOf(r){ return r.stage || {}; }
-const isExp = r => caseCode(r.type) === 'E';
+const isExp = r => recIO(r) === 'E';                                       // 11/16 c: 신고번호 끝자리(X/M)·필증이 유형보다 우선
+const isImp = r => recIO(r) === 'I';
 function stageName(r, k){ return k === 'accept' ? '수리완료' : k === 'customs' ? (isExp(r) ? '선적완료' : '통관완료') : '청구 완료'; }   // 11/16: 정산서 발송 = 청구 완료(입금 확인은 수금 상태로 따로)
 /* 11/16 청구·수금 분리 — 업무(진행·후속·종결)와 별도로 청구 상태(청구 전 · 청구 완료 · 월정산 인계)·수금 상태(미확인 · 일부 입금 · 입금 확인) */
 const PAY_ST = {none:'수금 미확인', part:'일부 입금', paid:'입금 확인'};
@@ -240,7 +247,7 @@ function autoComplete(r, why){
   proposeFromRecord(r);
   if(!String(r.summary || '').trim()){
     const ck = (r.checklist || []);
-    r.summary = `[자동 완료] ${reason}` + (ck.length ? '\n처리 단계\n' + ck.map(x => `${x.done ? '✓' : '–'} ${x.text}${x.doneAt ? ` (${x.doneAt})` : ''}`).join('\n') : '');
+    r.summary = `[자동 완료] ${reason}` + (ck.length ? '\n처리 단계\n' + ck.map(x => `${x.done ? '✓' : x.na ? '×' : '–'} ${x.text}${x.doneAt ? ` (${x.doneAt})` : ''}${x.na ? ` (해당 없음${x.na.note ? ': ' + x.na.note : ''})` : ''}`).join('\n') : '');
   }
   r.updatedAt = nowIso();
   return true;
@@ -348,7 +355,7 @@ function undoAuto(r){
 const MAIL_HINTS = [
   {key:'mail-clear', re:/수리|필증|면허|면장 발급|cleared/i, not:/요청|신청|부탁|예정/, when:r => r.status !== '완료' && !stageOf(r).customs && !(isExp(r) && stageOf(r).accept), text:'수리·필증 관련 메일이 왔습니다', act:'customs', label:'통관완료로 표시'},
   {key:'mail-amend', re:/정정|보완|기각|반려/, when:r => !r.special, text:'정정·보완 관련 메일이 왔습니다', act:'special', label:'특이로 표시'},
-  {key:'mail-insp', re:/검역.*(합격|완료|결과)|검사.*(완료|결과|합격)|합격/, when:r => (r.checklist || []).some(x => !x.done && /검역|검사/.test(x.text)), text:'검역·검사 결과 메일이 왔습니다', act:'check', label:'해당 단계 체크'}
+  {key:'mail-insp', re:/검역.*(합격|완료|결과)|검사.*(완료|결과|합격)|합격/, when:r => (r.checklist || []).some(x => ckOpen(x) && /검역|검사/.test(x.text)), text:'검역·검사 결과 메일이 왔습니다', act:'check', label:'해당 단계 체크'}
 ];
 function suggestions(r){
   if(r.status === '완료') return [];
@@ -362,7 +369,7 @@ function suggestions(r){
   });
   const u = r.unipass || {};
   const k1 = 'up-req:' + (u.reqRqst || '');
-  if(u.reqRqstDone && (r.checklist || []).some(x => !x.done && /검역|검사|요건/.test(x.text)) && !off.has(k1)) out.push({key:k1, text:`UNI-PASS 요건신청 처리: ${u.reqRqst}`, act:'check', label:'해당 단계 체크'});
+  if(u.reqRqstDone && (r.checklist || []).some(x => ckOpen(x) && /검역|검사|요건/.test(x.text)) && !off.has(k1)) out.push({key:k1, text:`UNI-PASS 요건신청 처리: ${u.reqRqst}`, act:'check', label:'해당 단계 체크'});
   const k2 = 'up-zero:' + (u.condTxt || '');
   if(r.cond && r.cond.zero && !off.has(k2)) out.push({key:k2, text:`UNI-PASS 잔량 0 — ${u.condTxt}`, act:'complete', label:'완료 처리'});
   const k3 = 'up-ldp:' + (u.ldp || '');
@@ -384,7 +391,7 @@ function applySuggestion(r, key){
   if(s.act === 'complete'){ openRecord(r, {complete:true}); return; }
   if(s.act === 'customs'){ setStage(r, 'customs', s.date, '메일 확인(직접)'); autoComplete(r); }
   if(s.act === 'accept' && setStage(r, 'accept', s.date, '메일 확인(직접)')) setLoadDue(r, r.stage.accept);
-  if(s.act === 'check'){ const i = (r.checklist || []).findIndex(x => !x.done && /검역|검사|요건/.test(x.text)); if(i >= 0){ r.checklist[i].done = true; r.checklist[i].doneAt = today(); } }
+  if(s.act === 'check'){ const i = (r.checklist || []).findIndex(x => ckOpen(x) && /검역|검사|요건/.test(x.text)); if(i >= 0){ r.checklist[i].done = true; r.checklist[i].doneAt = today(); } }
   r.updatedAt = nowIso(); commit(); toast('반영했습니다.');
 }
 
@@ -493,11 +500,11 @@ async function checkExtra(r, u){
   }
   const md = r.mdfy || {};
   if(md.dcshSbmtNo && md.dgcnt && md.date){
-    try{ const j = await uni('API052', {dcshSbmtNo:md.dcshSbmtNo, imexTpcd:caseCode(r.type) === 'E' ? 'E' : 'I', mdfyRqstDgcnt:md.dgcnt, mdfyRqstDt:md.date.replace(/-/g, '')}); u.mdfy = pick(j, 'mdfyRqstPrcsStcdNm') || u.mdfy || ''; }
+    try{ const j = await uni('API052', {dcshSbmtNo:md.dcshSbmtNo, imexTpcd:recIO(r) === 'E' ? 'E' : 'I', mdfyRqstDgcnt:md.dgcnt, mdfyRqstDt:md.date.replace(/-/g, '')}); u.mdfy = pick(j, 'mdfyRqstPrcsStcdNm') || u.mdfy || ''; }
     catch(e){ u.err052 = e.message; }
   }
   if(r.reqApreNo){
-    try{ const j = await uni('API003', {imexTpcd:caseCode(r.type) === 'E' ? 'E' : 'I', reqApreNo:kDecl(r.reqApreNo)}); const iss = pick(j, 'issDt'); u.req = iss ? `승인 ${fmtYmd(iss)}` : (u.req || ''); }
+    try{ const j = await uni('API003', {imexTpcd:recIO(r) === 'E' ? 'E' : 'I', reqApreNo:kDecl(r.reqApreNo)}); const iss = pick(j, 'issDt'); u.req = iss ? `승인 ${fmtYmd(iss)}` : (u.req || ''); }
     catch(e){ u.err003 = e.message; }
   }
 }

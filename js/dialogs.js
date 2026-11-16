@@ -139,9 +139,11 @@ function openRecord(r, preset = {}){
       if(links.length < rawLinks.length) toast('http(s)로 시작하지 않는 링크는 빼고 저장했습니다.');
       const keep = (old, texts) => {const m = new Map(old.map(x => [x.text, x])); return texts.map(tx => m.get(tx) || {text:tx, done:false});};
       const checklist = keep(rec.checklist || [], lines(fd.get('checklist')));
+      const openN = checklist.filter(ckOpen).length;                     // 11/16 d: 미처리로 완료하면 매뉴얼 개정 근거로 쓰지 않음
+      if(status === '완료' && !wasDone && openN && !confirm(`미처리 단계 ${openN}개가 남아 있습니다.\n이번 건에 필요 없던 단계는 기록 카드에서 ‘해당 없음’(사유)으로 표시하면 매뉴얼 정리에 쓰입니다.\n미처리로 두고 완료하면 매뉴얼 개정 근거로 쓰지 않습니다.\n\n그대로 완료할까요?`)) return false;
       let summary = fd.get('summary').trim();
       if(status === '완료' && !summary && checklist.length)
-        summary = '처리 단계\n' + checklist.map(x => `${x.done ? '✓' : '–'} ${x.text}${x.doneAt ? ` (${x.doneAt})` : ''}`).join('\n');
+        summary = '처리 단계\n' + checklist.map(x => `${x.done ? '✓' : x.na ? '×' : '–'} ${x.text}${x.doneAt ? ` (${x.doneAt})` : ''}${x.na ? ` (해당 없음${x.na.note ? ': ' + x.na.note : ''})` : ''}`).join('\n');
       const feeNum = Number(String(fd.get('fee')).replace(/[^\d]/g,''));
       Object.assign(rec, {
         clientId: fd.get('clientId'), type: fd.get('type'), status, itemId: fd.get('itemId') || '',
@@ -400,6 +402,19 @@ function openLetter(clientId){
   });
 }
 
+/* 11/16 d: 매뉴얼 적용 범위·조건, 조건부·참고 서류 (공통·업체 특이사항 창 공통) */
+function procExtraHTML(pr){
+  const sc = typeof SCOPE !== 'undefined' ? SCOPE : {};
+  return `<div class="row2"><label>적용 범위 <span class="hint">(수출 업무만 — 비우면 범위 상관없음)</span><select name="pScope">${opts([['', '구분 없음'], ...Object.entries(sc)], pr.scope || '')}</select></label>
+      <label>적용 조건 <span class="hint">(쉼표로 낱말 — 업무 제목·요약에 있으면 이 매뉴얼 우선. 예: 재수출, 수리)</span><input name="pCond" value="${esc(pr.cond || '')}"></label></div>
+    <div class="row2"><label>조건부 서류 <span class="hint">(한 줄에 하나: 서류 — 필요한 경우)</span><textarea name="pDocsCond" rows="2" placeholder="시험성적서 — 식품 접촉 품목">${esc((pr.docsCond || []).map(d => d.text + (d.cond ? ' — ' + d.cond : '')).join('\n'))}</textarea></label>
+      <label>참고 서류 <span class="hint">(쉼표로 구분 — 받으면 좋지만 없어도 진행)</span><input name="pDocsRef" value="${esc((pr.docsRef || []).join(', '))}"></label></div>`;
+}
+function readProcExtra(fd){
+  return {scope:String(fd.get('pScope') || ''), cond:String(fd.get('pCond') || '').trim(),
+    docsCond:lines(fd.get('pDocsCond')).map(l => { const m = l.split(/\s+[—-]\s+/); return {text:m[0].trim(), cond:(m.slice(1).join(' - ') || '').trim()}; }).filter(d => d.text),
+    docsRef:splitDocs(fd.get('pDocsRef') || '')};
+}
 function openProc(p, preset = {}){
   if(isOverlay(p) || preset.overlay) return openOverlay(p, preset);        // 업체 특이사항(공통 위에 덧붙임)은 전용 창 (11/13 b)
   const isNew = !p;
@@ -414,6 +429,7 @@ function openProc(p, preset = {}){
       <p class="hint" data-x="ovHint" hidden>이 업체만 다른 점이 있는 경우라면 공통 절차를 복사하지 말고 <button type="button" class="linkish" data-x="toOv">업체 특이사항으로 만들기</button>(공통 절차 위에 덧붙임 — 공통이 고쳐지면 함께 반영)를 쓰세요.</p>
       <label>처리 단계 <span class="hint">(한 줄에 한 단계. 단계 조건은 뒤에 ‘ | 완료: … | 자료: … | 담당: … | 예외: … | 시작: …’)</span><textarea name="steps" rows="8" placeholder="선적서류 수령 | 완료: Invoice·PL·B/L 모두 받음 | 자료: Invoice, PL, B/L&#10;HS 분류 및 요건 확인&#10;…">${esc((pr.steps || []).map(x => stepLine(x, pr.stepMeta)).join('\n'))}</textarea></label>
       <label>필요 서류 (쉼표나 줄바꿈으로 구분)<textarea name="docs" rows="3">${esc(pr.docs)}</textarea></label>
+      ${procExtraHTML(pr)}
       <label>주의사항<textarea name="cautions" rows="4" placeholder="이 업체·업무에서 자주 걸리는 부분">${esc(pr.cautions)}</textarea></label>
       <div class="row2"><label>근거 법령 (한 줄에 하나: 법령명 제00조, 고시명)<textarea name="laws" rows="3" placeholder="관세법 제241조&#10;수입통관 사무처리에 관한 고시">${esc(pr.laws || '')}</textarea></label><label>최종 법령 검토일<input type="date" name="reviewedAt" value="${esc(pr.reviewedAt || '')}"></label></div>
       <div class="row2">
@@ -422,8 +438,9 @@ function openProc(p, preset = {}){
       </div>`,
     onSave(fd){
       const t = nowIso(), ps = parseStepLines(fd.get('steps'));
-      const snap = x => JSON.stringify([x.steps || [], x.docs || '', x.cautions || '', x.laws || '', x.stepMeta || {}, x.clientId || '', x.type]);
+      const snap = x => JSON.stringify([x.steps || [], x.docs || '', x.cautions || '', x.laws || '', x.stepMeta || {}, x.clientId || '', x.type, x.scope || '', x.cond || '', x.docsCond || [], x.docsRef || []]);
       const before = isNew ? '' : snap(pr);
+      Object.assign(pr, readProcExtra(fd));
       Object.assign(pr, {clientId: fd.get('clientId') || null, type: fd.get('type'), title: fd.get('title').trim(), steps: ps.steps, stepMeta: ps.meta, docs: fd.get('docs').trim(), cautions: fd.get('cautions').trim(), laws: String(fd.get('laws') || '').trim(), reviewedAt: fd.get('reviewedAt') || pr.reviewedAt || '', assignee: fd.get('assignee') || '', dlKinds: fd.getAll('dlKinds'), updatedAt: t});
       if(isNew){pr.createdAt = t; pr.ver = 1; pr.history = [{at:t, by:me ? me.id : '', text:'작성', ver:1}]; db.procedures.push(pr); toast('절차를 저장했습니다.');}
       else { if(before !== snap(pr)) bumpProc(pr, '직접 수정'); toast(`절차를 수정했습니다 (${procVerStr(pr)}).`); }
@@ -458,7 +475,8 @@ function openOverlay(p, preset = {}){
       <div class="dlg-section"><h4>공통 단계 — 이 업체에서</h4><div data-x="baseSteps"></div></div>
       <label>이 업체 추가 단계 <span class="hint">(한 줄에 하나. 끝에 ‘@번호’ = 위 공통 단계 그 번호 뒤, ‘@0’ = 맨 앞, 없으면 맨 끝. 조건은 ‘ | 완료: … | 자료: …’)</span>
         <textarea name="addSteps" rows="4" placeholder="식품 접촉 부분 시험성적서 확인 @2">${esc((ov.addSteps || []).map(addLine).join('\n'))}</textarea></label>
-      <label>이 업체 추가 서류 <span class="hint">(쉼표로 구분)</span><input name="xdocs" value="${esc(ov.xdocs || '')}"></label>
+      <label>이 업체 추가 서류(필수) <span class="hint">(쉼표로 구분)</span><input name="xdocs" value="${esc(ov.xdocs || '')}"></label>
+      ${procExtraHTML(ov)}
       <label>업체 주의사항<textarea name="ownCautions" rows="4" placeholder="이 업체에서 자주 걸리는 부분">${esc(ov.ownCautions || '')}</textarea></label>
       <label>기본 담당자<select name="assignee">${opts([['', '지정 안 함'], ...accounts.map(a => [a.id, a.name])], ov.assignee || '')}</select></label>`,
     onSave(fd){
@@ -474,10 +492,10 @@ function openOverlay(p, preset = {}){
         Object.assign(meta, ps.meta);
       });
       const cid = fd.get('clientId');
-      const snap = x => JSON.stringify([x.clientId, x.baseId, x.addSteps || [], x.skipSteps || [], x.optSteps || [], x.xdocs || '', x.ownCautions || '', x.ownMeta || {}]);
+      const snap = x => JSON.stringify([x.clientId, x.baseId, x.addSteps || [], x.skipSteps || [], x.optSteps || [], x.xdocs || '', x.ownCautions || '', x.ownMeta || {}, x.scope || '', x.cond || '', x.docsCond || [], x.docsRef || []]);
       const before = isNew ? '' : snap(ov);
       Object.assign(ov, {clientId:cid, baseId:b.id, type:b.type, title:String(fd.get('title') || '').trim() || `${clientName(cid)} — ${b.title}`, addSteps:adds, skipSteps:skip, optSteps:opt,
-        xdocs:String(fd.get('xdocs') || '').trim(), ownCautions:String(fd.get('ownCautions') || '').trim(), ownMeta:meta, assignee:fd.get('assignee') || ''});
+        xdocs:String(fd.get('xdocs') || '').trim(), ownCautions:String(fd.get('ownCautions') || '').trim(), ownMeta:meta, assignee:fd.get('assignee') || '', ...readProcExtra(fd)});
       materialize(ov);
       if(isNew){ const t = nowIso(); Object.assign(ov, {createdAt:t, updatedAt:t, ver:1, history:[{at:t, by:me ? me.id : '', text:`작성 (공통 ‘${b.title}’ 위에)`, ver:1}]}); db.procedures.push(ov); toast('업체 특이사항을 저장했습니다.'); }
       else { if(before !== snap(ov)) bumpProc(ov, '직접 수정'); toast(`업체 특이사항을 수정했습니다 (${procVerStr(ov)}).`); }

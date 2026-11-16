@@ -82,8 +82,10 @@ function go(name, id, back){
 }
 window.addEventListener('popstate', e => { const r = (e.state && e.state.route) || {name:'home', id:null}; if(db && !$('#dlg').open) go(r.name, r.id, true); });
 
-function ckItem(rid, kind, i, x, meta){
-  return `<li class="${x.done ? 'done' : ''}"${meta ? ` title="${esc(stepMetaTitle(meta))}"` : ''}><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${meta && meta.done && !x.done ? ` <small class="hint">완료: ${esc(meta.done)}</small>` : ''}${x.done && x.doneAt ? `<small${x.auto ? ` title="자동 체크: ${esc(x.auto)}"` : ''}>${esc(x.doneAt)}${x.auto ? ' · 자동' : ''}</small>` : ''}</span></label></li>`;
+function ckItem(rid, kind, i, x, meta){                                   // 11/16 d: 완료 · 해당 없음(사유) · 미처리
+  const na = x.na ? ` <small class="na-why">해당 없음${x.na.note ? ': ' + esc(x.na.note) : x.na.why && typeof NA_WHY !== 'undefined' ? ': ' + esc(NA_WHY[x.na.why] || '') : ''}</small>` : '';
+  const nb = x.done ? '' : `<button type="button" class="ck-na" data-ck-na="${esc(rid)}|${kind}|${i}" title="${x.na ? '해당 없음 취소' : '이번 건에는 필요 없는 단계 — 사유를 남김'}">${x.na ? '되돌리기' : '해당 없음'}</button>`;
+  return `<li class="${x.done ? 'done' : x.na ? 'na' : ''}"${meta ? ` title="${esc(stepMetaTitle(meta))}"` : ''}><label><input type="checkbox" data-ck="${esc(rid)}|${kind}|${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}${meta && meta.done && !x.done ? ` <small class="hint">완료: ${esc(meta.done)}</small>` : ''}${x.done && x.doneAt ? `<small${x.auto ? ` title="자동 체크: ${esc(x.auto)}"` : ''}>${esc(x.doneAt)}${x.auto ? ' · 자동' : ''}</small>` : ''}</span>${na}</label>${nb}</li>`;
 }
 /* 기록 단계 색 띠: 조치 필요(빨강) · 진행(파랑) · 선적 대기(청록, 수출 수리 후) · 정산 대기(초록) · 보류(회색) */
 function recBand(r){
@@ -92,6 +94,7 @@ function recBand(r){
   const overdue = (r.deadlines || []).some(d => !d.done && daysLeft(d.due) < 0), stale = bizDaysSince(lastActivity(r)) >= STALE_DAYS && !(typeof waitHold === 'function' && waitHold(r));   // 대기 지정·재확인일 전이면 무변동 아님
   if(overdue || stale) return {k:'act', t:overdue ? '지난 기한 있음' : `${STALE_DAYS}영업일 넘게 변화 없음`};
   if(isExp(r) && typeof exportState === 'function'){ const es = exportState(r); if(es && es.k === 'shipchk') return {k:'act', t:exportLine(r)}; if(es && ['ship', 'after', 'closeable'].includes(es.k)) return {k:es.k === 'ship' ? 'ship' : 'settle', t:exportLine(r)}; }   // 11/16 수출 단계 표시
+  if(isImp(r) && typeof importState === 'function'){ const is = importState(r); if(is && ['after', 'closeable'].includes(is.k)) return {k:'settle', t:ioLine(r)}; if(is && is.k === 'clr') return {k:'prog', t:ioLine(r)}; }   // 11/16 c 수입 단계 표시
   if(stageOf(r).customs) return {k:'settle', t:`${stageName(r, 'customs')} · 청구 대기`};
   if(isExp(r) && stageOf(r).accept) return {k:'ship', t:'수리완료 · 선적 대기'};
   return {k:'prog', t:'진행 중'};
@@ -100,7 +103,7 @@ let moreOpen = new Set();
 function recordHTML(r, o = {}){
   const active = r.status !== '완료';
   const ck = r.checklist || [], dc = r.docs || [];
-  const ckDone = ck.filter(x => x.done).length, dcDone = dc.filter(x => x.done).length;
+  const ckDone = ck.filter(x => x.done || x.na).length, dcDone = dc.filter(x => x.done || x.na).length, naN = ck.filter(x => x.na).length + dc.filter(x => x.na).length;   // 해당 없음도 처리된 것으로
   const total = ck.length + dc.length, pct = total ? Math.round((ckDone + dcDone) / total * 100) : 0;
   const dls = (r.deadlines || []).filter(d => !d.done).sort((a,b) => a.due.localeCompare(b.due));
   const links = (r.links || []).filter(safeUrl);
@@ -108,7 +111,7 @@ function recordHTML(r, o = {}){
   const tags = (r.tags || []).length ? `<div class="tags">${r.tags.map(t => `<span class="tag">${hl(t)}</span>`).join('')}</div>` : '';
   const linkHtml = links.length ? `<div class="links">${links.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(linkLabel(u))}</a>`).join('')}</div>` : '';
   const ckHtml = total && !o.compact ? `<div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
-    <details class="ck" data-ck-rec="${esc(r.id)}"${openCk.has(r.id) ? ' open' : ''}><summary>${ck.length ? `단계 ${ckDone}/${ck.length}` : ''}${ck.length && dc.length ? ', ' : ''}${dc.length ? `서류 ${dcDone}/${dc.length}` : ''}</summary>
+    <details class="ck" data-ck-rec="${esc(r.id)}"${openCk.has(r.id) ? ' open' : ''}><summary>${ck.length ? `단계 ${ckDone}/${ck.length}` : ''}${ck.length && dc.length ? ', ' : ''}${dc.length ? `서류 ${dcDone}/${dc.length}` : ''}${naN ? ` · 해당 없음 ${naN}` : ''}</summary>
       ${ck.length ? `<ul>${ck.map((x,i) => ckItem(r.id,'c',i,x, stepMetaOf(r, x.text))).join('')}</ul>` : ''}
       ${dc.length ? `<p class="ck-sub">필요 서류</p><ul>${dc.map((x,i) => ckItem(r.id,'d',i,x)).join('')}</ul>` : ''}
     </details>` : '';
@@ -126,7 +129,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) + (typeof procPickHTML === 'function' && r.status !== '완료' ? procPickHTML(r) : '') : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
       ${active && !o.compact && typeof caseSumHTML === 'function' ? caseSumHTML(r) : ''}
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
@@ -227,7 +230,7 @@ function homeRowHTML(x){
   const r = x.r, top = x.xs[0], cnt = {};
   x.xs.forEach(i => { cnt[i.kind] = (cnt[i.kind] || 0) + 1; });
   const ttl = top ? String(top.title).replace(/\s\d{4}-\d{2}-\d{2}\s\((D[+-]\d+|오늘)\)$/, '') : '';
-  const action = top ? `${esc(top.kind)}: ${esc(ttl)}` : r ? esc(nextAction(r).t || r.status) + (isExp(r) && typeof exportLine === 'function' && exportLine(r) ? `<span class="hint"> · ${esc(exportLine(r))}</span>` : '') : '';
+  const action = top ? `${esc(top.kind)}: ${esc(ttl)}` : r ? esc(nextAction(r).t || r.status) + (recIO(r) && typeof ioLine === 'function' && ioLine(r) ? `<span class="hint"> · ${esc(ioLine(r))}</span>` : '') : '';
   const more = Object.keys(cnt).length > 1 || x.xs.length > 1 ? `<span class="hint"> · ${Object.entries(cnt).map(([k, n]) => `${esc(k)} ${n}`).join(' · ')}</span>` : '';
   const who = r ? `<b>${esc(clientName(r.clientId))}</b><span class="hint">${esc(`${r.caseNo ? r.caseNo + ' · ' : ''}${r.title || ''}`)}</span>` : `<b>${esc(top.cl || '')}</b><span class="hint">${esc(top.title || '')}</span>`;
   const btn = top ? firstBtn(top.acts) : r ? `<button class="mini" data-edit-rec="${esc(r.id)}">기록</button>` : '';
@@ -301,27 +304,33 @@ function lazyHTML(k){
   if(k === 'hold'){ const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id); const xs = db.records.filter(r => r.status === '보류' && mine(r)).sort((a, b) => (a.startDate || '').localeCompare(b.startDate || '')); return `<div class="rec-grid wide">${xs.slice(0, 20).map(r => recordHTML(r, {showClient:true})).join('')}</div>${xs.length > 20 ? `<p class="hint">외 ${xs.length - 20}건 — 위 검색칸이나 표 보기</p>` : ''}`; }
   return '';
 }
-/* ---------- 11/16 수출 빠른 필터: 신고 전 · 수리 후 미선적 · 후속 처리 · 기한 임박·초과 ---------- */
+/* ---------- 11/16 수입·수출 빠른 필터 (11/16 c 수입 추가): expF = 'E:pre' 처럼 '구분:단계' ---------- */
 let expF = '';
-function exportBucket(r){ const es = typeof exportState === 'function' ? exportState(r) : null; if(!es) return ''; return es.k === 'pre' ? 'pre' : ['ship', 'shipchk'].includes(es.k) ? 'ship' : ['after', 'closeable'].includes(es.k) ? 'after' : ''; }
-function exportDue(r){ return isExp(r) && (r.deadlines || []).some(d => !d.done && daysLeft(d.due) <= 7); }
+function exportBucket(r){ const s = typeof ioState === 'function' ? ioState(r) : null; if(!s) return ''; return s.k === 'pre' ? 'pre' : ['ship', 'shipchk', 'clr'].includes(s.k) ? 'ship' : ['after', 'closeable'].includes(s.k) ? 'after' : ''; }
+function exportDue(r){ return !!recIO(r) && (r.deadlines || []).some(d => !d.done && daysLeft(d.due) <= 7); }
+function ioMatch(r, f){ const [io, k] = String(f || '').split(':'); return recIO(r) === io && (k === 'dl' ? exportDue(r) : exportBucket(r) === k); }
 function exportBarHTML(act){
-  const ex = act.filter(r => isExp(r)); if(!ex.length) return '';
-  const n = k => k === 'dl' ? ex.filter(exportDue).length : ex.filter(r => exportBucket(r) === k).length;
-  const b = (k, l) => `<button class="tab${expF === k ? ' on' : ''}${k === 'dl' && n(k) ? ' act' : ''}" data-exp-f="${k}">${l} <span class="cnt">${n(k)}</span></button>`;
-  return `<div class="tabs exp-tabs"><span class="hint">수출 ${ex.length}건:</span>${b('pre', '신고 전')}${b('ship', '수리 후 미선적')}${b('after', '후속 처리')}${b('dl', '기한 임박·초과')}${expF ? '<button class="mini" data-exp-f="">필터 끄기</button>' : ''}</div>`;
+  const row = (io, lab, mid) => {
+    const xs = act.filter(r => recIO(r) === io); if(!xs.length) return '';
+    const cnt = {pre:0, ship:0, after:0, dl:0}; xs.forEach(r => { const k = exportBucket(r); if(k) cnt[k]++; if(exportDue(r)) cnt.dl++; });   // 한 번만 계산
+    const n = k => cnt[k];
+    const b = (k, l) => `<button class="tab${expF === io + ':' + k ? ' on' : ''}${k === 'dl' && n(k) ? ' act' : ''}" data-exp-f="${io}:${k}">${l} <span class="cnt">${n(k)}</span></button>`;
+    return `<div class="tabs exp-tabs"><span class="hint">${lab} ${xs.length}건:</span>${b('pre', '신고 전')}${b('ship', mid)}${b('after', '후속 처리')}${b('dl', '기한 임박·초과')}</div>`;
+  };
+  const h = row('I', '수입', '수리 후 통관 확인') + row('E', '수출', '수리 후 미선적');
+  return h + (expF ? '<div class="tabs exp-tabs"><button class="mini" data-exp-f="">필터 끄기</button></div>' : '');
 }
 function exportTableHTML(rows){
   const nd = r => (r.deadlines || []).filter(d => !d.done).sort((a, b) => a.due.localeCompare(b.due))[0];
-  rows = rows.slice().sort((a, b) => ((exportState(a) || {}).k === 'shipchk' ? 0 : 1) - ((exportState(b) || {}).k === 'shipchk' ? 0 : 1) || ((nd(a) || {}).due || '9').localeCompare((nd(b) || {}).due || '9'));
+  rows = rows.slice().sort((a, b) => ((ioState(a) || {}).k === 'shipchk' ? 0 : 1) - ((ioState(b) || {}).k === 'shipchk' ? 0 : 1) || ((nd(a) || {}).due || '9').localeCompare((nd(b) || {}).due || '9'));
   if(activePage * 20 >= rows.length) activePage = Math.max(0, Math.ceil(rows.length / 20) - 1);
-  const row = r => { const es = exportState(r) || {}, w = typeof waitOf === 'function' ? waitOf(r) : null, d = nd(r), bs = billState(r);
+  const row = r => { const es = ioState(r) || {}, w = typeof waitOf === 'function' ? waitOf(r) : null, d = nd(r), bs = billState(r);
     return `<tr class="${es.k === 'shipchk' ? 'b-act' : ''}"><td><button class="linkish" data-go="client" data-id="${esc(r.clientId)}"><b>${esc(clientName(r.clientId))}</b></button><div class="hint"><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(`${r.caseNo ? r.caseNo + ' · ' : ''}${r.title || ''}`.slice(0, 50))}</button></div></td>
       <td>${esc(es.t || '')}${(es.blk || []).length ? `<div class="hint">${esc(es.blk.join(' · '))}</div>` : ''}${recScope(r) !== 'customs' ? `<div class="hint">${esc(SCOPE[recScope(r)])}</div>` : ''}</td>
       <td>${esc(nextAction(r).t || '')}</td><td>${w && w.who ? `${esc(WAIT_PARTY[w.who] || w.who)}${w.recheck ? ` <span class="hint">재확인 ${esc(mmdd(w.recheck))}</span>` : ''}` : '<span class="hint">-</span>'}</td>
       <td>${d ? `${ddayHTML(d.due)} <span class="hint">${esc(d.kind)}</span> ${dlSrcTag(d)}` : '<span class="hint">-</span>'}</td><td>${esc(bs.t)}${['billed', 'monthly'].includes(bs.k) ? `<div class="hint">${esc(PAY_ST[payState(r).st])}</div>` : ''}</td>
-      <td><button class="mini" data-ship-set="${esc(r.id)}">선적 일정</button></td></tr>`; };
-  return `<div class="table-wrap"><table class="grid act-table exp-table"><thead><tr><th>업체·사건</th><th>현재 단계</th><th>다음 조치</th><th>기다리는 상대</th><th>가장 가까운 기한</th><th>청구</th><th></th></tr></thead><tbody>${rows.slice(activePage * 20, (activePage + 1) * 20).map(row).join('') || '<tr><td colspan="7" class="empty">해당하는 수출 건이 없습니다.</td></tr>'}</tbody></table></div>${pagerHTML('act-page', activePage, rows.length)}`;
+      <td>${isExp(r) ? `<button class="mini" data-ship-set="${esc(r.id)}">선적 일정</button>` : ''}</td></tr>`; };
+  return `<div class="table-wrap"><table class="grid act-table exp-table"><thead><tr><th>업체·사건</th><th>현재 단계</th><th>다음 조치</th><th>기다리는 상대</th><th>가장 가까운 기한</th><th>청구</th><th></th></tr></thead><tbody>${rows.slice(activePage * 20, (activePage + 1) * 20).map(row).join('') || '<tr><td colspan="7" class="empty">해당하는 건이 없습니다.</td></tr>'}</tbody></table></div>${pagerHTML('act-page', activePage, rows.length)}`;
 }
 function viewActive(){
   const mine = r => !mineOnly || !me || r.assignee === me.id || (!r.assignee && r.createdBy === me.id);
@@ -338,8 +347,8 @@ function viewActive(){
   const dls = openDeadlines();
   const head = `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
     <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button><button class="${activeMode === 'board' ? 'on' : ''}" data-amode="board" title="접수 → 서류대기 → 신고진행 → 보완요청 → 검사 → 수리완료 → 종결">보드</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
-  const H = head + exportBarHTML(act);                                     // 11/16 수출 빠른 필터
-  if(expF) return H + exportTableHTML(act.filter(r => exportBucket(r) === expF || (expF === 'dl' && exportDue(r))));
+  const H = head + exportBarHTML(act);                                     // 11/16 수입·수출 빠른 필터
+  if(expF) return H + exportTableHTML(act.filter(r => ioMatch(r, expF)));
   if(activeMode === 'board') return H + boardHTML({list:[...act, ...hold], mine});
   if(activeMode === 'table') return H + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">청구 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
     + ([...act, ...hold].length ? activeTableHTML([...act, ...hold]) : '<p class="empty">진행 중인 업무가 없습니다.</p>')

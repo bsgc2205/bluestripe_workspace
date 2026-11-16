@@ -145,6 +145,8 @@ function checkGroups(){
       return {key:`stage:${r.id}|${k}`, t1:`${r.caseNo || ''} ${r.title}${r.status === '완료' ? ' (완료 기록)' : ''}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} — ${re ? `근거 자료가 빠짐(${re}) · ` : ''}${(r.stage || {})[k + 'By'] || ''}`, lvl:'chk',
         acts:BTN.ok(`data-stage-ok="${esc(r.id)}|${k}"`) + BTN.link(`data-unstage="${esc(r.id)}|${k}"`, '틀림(취소)') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later(`stage:${r.id}|${k}`)}; })]});
   const pv = db.records.filter(r => r.status !== '완료' && typeof procVerHTML === 'function' && / 새 버전/.test(procVerHTML(r)));
+  const pa = typeof procAmbig === 'function' ? db.records.filter(r => r.status !== '완료' && r.status !== '보류' && procAmbig(r).length) : [];   // 11/16 d
+  if(pa.length) g.push({k:'procpick', s:'매뉴얼 후보 여럿', title:'매뉴얼 후보가 여러 개인 진행 중 업무', why:'같은 업체·유형에 범위·조건이 같은 매뉴얼이 둘 이상 — 이 건에 맞는 매뉴얼을 고르세요(첫 번째를 임시로 씀)', rows:pa.map(r => ({key:'procpick:' + r.id, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · 후보 ${procAmbig(r).map(p => p.title).join(' / ')}`, lvl:'ref', acts:BTN.ok(`data-proc-pick="${esc(r.id)}"`, '매뉴얼 고르기') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later('procpick:' + r.id)}))});
   if(pv.length) g.push({k:'pver', s:'매뉴얼 변경', title:'매뉴얼이 바뀐 진행 중 업무', why:'시작한 뒤 매뉴얼이 고쳐졌습니다 — 차이를 보고 필요한 단계만 넣으세요', rows:pv.map(r => ({key:'pver:' + r.id, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${(r.procVer || {}).s || ''}`, lvl:'ref', acts:BTN.ok(`data-proc-diff="${esc(r.id)}"`, '차이 보기') + BTN.later('pver:' + r.id)}))});
   if(typeof recDupCandidates === 'function'){                              // 11/14 P2: 같은 신고번호·B/L 기록
     const rd = recDupCandidates();

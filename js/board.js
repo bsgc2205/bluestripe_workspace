@@ -20,7 +20,7 @@ function autoPhase(r){
   if(PH_INSP.test(uni)) return 'insp';
   if(ev.decl || u.dclrNo) return 'decl';
   const {list, extra} = docStatus(r);
-  if(!list.length) return ['I', 'E'].includes(caseCode(r.type)) ? 'recv' : (ev.docs ? 'decl' : 'recv');
+  if(!list.length) return recIO(r) ? 'recv' : (ev.docs ? 'decl' : 'recv');
   const got = list.filter(x => x.ok).length + extra.length;
   if(got === 0) return 'recv';
   return list.every(x => x.ok) ? 'decl' : 'docs';

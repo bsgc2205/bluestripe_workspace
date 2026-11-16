@@ -745,10 +745,17 @@ function threadTokenRecord(t){
 /* 11/16 업무 유형 한 번 다시 보기: 자동으로 만든 기록 중 ① 신고번호 끝자리·필증·필증 송부 메일과 유형이 다르면 고침
    ② 제목·메일 제목 단서가 분명히(점수 차 3 이상) 다른 쪽이면 고침 ③ 애매하면 확인함 '업무 유형 확인'(r.typeChk)으로 */
 function fixTypes(force){
-  if(db.settings.typeFix === '20261116' && !force) return {n:0, chk:0};
+  if(db.settings.typeFix === '20261116c' && !force) return {n:0, chk:0};
   let n = 0, chk = 0;
   db.records.forEach(r => {
-    if(!typeAuto(r)) return;
+    if(!typeAuto(r)){                                                     // 11/16 c: 직접 만든·가져온 기록도 신고번호 끝자리(X/M)·필증과 수입·수출이 반대면 정정 — 사람이 그 유형으로 바꾼 기록은 확인함
+      const hd = declIO(r), cc = caseCode(r.type);
+      if(!hd || !['I', 'E'].includes(cc) || cc === hd || (CASE_CODE[r.type] && !['수입통관', '수출신고'].includes(r.type))) return;   // 요건확인·화학물질 등 특수 유형은 그대로
+      const to = hd === 'E' ? '수출신고' : '수입통관', mine = (r.history || []).some(h => h.by && /(^|, )유형 [^,]* → /.test(h.text || ''));
+      if(mine){ r.typeChk = {to, why:'신고번호 끝자리·필증과 수입·수출이 다름', at:today()}; chk++; }
+      else if(retypeRecord(r, to, '신고번호 끝자리·필증')) n++;
+      return;
+    }
     const subj = [r.title, ...(r.mails || []).slice(0, 8).map(m => m.subject)].filter(Boolean).join(' '), body = String(r.summary || '');
     const cmk = (r.mails || []).map(m => certMail({...m, files:m.files || []})).filter(Boolean).map(x => x.kind).find(k => k === 'E' || k === 'I');
     const hard = declIO(r) || cmk || '';
@@ -759,7 +766,7 @@ function fixTypes(force){
     if(hard || (io.sure && !special)){ if(retypeRecord(r, want, hard ? (declIO(r) ? '신고번호·필증' : '필증 송부 메일') : io.why)) n++; }
     else { r.typeChk = {to:want, why:special ? '제목에 그 업무 요청' : (io.why || '제목 단서'), at:today()}; chk++; }
   });
-  db.settings.typeFix = '20261116';
+  db.settings.typeFix = '20261116c';
   return {n, chk};
 }
 /* 11/16 b: 공용 주소 — 이 주소(도메인)에서 온 메일 제목에 다른 업체(포워더 아님)가 2통 이상 적혀 있으면 여러 화주 일을 보내는 대행사·포워더 주소 */
