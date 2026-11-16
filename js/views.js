@@ -129,7 +129,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) + (typeof procPickHTML === 'function' && r.status !== '완료' ? procPickHTML(r) : '') : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${typeof recPayKind === 'function' && recPayKind(r) === 'monthly' ? '<span class="tag how" title="월별납부 업체 — 관세는 그 달 말일 일괄 납부, 고지서는 업체에 메일로 송부">월별납부</span>' : typeof recPayKind === 'function' && recPayKind(r) === 'single' ? '<span class="tag how" title="개별납부고지서·사후납부 안내 건 — 수리일부터 15일">개별 납부</span>' : ''}${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) + (typeof procPickHTML === 'function' && r.status !== '완료' ? procPickHTML(r) : '') : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
       ${active && !o.compact && typeof caseSumHTML === 'function' ? caseSumHTML(r) : ''}
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
@@ -194,6 +194,14 @@ function todayItems(){
   if(typeof caseTodayItems === 'function') out.push(...caseTodayItems(mine, recLine));
   db.records.filter(r => r.status !== '완료' && r.status !== '보류' && mine(r) && isExp(r)).forEach(r => { const es = exportState(r);   // 11/16: 선적 예정일이 지났는데 선적 근거 없음
     if(es && es.k === 'shipchk') out.push({rid:r.id, lvl:'chk', pri:3.5, kind:'선적 확인', title:es.t, sub:recLine(r), acts:`<button class="mini strong" data-ship-set="${esc(r.id)}">선적 일정</button><button class="mini" data-cs-wait="${esc(r.id)}">포워더 회신 대기</button>`}); });
+  if(typeof payModeOf === 'function' && td.slice(8) >= '20'){             // 11/16 e: 20일부터 — 이번 달 수입이 있는 월별납부 업체에 고지서 메일을 보냈는지
+    const ym = td.slice(0, 7);
+    db.clients.filter(c => !c.archived && payModeOf(c.id) === 'monthly' && !((later['paynt:' + c.id + ym] || {}).until > td)).forEach(c => {
+      const n = db.records.filter(r => r.clientId === c.id && recPayKind(r) === 'monthly' && String((r.stage || {}).accept || (r.stage || {}).customs || r.startDate || '').slice(0, 7) === ym).length;
+      if(!n || ((c.payAuto || {}).notices || []).some(x => x.date.slice(0, 7) === ym)) return;
+      out.push({cl:c.name, lvl:'chk', pri:3.6, kind:'월별납부 고지서', title:`${c.name} ${ym} 월별납부고지서 송부 확인 (이번 달 수입 ${n}건)`, sub:'월별납부 업체 — 고지서를 업체에 메일로 보냈는지 확인(제목·첨부에 ‘월별납부고지서’가 있으면 자동 확인)', acts:`<button class="mini" data-go="client" data-id="${esc(c.id)}">업체</button><button class="mini" data-chk-later="${esc('paynt:' + c.id + ym)}">나중에</button>`});
+    });
+  }
   staleRecords().filter(x => mine(x.r)).forEach(x => out.push({rid:x.r.id, lvl:'ref', pri:6, kind:'무변동', title:`${x.n}영업일 넘게 메일·자료·기록 변화 없음`, sub:recLine(x.r), acts:`<button class="mini" data-edit-rec="${esc(x.r.id)}">기록</button>`}));
   return out.sort((a, b) => a.pri - b.pri);
 }
@@ -405,6 +413,7 @@ function viewClient(){
     ${c.address || c.openDate ? `<p class="client-meta">${[c.address, c.openDate && '개업 ' + c.openDate].filter(Boolean).map(esc).join(' / ')}</p>` : ''}
     ${c.notes ? `<p class="client-notes">${esc(c.notes)}</p>` : ''}
     ${typeof clientInsightHTML === 'function' ? clientInsightHTML(c) : ''}
+    ${typeof clientPayHTML === 'function' ? clientPayHTML(c) : ''}
     ${clientContactsSection(c)}
     ${kcSection(c)}
     ${clientItemsSection(c, items)}
@@ -507,6 +516,17 @@ function amendSection(c){
   </section>`;
 }
 
+/* 11/16 e 관세 납부 방식(업체 화면) */
+function clientPayHTML(c){
+  const m = payModeOf(c.id), a = c.payAuto || {}, ns = (a.notices || []).slice().reverse();
+  const imp = db.records.filter(r => r.clientId === c.id && isImp(r));
+  if(m !== 'monthly' && !imp.some(r => r.payKind === 'single')) return '';
+  const recent = ns.slice(0, 6).map(x => `${esc(x.month)} (${esc(x.date.slice(5))} 송부)`).join(' · ');
+  const single = imp.filter(r => r.payKind === 'single').length;
+  return `<section class="pay-sec"><p><b>관세 납부: ${esc(PAY_MODE[m])}</b> <span class="hint">${c.payMode ? '업체 창에서 지정' : a.mode === 'monthly' ? `자동 판단 — 월별납부고지서 메일 ${esc(a.last || '')}` : ''}</span></p>
+    ${m === 'monthly' ? `<p class="hint">수입 건의 관세 납부기한 = 수리일부터 15일이 되는 날이 속한 달의 말일(관세법 제9조 제3항). 고지서는 업체에 메일로 보냅니다.${recent ? ` 최근 고지서: ${recent}` : ''}</p>` : ''}
+    ${single ? `<p class="hint">개별 납부(개별납부고지서·사후납부 안내) ${single}건은 수리일부터 15일.</p>` : ''}</section>`;
+}
 function clientContactsSection(c){
   const cc = confirmedContacts(c), cand = (c.contacts || []).filter(p => !contactOk(p)), rw = c.recentWork || [];
   const learned = (c.learned || []).filter(x => kwList(c).includes(String(x.key).toLowerCase()));
@@ -636,10 +656,12 @@ function clientCands(text){
   return [];
 }
 function viewClientList(){
-  const list = sortedClients();
+  if(typeof clientClean !== 'undefined' && clientClean) return clientCleanHTML();     // 11/16 e 업체 정리 화면
+  const all = sortedClients(), list = all.filter(c => !c.archived), arch = all.length - list.length;
+  const temp = typeof clientState === 'function' ? list.filter(c => clientState(c) === 'temp').length : 0;
   const types = c => [...new Set(db.records.filter(r => r.clientId === c.id).map(r => r.type))];
-  return `<header class="client-head"><div><h2>거래업체 리스트</h2><p class="client-meta">업체 ${list.length}곳. 사업자등록증과 메일 기준으로 채웁니다.</p></div>
-      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button><button class="ghost" data-clist-fwd title="포워더 아래에 그 포워더가 보낸 화주를 묶어 봅니다">${typeof clientListByFwd !== 'undefined' && clientListByFwd ? '전체 목록' : '포워더별로 묶어 보기'}</button></div></header>
+  return `<header class="client-head"><div><h2>거래업체 리스트</h2><p class="client-meta">업체 ${list.length}곳${temp ? ` (임시 ${temp} — 사업자번호 없음)` : ''}${arch ? ` · 보관 ${arch}곳은 ‘업체 정리 › 보관’` : ''}. 사업자등록증과 메일 기준으로 채웁니다.</p></div>
+      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button><button class="ghost" data-clist-clean title="상태(확정·임시·보관)·문제별로 업체를 정리합니다 — 번호 입력·합치기(별칭)·보관·기준 목록 CSV">업체 정리</button><button class="ghost" data-clist-fwd title="포워더 아래에 그 포워더가 보낸 화주를 묶어 봅니다">${typeof clientListByFwd !== 'undefined' && clientListByFwd ? '전체 목록' : '포워더별로 묶어 보기'}</button></div></header>
     ${typeof clientListByFwd !== 'undefined' && clientListByFwd ? clientListFwdHTML() : `
     ${list.length ? `<div class="table-wrap" style="margin-top:1.25rem"><table class="grid"><thead><tr><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>업무담당자</th><th>관련업무</th></tr></thead><tbody>
       ${list.map(c => { const cc = (c.contacts || []).slice(0,2), ty = types(c), rw = (c.recentWork || []).slice(0,2); return `<tr>

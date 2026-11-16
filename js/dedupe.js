@@ -25,7 +25,7 @@ function dupCandidates(){
   const notDup = new Set(db.settings.clientNotDup || []), cs = db.clients, out = [];
   const domCount = new Map();
   const doms = new Map(cs.map(c => { const d = dupDomains(c); d.forEach(x => domCount.set(x, (domCount.get(x) || 0) + 1)); return [c.id, d]; }));
-  const info = new Map(cs.map(c => [c.id, {k:dupNameKey(c.name), core:dupCore(c.name), biz:bizDigits(c.bizNo), ecm:String(c.ecm || '').replace(/\s/g, '').toUpperCase(), kws:kwList(c).filter(k => !k.startsWith('@')).map(dupNameKey)}]));
+  const info = new Map(cs.map(c => [c.id, {k:dupNameKey(c.name), core:dupCore(c.name), biz:bizDigits(c.bizNo), ecm:String(c.ecm || '').replace(/\s/g, '').toUpperCase(), kws:[...kwList(c).filter(k => !k.startsWith('@')), ...(c.aliases || [])].map(dupNameKey)}]));   // 11/16 e 별칭도
   for(let i = 0; i < cs.length; i++) for(let j = i + 1; j < cs.length; j++){
     const a = cs[i], b = cs[j], A = info.get(a.id), B = info.get(b.id);
     if(notDup.has(dupPairKey(a.id, b.id))) continue;
@@ -76,7 +76,7 @@ function mergeClients(keepId, goneId){
   // ① 업체 칸 합치기: 빈 칸은 채우고, 검색어·담당자·학습 주소는 합침, 없어질 이름은 검색어로
   const setK = (k, v) => { if(!(k in log.keepBefore)) log.keepBefore[k] = clone(keep[k]); keep[k] = v; };
   Object.keys(gone).forEach(k => {
-    if(['id', 'name', 'createdAt', 'updatedAt', 'keyword', 'contacts', 'learned', 'notes', 'recentWork'].includes(k)) return;
+    if(['id', 'name', 'createdAt', 'updatedAt', 'keyword', 'contacts', 'learned', 'notes', 'recentWork', 'aliases', 'archived'].includes(k)) return;
     const v = gone[k], cur = keep[k];
     if(v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) return;
     if(cur === undefined || cur === null || cur === '' || (Array.isArray(cur) && !cur.length) || (typeof cur === 'object' && !Array.isArray(cur) && !Object.keys(cur).length)) setK(k, clone(v));
@@ -90,6 +90,8 @@ function mergeClients(keepId, goneId){
   if((gone.learned || []).length) setK('learned', [...(keep.learned || []), ...gone.learned].slice(-30));
   if((gone.recentWork || []).length) setK('recentWork', [...(keep.recentWork || []), ...gone.recentWork].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 10));
   if(gone.notes && !String(keep.notes || '').includes(gone.notes)) setK('notes', [keep.notes, `[합친 업체 ‘${gone.name}’ 메모] ${gone.notes}`].filter(Boolean).join('\n'));
+  { const al = [...new Set([...(keep.aliases || []), gone.name, ...(gone.aliases || [])].map(x => String(x || '').trim()).filter(Boolean))].filter(x => dupNameKey(x) !== dupNameKey(keep.name));   // 11/16 e 없어지는 이름은 별칭으로
+    if(al.join('|') !== (keep.aliases || []).join('|')) setK('aliases', al); }
   keep.updatedAt = nowIso();
   // ② 자료 옮기기
   Object.keys(db).forEach(k => {
@@ -218,6 +220,7 @@ function similarClients(name, biz, exceptId){
     if(b.length === 10 && cb.length === 10) return null;
     if(!k || !ck) return null;
     if(ck === k) return {c, why:'상호 같음', lvl:2};
+    if((c.aliases || []).some(w => dupNameKey(w) === k)) return {c, why:'별칭에 같은 이름', lvl:3};   // 11/16 e
     if(kwList(c).some(w => !w.startsWith('@') && dupNameKey(w) === k)) return {c, why:'검색어에 같은 이름', lvl:2};
     const contains = (x, y) => x.length >= 2 && y.length >= 2 && (x.length <= 2 ? y.startsWith(x) : y.includes(x));
     if(contains(ck, k) || contains(k, ck)) return {c, why:'한쪽 상호가 다른 쪽을 포함', lvl:1};
@@ -372,3 +375,116 @@ function demoteContacts(){
   db.settings.ccTrim = '20261116';
   return n;
 }
+
+/* ---------- 11/16 e 업체 정리 (업체등록-정리방안 A·B·E): 상태(확정·임시·보관)·별칭·문제별 정리·기준 목록 CSV ---------- */
+let clientClean = false, ccTab = 'all', ccPage = 0;
+const CL_STATE = {ok:'확정', temp:'임시', arch:'보관'};
+const CC_ISSUE = {nobiz:'사업자번호 없음', badbiz:'번호 검증 오류', samebiz:'같은 번호 2곳 이상', similar:'이름 비슷(중복 후보)', closed:'휴·폐업', role:'역할 미정(의뢰처로 쓰임)', norec:'기록 0건'};
+function clientState(c){ if(c.archived) return 'arch'; return (bizKey(c.bizNo) && bizValid(c.bizNo)) || String(c.ecm || '').trim() ? 'ok' : 'temp'; }
+function clientCleanCtx(){
+  const bizCount = new Map(), recN = new Map(), last = new Map(), viaIds = new Set(), dup = new Map();
+  db.clients.forEach(c => { const k = bizKey(c.bizNo); if(k && !c.archived) bizCount.set(k, (bizCount.get(k) || 0) + 1); });
+  db.records.forEach(r => { recN.set(r.clientId, (recN.get(r.clientId) || 0) + 1); const d = r.date || r.startDate || ''; if(d > (last.get(r.clientId) || '')) last.set(r.clientId, d); if(r.via) viaIds.add(r.via); });
+  try{ dupCandidates().forEach(x => { if(x.a.archived || x.b.archived) return; [[x.a, x.b], [x.b, x.a]].forEach(([p, q]) => { if(!dup.has(p.id)) dup.set(p.id, []); dup.get(p.id).push({c:q, why:x.why.join(' · '), lvl:x.lvl}); }); }); }catch(e){}
+  return {bizCount, recN, last, viaIds, dup};
+}
+function clientIssues(c, X){
+  if(c.archived) return [];
+  const out = [], k = bizKey(c.bizNo), nts = ((c.ext || {}).nts || {}).cd;
+  if(!k) out.push('nobiz'); else if(!bizValid(c.bizNo)) out.push('badbiz');
+  if(k && X.bizCount.get(k) > 1) out.push('samebiz');
+  if(X.dup.has(c.id)) out.push('similar');
+  if(nts === '02' || nts === '03') out.push('closed');
+  if(!c.role && X.viaIds.has(c.id) && !isFwd(c)) out.push('role');
+  if(!X.recN.get(c.id)) out.push('norec');
+  return out;
+}
+function clientCleanHTML(){
+  const X = clientCleanCtx(), all = sortedClients(), rows = all.map(c => ({c, st:clientState(c), is:clientIssues(c, X)}));
+  const n = k => k === 'all' ? rows.filter(x => x.st !== 'arch').length : k === 'arch' ? rows.filter(x => x.st === 'arch').length : k === 'temp' ? rows.filter(x => x.st === 'temp').length : rows.filter(x => x.is.includes(k)).length;
+  const tabs = [['all', '전체'], ['temp', '임시(번호 없음·미확인)'], ...Object.entries(CC_ISSUE).filter(([k]) => k !== 'nobiz'), ['arch', '보관']];
+  if(ccTab !== 'all' && !n(ccTab)) ccTab = 'all';
+  const list = rows.filter(x => ccTab === 'all' ? x.st !== 'arch' : ccTab === 'arch' ? x.st === 'arch' : ccTab === 'temp' ? x.st === 'temp' : x.is.includes(ccTab))
+    .sort((a, b) => b.is.length - a.is.length || a.c.name.localeCompare(b.c.name, 'ko'));
+  if(ccPage * 20 >= list.length) ccPage = Math.max(0, Math.ceil(list.length / 20) - 1);
+  const st = {ok:'', temp:' warn', arch:''};
+  const btn = (attr, id, l, strong) => `<button class="mini${strong ? ' strong' : ''}" data-${attr}="${esc(id)}">${l}</button>`;
+  const row = ({c, st:s, is}) => {
+    const d = X.dup.get(c.id) || [], acts = [];
+    if(s === 'arch') acts.push(btn('cc-unarch', c.id, '보관 해제'));
+    else {
+      if(is.includes('nobiz') || is.includes('badbiz')) acts.push(btn('cc-biz', c.id, '번호 입력', true));
+      if(is.includes('samebiz') || is.includes('similar') || is.includes('norec')) acts.push(btn('cc-merge', c.id, '다른 업체에 합치기', is.includes('samebiz')));
+      if(is.includes('role')) acts.push(btn('cc-role', c.id + '|fwd', '포워더') + btn('cc-role', c.id + '|shipper', '화주'));
+      if(is.includes('norec') || is.includes('closed')) acts.push(btn('cc-arch', c.id, '보관'));
+    }
+    if(isAdmin() && clientEmpty(c)) acts.push(`<button class="mini danger-lite" data-cc-del="${esc(c.id)}" title="기록·품목·절차·견적이 하나도 없는 업체만 삭제할 수 있습니다">삭제</button>`);
+    acts.push(`<button class="mini" data-edit-client="${esc(c.id)}">수정</button>`);
+    return `<tr><td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><b>${esc(c.name)}</b></button>${(c.aliases || []).length ? `<div class="hint">별칭 ${esc(c.aliases.join(', '))}</div>` : ''}${d.length ? `<div class="hint">비슷: ${d.slice(0, 2).map(x => esc(x.c.name)).join(', ')}</div>` : ''}</td>
+      <td>${c.bizNo ? `${esc(bizFmt(c.bizNo))}${bizKey(c.bizNo) && bizValid(c.bizNo) ? '' : ' <span class="kc-chip bad">검증 오류</span>'}` : '<span class="hint">-</span>'}${c.ecm ? `<div class="hint">통관부호 ${esc(c.ecm)}</div>` : ''}</td>
+      <td><span class="kc-chip${st[s]}">${CL_STATE[s]}</span></td><td>${c.role === 'fwd' || (!c.role && isFwd(c)) ? '포워더' : c.role === 'shipper' ? '화주' : '<span class="hint">-</span>'}</td>
+      <td>${X.recN.get(c.id) || 0}${X.last.get(c.id) ? `<div class="hint">${esc(X.last.get(c.id))}</div>` : ''}</td>
+      <td>${is.map(k => `<span class="tag chk">${esc(CC_ISSUE[k])}</span>`).join(' ') || (s === 'arch' ? `<span class="hint">${esc((c.archived || {}).why || '')} ${esc((c.archived || {}).at || '')}</span>` : '<span class="hint">문제 없음</span>')}</td>
+      <td class="cc-acts">${acts.join('')}</td></tr>`;
+  };
+  return `<header class="client-head"><div><h2>업체 정리</h2><p class="client-meta">한 회사 = 한 업체(기준: 사업자등록번호, 보조: 통관고유부호). 약칭·영문명·옛 상호는 별칭으로, 거래가 끝난 업체는 보관으로 정리합니다.</p></div>
+      <div class="client-act"><button class="ghost" data-biz-import>사업자등록증 폴더 반영</button><button class="ghost" data-client-ext="all">업체 정보 일괄 확인</button><button class="ghost" data-client-dup>중복 점검</button><button class="ghost" data-cc-csv>기준 목록 CSV</button><button class="primary" data-clist-clean>목록으로</button></div></header>
+    <p class="hint">확정 ${rows.filter(x => x.st === 'ok').length} · 임시 ${n('temp')} · 보관 ${n('arch')} — 순서: ① 사업자등록증 폴더 반영으로 번호 채우기 → ② 업체 정보 일괄 확인(통관고유부호·휴폐업) → ③ 아래 문제별로 합치기·보관 → ④ 기준 목록 CSV로 월 1회 점검.</p>
+    <div class="tabs">${tabs.map(([k, l]) => { const c = n(k); return c || k === 'all' ? `<button class="tab${ccTab === k ? ' on' : ''}${['samebiz', 'badbiz', 'closed'].includes(k) && c ? ' act' : ''}" data-cc-tab="${k}">${esc(l)} <span class="cnt">${c}</span></button>` : ''; }).join('')}</div>
+    ${list.length ? `<div class="table-wrap"><table class="grid cc-table"><thead><tr><th>업체·별칭</th><th>사업자번호</th><th>상태</th><th>역할</th><th>기록</th><th>문제</th><th>처리</th></tr></thead><tbody>${list.slice(ccPage * 20, ccPage * 20 + 20).map(row).join('')}</tbody></table></div>${pagerHTML('cc-page', ccPage, list.length)}` : '<p class="empty">해당하는 업체가 없습니다.</p>'}`;
+}
+function openBizInput(c){
+  openDialog({title:`사업자번호 입력 — ${c.name}`, saveLabel:'저장',
+    body:`<label>사업자등록번호<input name="biz" value="${esc(c.bizNo || '')}" placeholder="000-00-00000" autofocus></label><p class="hint" data-x="msg">번호를 넣으면 검증식과 같은 번호 업체를 확인합니다. 같은 번호 업체가 있으면 합치기를 권합니다.</p>`,
+    onOpen(f){ const i = f.elements.namedItem('biz'), m = f.querySelector('[data-x="msg"]'); i.addEventListener('input', () => { const k = bizKey(i.value), o = k && db.clients.find(x => x.id !== c.id && bizKey(x.bizNo) === k);
+      m.textContent = !k ? '숫자 10자리' : !bizValid(i.value) ? '⚠ 검증식 오류 — 번호를 다시 확인하세요' : o ? `같은 번호 업체: ${o.name} — 저장 후 ‘다른 업체에 합치기’로 합치세요` : '검증식 통과'; }); },
+    onSave(fd){
+      const v = String(fd.get('biz') || '').trim(); if(v && !bizKey(v)){ toast('숫자 10자리로 넣으세요.'); return false; }
+      const old = c.bizNo || ''; c.bizNo = v ? bizFmt(v) : ''; c.manualAt = {...(c.manualAt || {}), bizNo:today()};
+      c.bizHist = [...(c.bizHist || []), {at:nowIso(), by:me ? me.id : '', how:'업체 정리에서 입력', changes:[{k:'사업자번호', old, nw:c.bizNo}]}].slice(-20); c.updatedAt = nowIso();
+      if(c.bizNo && (db.settings.mail || {}).endpoint && typeof checkClientsExt === 'function') setTimeout(() => checkClientsExt([c], true), 600);
+      return true;
+    }});
+}
+function openMergeInto(c){
+  const X = clientCleanCtx(), k = bizKey(c.bizNo);
+  const pref = [...db.clients.filter(x => x.id !== c.id && k && bizKey(x.bizNo) === k), ...(X.dup.get(c.id) || []).map(x => x.c)].filter((x, i, a) => !x.archived && a.findIndex(y => y.id === x.id) === i);
+  const rest = sortedClients().filter(x => x.id !== c.id && !x.archived && !pref.includes(x));
+  const st = dupStats(c);
+  openDialog({title:`‘${c.name}’을(를) 다른 업체에 합치기`, saveLabel:'합치기',
+    body:`<p class="hint">‘${esc(c.name)}’의 기록 ${st.rec}건 · 품목 ${st.item}개 · 절차 ${st.proc}건이 고른 업체로 옮겨지고, ‘${esc(c.name)}’은 그 업체의 <b>별칭</b>·검색어로 남습니다. 업체 화면의 ‘합친 업체’에서 되돌릴 수 있습니다.</p>
+      ${pref.length ? `<p><b>추천</b></p>${pref.map((x, i) => `<label class="check"><input type="radio" name="to" value="${esc(x.id)}"${i ? '' : ' checked'}> ${esc(x.name)} <span class="hint">${esc(x.bizNo || '번호 없음')} · 기록 ${X.recN.get(x.id) || 0}${(X.dup.get(c.id) || []).find(d => d.c.id === x.id) ? ' · ' + esc((X.dup.get(c.id) || []).find(d => d.c.id === x.id).why) : k && bizKey(x.bizNo) === k ? ' · 사업자번호 같음' : ''}</span></label>`).join('')}` : ''}
+      <label>다른 업체에서 고르기<select name="to2">${opts([['', pref.length ? '(위 추천 사용)' : '업체 고르기'], ...rest.map(x => [x.id, x.name])], '')}</select></label>`,
+    onSave(fd){
+      const to = fd.get('to2') || fd.get('to'); const keep = db.clients.find(x => x.id === to); if(!keep){ toast('합칠 업체를 고르세요.'); return false; }
+      if(!confirm(`‘${c.name}’을(를) ‘${keep.name}’에 합칠까요?`)) return false;
+      if(!mergeClients(keep.id, c.id)){ toast('합치지 못했습니다.'); return false; }
+      toast(`‘${c.name}’을(를) ‘${keep.name}’에 합쳤습니다(별칭으로 남음).`); return true;
+    }});
+}
+/* 삭제는 연결된 자료가 하나도 없는 업체만 (관리자) — 자료가 있으면 합치기·보관 */
+function clientEmpty(c){ const s = dupStats(c); return !s.rec && !s.item && !s.proc && !(db.inquiries || []).some(q => q.clientId === c.id) && !(db.quotes || []).some(q => q.clientId === c.id); }
+function clientCsv(){
+  const X = clientCleanCtx(), cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const head = ['상호', '사업자번호', '번호 검증', '상태', '역할', '대표자', '주소', '통관고유부호', '국세청 상태', '관세 납부', '별칭', '검색어', '확정 담당자', '기록 수', '최근 업무', '문제'];
+  const body = sortedClients().map(c => [c.name, c.bizNo || '', bizKey(c.bizNo) ? (bizValid(c.bizNo) ? '통과' : '오류') : '', CL_STATE[clientState(c)], c.role === 'fwd' || (!c.role && isFwd(c)) ? '포워더' : c.role === 'shipper' ? '화주' : '',
+    c.rep || '', c.address || '', c.ecm || '', ((c.ext || {}).nts || {}).stt || '', typeof payModeOf === 'function' && payModeOf(c.id) === 'monthly' ? '월별납부' : '', (c.aliases || []).join(', '), c.keyword || '',
+    confirmedContacts(c).map(p => p.email).filter(Boolean).join(' '), X.recN.get(c.id) || 0, X.last.get(c.id) || '', clientIssues(c, X).map(k => CC_ISSUE[k]).join(', ')].map(cell).join(','));
+  download(`BSGC-업체목록-${today()}.csv`, '﻿' + [head.map(cell).join(','), ...body].join('\r\n'), 'text/csv;charset=utf-8');
+}
+document.addEventListener('click', e => {
+  if(!db || e.target.closest('dialog')) return;
+  const t = e.target.closest('[data-clist-clean],[data-cc-tab],[data-cc-page],[data-cc-biz],[data-cc-merge],[data-cc-arch],[data-cc-unarch],[data-cc-role],[data-cc-csv],[data-cc-del]'); if(!t) return;
+  const d = t.dataset, cl = id => db.clients.find(x => x.id === id);
+  if('clistClean' in d){ clientClean = !clientClean; ccPage = 0; renderView(); window.scrollTo(0, 0); return; }
+  if('ccTab' in d){ ccTab = d.ccTab; ccPage = 0; renderView(); return; }
+  if('ccPage' in d){ ccPage = Math.max(0, Number(d.ccPage) || 0); renderView(); return; }
+  if('ccCsv' in d){ clientCsv(); return; }
+  if('ccBiz' in d){ const c = cl(d.ccBiz); if(c) openBizInput(c); return; }
+  if('ccMerge' in d){ const c = cl(d.ccMerge); if(c) openMergeInto(c); return; }
+  if('ccArch' in d){ const c = cl(d.ccArch); if(c){ c.archived = {at:today(), by:me ? me.id : '', why:clientIssues(c, clientCleanCtx()).includes('closed') ? '휴·폐업' : '기록 없음'}; c.updatedAt = nowIso(); commit(); toast(`‘${c.name}’을(를) 보관했습니다(보관 탭에서 해제).`); } return; }
+  if('ccUnarch' in d){ const c = cl(d.ccUnarch); if(c){ c.archived = null; c.updatedAt = nowIso(); commit(); } return; }
+  if('ccDel' in d){ const c = cl(d.ccDel); if(!c || !isAdmin()) return; if(!clientEmpty(c)){ toast('연결된 기록·품목이 있어 삭제할 수 없습니다. 합치기나 보관을 쓰세요.'); return; }
+    if(confirm(`‘${c.name}’을(를) 삭제할까요?\n기록·품목·절차·견적이 없는 업체입니다. 같은 회사가 따로 있으면 ‘다른 업체에 합치기’가 낫습니다(이름이 별칭으로 남음).`)){ db.clients = db.clients.filter(x => x.id !== c.id); commit(); toast(`‘${c.name}’을(를) 삭제했습니다.`); } return; }
+  if('ccRole' in d){ const [id, role] = d.ccRole.split('|'), c = cl(id); if(c){ c.role = role; c.updatedAt = nowIso(); commit(); toast(`‘${c.name}’을(를) ${role === 'fwd' ? '포워더' : '화주'}로 정했습니다.`); } return; }
+});

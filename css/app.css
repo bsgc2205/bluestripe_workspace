@@ -694,3 +694,11 @@ label.check.chg input{margin-right:.3rem}
 .diff-row .check{flex:1}
 .diff-row select{width:auto}
 .mini-sel{font-size:.78rem;padding:.1rem .25rem}
+/* 11/16 e 업체 정리 · 관세 납부 */
+.cc-table td{vertical-align:top}
+.cc-acts{white-space:nowrap}
+.cc-acts .mini{margin:0 .2rem .2rem 0}
+.pay-sec{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:.4rem .8rem;margin:.6rem 0;background:var(--surface);font-size:.9rem}
+.pay-sec p{margin:.2rem 0}
+.mini.danger-lite{color:var(--bad,#b42318)}
+.cc-table td:nth-child(5){white-space:nowrap}

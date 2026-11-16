@@ -822,6 +822,47 @@ function fixSharedAddr(force){
   db.settings.addrFix = '20261116b';
   return {kw, cc, rec, list};
 }
+/* 11/16 e 월별납부: 우리가 업체에 '월별납부고지서'를 보낸 메일 → 그 업체를 월별납부로(직접 지정이 우선), 고지서 송부 이력(c.payAuto.notices).
+   기록에 '개별납부고지서·개별화물 사후납부' 메일이 있으면 그 건만 개별 납부(r.payKind 'single'). 매번 메일을 불러올 때 다시 봄(가벼움) */
+function fixPayModes(){
+  if(!mailCache) return {cl:0, rec:0};
+  const hit = new Map();
+  mailCache.forEach(m => {
+    if(!isOwn(m.from) || m.fwdFrom) return;
+    const t = `${m.subject || ''} ${(m.attachments || []).join(' ')}`;
+    if(!MONTHLY_NOTICE.test(t)) return;
+    const c = matchClient([m]); if(!c) return;
+    if(!hit.has(c.id)) hit.set(c.id, []);
+    const mon = (String(m.subject || '').match(/(\d{2})\s*[-.년]\s*(\d{1,2})\s*월/) || []);
+    hit.get(c.id).push({date:String(m.date || '').slice(0, 10), month:mon[1] ? `20${mon[1]}-${String(mon[2]).padStart(2, '0')}` : String(m.date || '').slice(0, 7), subject:String(m.subject || '').slice(0, 120), mid:m.id});
+  });
+  let cl = 0, rec = 0;
+  hit.forEach((ns, cid) => {
+    const c = db.clients.find(x => x.id === cid); if(!c) return;
+    const old = c.payAuto || {}, notices = [...(old.notices || [])];
+    ns.forEach(n => { if(!notices.some(x => x.mid === n.mid)) notices.push(n); });
+    notices.sort((a, b) => a.date.localeCompare(b.date));
+    const last = notices[notices.length - 1].date;
+    if(old.mode !== 'monthly'){ cl++; if(typeof logProc === 'function') logProc('move', `월별납부 업체로 판단: ${c.name} (월별납부고지서 메일 ${last})`); }
+    c.payAuto = {mode:'monthly', at:old.at || today(), last, notices:notices.slice(-24)};
+  });
+  db.records.forEach(r => {
+    if(r.payKind === 'single' || !isImp(r)) return;
+    if((r.mails || []).some(m => SINGLE_NOTICE.test(`${m.subject || ''} ${(m.files || []).join(' ')}`))){ r.payKind = 'single'; addHist(r, '관세 납부: 개별 납부(개별납부고지서·사후납부 안내 메일) — 납부기한 수리일부터 15일'); rec++; }
+  });
+  return {cl, rec};
+}
+/* 관세 납부기한을 납부 방식에 맞춤: 월별납부 = 수리일 + 15일이 속한 달의 말일, 그 외 = 수리일 + 15일 (처리 안 된 기한만) */
+function fixDutyDues(){
+  let n = 0;
+  db.records.forEach(r => (r.deadlines || []).forEach(d => {
+    if(d.done || d.kind !== '관세 납부기한' || !d.base) return;
+    const want = dutyDue(r, d.base), note = recPayKind(r) === 'monthly' ? '월별납부 — 그 달 말일' : '';
+    if(d.due !== want){ d.due = want; n++; }
+    if(note) d.note = note; else delete d.note;
+  }));
+  return n;
+}
 /* 데이터 줄이기 (11/14, 한 번): 기록에 붙은 메일의 첨부 이름에서 서명 이미지를 빼고 6개까지 */
 function trimMailFiles(){
   if(db.settings.mailTrim === '20261114') return 0;
@@ -936,6 +977,8 @@ async function loadMail0(manual){
     const fx = fixBogusLinks(); trimMailFiles(); const dc = typeof demoteContacts === 'function' ? demoteContacts() : 0;   // 11/16 A4 한 번 정리
     const sa = fixSharedAddr();                                          // 11/16 b 공용 주소·잘못 잡힌 업체 한 번 정리
     if(sa.list.length) logProc('move', `공용 주소 정리: 검색어 ${sa.kw}개 뺌, 담당자 ${sa.cc}명 후보로, 기록 ${sa.rec}건 업체 정정 — ${sa.list.slice(0, 6).join(' · ')}${sa.list.length > 6 ? ' …' : ''}`);
+    const pm = fixPayModes(), dd = fixDutyDues();                         // 11/16 e 월별납부 업체·관세 납부기한
+    if(dd) logProc('move', `관세 납부기한 ${dd}건을 납부 방식(월별납부 = 그 달 말일)에 맞게 고침`);
     const ft = fixTypes();                                               // 11/16 업무 유형 한 번 다시 보기
     if(ft.n || ft.chk) logProc('move', `업무 유형: ${ft.n}건 자동 정정${ft.chk ? `, ${ft.chk}건 확인함 '업무 유형 확인'` : ''}`);
     if(dc && typeof logProc === 'function') logProc('move', `담당자 ${dc}명을 '후보'로 내림(다른 업체·포워더 주소이거나 여러 업체에 같이 있음) — 업체 화면에서 확정 가능`);
@@ -943,7 +986,7 @@ async function loadMail0(manual){
     if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
     const rt = typeof routeRecords === 'function' ? routeRecords() : 0;      // 의뢰처·청구처 (11/14 P2)
-    if(fx || dc || sa.kw || sa.cc || sa.rec || ft.n || ft.chk || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu || rt){ pruneThreads(); commit(); }
+    if(fx || dc || pm.cl || pm.rec || dd || sa.kw || sa.cc || sa.rec || ft.n || ft.chk || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu || rt){ pruneThreads(); commit(); }
     if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
     if(fx || n || made.length || ln || cs || ev.done || cu){ const tmsg = [fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '); toast(tmsg); logProc('mail', tmsg); }

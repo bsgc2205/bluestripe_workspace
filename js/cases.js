@@ -29,6 +29,16 @@ function retypeRecord(r, type, why){
   delete r.typeChk; r.updatedAt = nowIso();
   return true;
 }
+/* ---------- 11/16 e 관세 납부 방식: 월별납부 업체 ----------
+   관세법 제9조 제3항: 월별납부 승인 업체는 납부기한이 같은 달에 속하는 세액을 그 달 말일까지 한꺼번에 납부(일반은 수리일부터 15일).
+   판단: 업체 창에서 직접 지정(c.payMode) > 우리가 업체에 '월별납부고지서'를 메일로 보낸 적이 있음(c.payAuto, fixPayModes). '개별납부고지서' 메일이 붙은 건은 그 건만 개별(15일). */
+const MONTHLY_NOTICE = /월별\s*(납부)?\s*고지서|월별\s*납부\s*고지/;
+const SINGLE_NOTICE = /개별\s*(화물)?\s*(사후)?\s*납부\s*(고지|안내)|개별\s*납부\s*고지서/;
+const PAY_MODE = {each:'건별 납부 (수리일부터 15일)', monthly:'월별납부 (그 달 말일 일괄)'};
+function payModeOf(cid){ const c = db.clients.find(x => x.id === cid); if(!c) return 'each'; if(c.payMode === 'monthly' || c.payMode === 'each') return c.payMode; return c.payAuto && c.payAuto.mode === 'monthly' ? 'monthly' : 'each'; }
+function recPayKind(r){ if(!isImp(r)) return ''; if(r.payKind === 'single') return 'single'; return payModeOf(r.clientId) === 'monthly' ? 'monthly' : 'each'; }
+function monthEnd(d){ const [y, m] = String(d).slice(0, 7).split('-').map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`; }
+function dutyDue(r, base){ const d15 = addPeriod(base, 15, 'd'); return recPayKind(r) === 'monthly' ? monthEnd(d15) : d15; }
 function ensureCaseNos(d){
   const max = {};
   d.records.forEach(r => { const m = CASE_RE.exec(r.caseNo || ''); if(m){ const k = m[1] + '-' + m[2]; max[k] = Math.max(max[k] || 0, Number(m[3])); } });
@@ -153,7 +163,7 @@ function setLoadDue(r, base, due){
   else if(d.auto && due && d.due !== due && (d.src !== 'ext' || due > d.due)){ addHist(r, `적재기한 ${d.due} → ${due} (UNI-PASS${d.src === 'ext' ? ', 연장 반영' : ''})`); d.due = due; d.src = 'uni'; }
   else if(d.auto && due && d.due === due && d.src !== 'ext') d.src = 'uni';
 }
-function dlSrcTag(d){ return d && d.kind === '수출물품 적재기한' ? `<span class="tag ${d.src === 'calc' || !d.src ? 'guess' : 'sure'} how" title="기한 출처">${DL_SRC[d.src || 'calc']}</span>` : ''; }
+function dlSrcTag(d){ if(d && d.note) return `<span class="tag how" title="관세법 제9조 제3항 — 납부기한이 같은 달에 속하는 세액은 그 달 말일까지">${esc(d.note)}</span>`; return d && d.kind === '수출물품 적재기한' ? `<span class="tag ${d.src === 'calc' || !d.src ? 'guess' : 'sure'} how" title="기한 출처">${DL_SRC[d.src || 'calc']}</span>` : ''; }   // 11/16 e 월별납부 표시
 /* lv: 'ok'(확정 — UNI-PASS·필증 파일 메일·정산서 메일·직원 표시) | 'chk'(메일 글만 근거 — 확인 필요, 자동 완료 안 함).
    이미 'chk'로 표시된 단계에 확정 근거가 오면 등급만 올린다(UNI-PASS 날짜가 있으면 그 날짜로). */
 /* 11/15 b ①: src = {mail:[메일 id], file:[파일 id]} — 단계의 근거 자료. 그 메일·파일을 떼거나 옮기면 stageSrcLost가 단계를 다시 '확인 필요'로 */
@@ -449,7 +459,7 @@ async function checkImport(r, u){
     catch(e){ u.err050 = e.message; }
   }
   if(u.clearedAt && u.paid === false && !r.deadlines.some(x => x.kind === '관세 납부기한'))                 // 수리 후 미납이면 납부기한(수리일 + 15일), 납부 확인되면 처리 표시
-    r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:addPeriod(u.clearedAt, 15, 'd'), done:false, auto:true});
+    r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:dutyDue(r, u.clearedAt), done:false, auto:true, ...(recPayKind(r) === 'monthly' ? {note:'월별납부 — 그 달 말일'} : {})});
   if(u.paid) r.deadlines.filter(x => x.kind === '관세 납부기한' && x.auto).forEach(x => x.done = true);
   if(u.cleared && (u.paid || u.released)) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || '', `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : ''}${u.released ? ', 반출신고' : ''}${u.paidAt || u.releasedAt || u.clearedAt ? '' : ' (날짜 미확인)'}`, 'ok', u.paidAt || u.releasedAt || u.clearedAt ? null : {est:true});   // 11/16: 날짜 없으면 오늘을 실제 날짜로 넣지 않음
 }
@@ -591,6 +601,7 @@ function threadRefKind(t, bls){
   if(ext && (TAX_FROM.test(String(first.from || '')) || TAX_RE.test(subj))) return 'tax';
   if((NEWS_RE.test(subj) || (ext && /운임\s*(표|업데이트|안내|인상)|rate\s*(update|notice)|tariff\s*update|gri\s*notice/i.test(subj))) && !bls.length) return 'news';
   const own = t.ms.filter(m => isOwn(m.from) && !m.fwdFrom);
+  if(own.some(m => MONTHLY_NOTICE.test(`${m.subject || ''} ${(m.attachments || []).join(' ')}`)) && !STRONG_REQ.test(all)) return 'report';   // 11/16 e 월별납부고지서 송부는 업무 접수 아님
   if(own.some(m => REPORT_RE.test(m.subject || '')) && !STRONG_REQ.test(all)) return 'report';
   if(own.some(m => REPORT_WEAK.test(m.subject || '')) && bls.length !== 1 && !STRONG_REQ.test(all)) return 'report';
   if(QUOTE_RE.test(all) && !bls.length && !STRONG_REQ.test(all)) return 'quote';

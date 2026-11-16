@@ -239,6 +239,8 @@ function openRecord(r, preset = {}){
       // deadlines
       const dlList = f.querySelector('.dl-list');
       const rule = () => DL_RULES.find(x => x.kind === X('dlKind').value);
+      const monthlyDuty = ru => ru.kind === '관세 납부기한' && typeof payModeOf === 'function' && payModeOf(N('clientId').value) === 'monthly' && caseCode(N('type').value) !== 'E';   // 11/16 e 월별납부
+      const calcDue = (ru, dt) => { const d = addPeriod(dt, ru.n, ru.u); return monthlyDuty(ru) ? monthEnd(d) : d; };
       const renderDls = () => {
         dlList.innerHTML = dls.length
           ? dls.map((d,i) => `<li>${ddayHTML(d.due)}<strong>${esc(d.kind)}</strong><span class="hint">기한 ${esc(d.due)}${d.base ? `, 기준일 ${esc(d.base)}` : ''}${d.done ? ', 처리됨' : ''}</span><button type="button" class="mini" data-x-del="${i}">삭제</button></li>`).join('')
@@ -248,13 +250,13 @@ function openRecord(r, preset = {}){
         const ru = rule(), dt = X('dlDate').value;
         X('dlBaseLbl').textContent = ru.base || '기한일';
         X('dlNameWrap').hidden = !!ru.base;
-        X('dlPrev').textContent = ru.base && dt ? `계산된 기한: ${addPeriod(dt, ru.n, ru.u)}` : '';
+        X('dlPrev').textContent = ru.base && dt ? `계산된 기한: ${calcDue(ru, dt)}${monthlyDuty(ru) ? ' (월별납부 업체 — 그 달 말일)' : ''}` : '';
       };
       X('dlKind').onchange = prev; X('dlDate').oninput = prev;
       X('dlAdd').onclick = () => {
         const ru = rule(), dt = X('dlDate').value;
         if(!dt){toast('날짜를 입력하세요.'); return;}
-        dls.push({id:uid(), kind:ru.base ? ru.kind : (X('dlName').value.trim() || '기한'), base:ru.base ? dt : null, due:ru.base ? addPeriod(dt, ru.n, ru.u) : dt, done:false});
+        dls.push({id:uid(), kind:ru.base ? ru.kind : (X('dlName').value.trim() || '기한'), base:ru.base ? dt : null, due:ru.base ? calcDue(ru, dt) : dt, done:false, ...(ru.base && monthlyDuty(ru) ? {note:'월별납부 — 그 달 말일'} : {})});
         X('dlDate').value = ''; X('dlName').value = ''; prev(); renderDls();
       };
       dlList.onclick = e => {const b = e.target.closest('[data-x-del]'); if(b){dls.splice(Number(b.dataset.xDel), 1); renderDls();}};
@@ -623,11 +625,14 @@ function openClient(c){
         <label>정산 방식<select name="settleMode">${opts([['each', '건별 청구 (정산서 메일 = 청구 완료)'], ['monthly', '월정산 (업무 종결 때 월정산 목록으로 인계)']], cl.settleMode || 'each')}</select></label>
         <label>업체 구분<select name="role">${opts([['', '자동 (업종에 포워더·물류면 포워더)'], ['shipper', '화주'], ['fwd', '포워더']], cl.role || '')}</select></label>
         <label>기본 청구처 <span class="hint">포워더 의뢰 건</span><select name="billDefault">${opts([['', '지정 안 함 (건마다)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], cl.billDefault || '')}</select></label>
+        <label>관세 납부 방식 <span class="hint">${cl.payAuto && cl.payAuto.mode === 'monthly' ? `자동 판단: 월별납부고지서 메일 ${esc(cl.payAuto.last || '')}` : '자동: 월별납부고지서를 보낸 메일로 판단'}</span><select name="payMode">${opts([['', '자동'], ['each', PAY_MODE.each], ['monthly', PAY_MODE.monthly]], cl.payMode || '')}</select></label>
         <label>수출 업무 범위 <span class="hint">기본값 — 건마다 바꿀 수 있음</span><select name="scope">${opts([['', '수출통관'], ['logi', '수출통관 + 물류 핸들링'], ['extra', '개별 검토·증명서 등 부가업무']], cl.scope || '')}</select></label>
       </div>
       <div class="row2">
         <label>메일·Drive 검색어<input name="keyword" value="${esc(cl.keyword)}" placeholder="@abc.co.kr, 약칭 (쉼표로 구분)"></label>
+        <label>별칭 <span class="hint">약칭·영문명·옛 상호·수하인 표기 — 새 업체로 만들지 않음</span><input name="aliases" value="${esc((cl.aliases || []).join(', '))}" placeholder="예: 가나, GANA TRADING"></label>
       </div>
+      <label class="check"><input type="checkbox" name="archived"${cl.archived ? ' checked' : ''}> 보관 (거래 종료·다른 업체에 합침 — 업체 목록에서 접어 둠)</label>
       <p class="hint">검색어에 업체 메일 도메인을 넣으면 customs@ 메일과 자동 수집 자료가 이 업체로 정확히 연결됩니다.</p>
       <div class="row2">
         <label>거래 시작 (월)<input type="month" name="since" value="${esc((cl.relation||{}).since || '')}"></label>
@@ -650,7 +655,10 @@ function openClient(c){
       const bizChanged = bizDigits(cl.bizNo) !== bizDigits(bizBefore);
       cl.openDate = fd.get('openDate') || ''; cl.address = fd.get('address').trim(); cl.ecm = String(fd.get('ecm') || '').trim(); cl.tel = String(fd.get('tel') || '').trim();
       if((bizChanged || isNew) && (db.settings.mail || {}).endpoint) setTimeout(() => checkClientsExt([cl], true), 600);   // 사업자번호가 바뀌면 통관고유부호·국세청 상태 바로 확인
-      cl.role = fd.get('role') || ''; cl.billDefault = fd.get('billDefault') || '';   // 포워더 의뢰 (11/14)
+      cl.role = fd.get('role') || ''; cl.billDefault = fd.get('billDefault') || '';
+      { const pm = fd.get('payMode') || ''; if(pm !== (cl.payMode || '')){ cl.payMode = pm; if(typeof fixDutyDues === 'function') setTimeout(() => { const n = fixDutyDues(); if(n){ commit(); toast(`관세 납부기한 ${n}건을 납부 방식에 맞게 고쳤습니다.`); } }, 50); } }   // 11/16 e
+      cl.aliases = String(fd.get('aliases') || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+      if(fd.get('archived') ? !cl.archived : cl.archived) cl.archived = fd.get('archived') ? {at:today(), by:me ? me.id : '', why:'직접'} : null;   // 포워더 의뢰 (11/14)
       cl.scope = fd.get('scope') || '';                                    // 11/16 수출 업무 범위 기본값
       if(!isNew) Object.keys(before).forEach(k => { if(String(cl[k] || '') !== before[k]){ cl.manualAt = {...(cl.manualAt || {}), [k]:today()}; cl.bizHist = [...(cl.bizHist || []), {at:nowIso(), by:me ? me.id : '', how:'직접 수정', changes:[{k, old:before[k], nw:cl[k] || ''}]}].slice(-20); } });
       if(bizKey(cl.bizNo) && !bizValid(cl.bizNo)) toast('사업자번호가 검증식에 맞지 않습니다. 번호를 다시 확인해 주세요.');
@@ -665,7 +673,8 @@ function openClient(c){
     },
     onDelete: isNew ? null : () => {
       const n = db.records.filter(r => r.clientId === cl.id).length, m = db.procedures.filter(p => p.clientId === cl.id).length, k = db.items.filter(i => i.clientId === cl.id).length;
-      if(!confirm(`‘${cl.name}’을(를) 삭제하면 이 업체의 기록 ${n}건, 전용 절차 ${m}건, 품목 ${k}개도 함께 삭제됩니다. 계속할까요?`)) return false;
+      if(n || m || k){ toast(`기록 ${n}건·절차 ${m}건·품목 ${k}개가 있어 삭제하지 않습니다. 같은 회사면 ‘업체 정리 › 다른 업체에 합치기’, 거래가 끝났으면 ‘보관’을 쓰세요.`); return false; }   // 11/16 e: 기록까지 지우는 삭제 막음
+      if(!confirm(`‘${cl.name}’을(를) 삭제할까요? (기록·절차·품목 없음)`)) return false;
       db.clients = db.clients.filter(x => x.id !== cl.id);
       db.records = db.records.filter(r => r.clientId !== cl.id);
       db.procedures = db.procedures.filter(p => p.clientId !== cl.id);
