@@ -964,8 +964,14 @@ function autoAttachMails0(){
   return n;
 }
 let mailRun = null;
+/* 11/17: 창을 열어 둔 동안에도 15분마다(보이는 창만) 메일·수집기 상태를 다시 받고, 다른 창에 있다 돌아오면 15분 지났을 때 바로 받음 */
+const MAIL_AUTO_MS = 15 * 60 * 1000; let mailTryAt = 0;
+function mailAutoOk(){ return typeof db !== 'undefined' && db && (db.settings.mail || {}).endpoint && !document.hidden && !mailRun && !($('#dlg') && $('#dlg').open); }
+setInterval(() => { if(mailAutoOk() && mailTryAt && Date.now() - mailTryAt >= MAIL_AUTO_MS - 5000) loadMail(false); }, 60 * 1000);
+document.addEventListener('visibilitychange', () => { if(mailAutoOk() && mailTryAt && Date.now() - mailTryAt >= MAIL_AUTO_MS) loadMail(false); });
 function loadMail(manual = true){                                          // 11/15 U-01: 실행 중이면 같은 작업을 기다림(중복 실행·중복 반영 방지)
   if(mailRun){ if(manual) toast('메일을 불러오는 중입니다.'); return mailRun; }
+  mailTryAt = Date.now();
   mailRun = loadMail0(manual).finally(() => { mailRun = null; });
   return mailRun;
 }
@@ -973,7 +979,7 @@ async function loadMail0(manual){
   mailLoading = true; mailErr = ''; if(route.name === 'mail') renderView();
   try{
     const j = await collectApi({mails:1, days:60});
-    mailCache = (j.items || []).map(cleanMailBL); mailCollectorAt = j.collectorAt || '';
+    mailCache = (j.items || []).map(cleanMailBL); mailCollectorAt = j.collectorAt || ''; mailLoadedAt = Date.now();
     const fx = fixBogusLinks(); trimMailFiles(); const dc = typeof demoteContacts === 'function' ? demoteContacts() : 0;   // 11/16 A4 한 번 정리
     const sa = fixSharedAddr();                                          // 11/16 b 공용 주소·잘못 잡힌 업체 한 번 정리
     if(sa.list.length) logProc('move', `공용 주소 정리: 검색어 ${sa.kw}개 뺌, 담당자 ${sa.cc}명 후보로, 기록 ${sa.rec}건 업체 정정 — ${sa.list.slice(0, 6).join(' · ')}${sa.list.length > 6 ? ' …' : ''}`);

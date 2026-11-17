@@ -62,7 +62,7 @@ const ago = iso => { if(!iso) return ''; const h = hrsAgo(iso); return h < 1 ? '
 const kstT = t => !t ? '' : isUtc(t) ? new Date(t).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'}).slice(5, 16) : String(t).replace('T', ' ').slice(5, 16);
 function runFails(){
   const out = Object.entries(runStat).filter(([, s]) => s.err && (!s.ok || s.fail > s.ok)).map(([k, s]) => ({k, label:RUN_KEYS[k] || k, s}));
-  if(mailCollectorAt && hoursSince(mailCollectorAt) > 1) out.unshift({k:'collector', label:'메일 수집기 (사무실 PC)', s:{err:`${ago(mailCollectorAt)} 마지막 실행 — 사무실 PC 수집기 확인`}});
+  if(mailCollectorAt && collectorLagH() > 1) out.unshift({k:'collector', label:'메일 수집기 (사무실 PC)', s:{err:`${ago(mailCollectorAt)} 마지막 실행 — 사무실 PC 수집기 확인`}});
   if(typeof sync !== 'undefined' && ['fail', 'mismatch'].includes(sync.state)) out.push({k:'sync', label:'Drive 자동 저장', s:{err:sync.err || (sync.state === 'mismatch' ? '다른 열쇠의 Workspace — 오른쪽 위 저장 상태를 누르세요' : '저장 실패')}});
   return out;
 }
@@ -73,7 +73,7 @@ function viewStatus(){
       <td>${bad ? `<b class="bad">${s.fail ? esc(kstT(s.fail)) : '지금'}</b> ${esc(s.err)}${s.fails > 1 ? ` <span class="hint">(연속 ${s.fails}회)</span>` : ''}` : s && s.fail ? `<span class="hint">${esc(kstT(s.fail))} 이후 정상</span>` : '-'}</td><td class="hint">${note || ''}</td></tr>`;
   };
   const lastMail = (mailCache || []).map(m => m.collectedAt || '').sort().slice(-1)[0] || '';
-  const coll = mailCollectorAt ? {ok:mailCollectorAt, ...(hoursSince(mailCollectorAt) > 1 ? {err:'1시간 넘게 실행 기록 없음', bad:true} : {})} : null;
+  const coll = mailCollectorAt ? {ok:mailCollectorAt, ...(collectorLagH() > 1 ? {err:'1시간 넘게 실행 기록 없음', bad:true} : {})} : null;
   const sy = typeof sync !== 'undefined' ? {ok:sync.at || '', ...(['fail', 'mismatch'].includes(sync.state) ? {err:sync.err || (sync.state === 'mismatch' ? '다른 열쇠의 Workspace' : '저장 실패'), bad:true} : {})} : null;
   return `<header class="client-head"><div><h2>수집 상태</h2><p class="client-meta">자동으로 도는 일들의 마지막 성공·실패입니다. 메일 수집기는 서버 기준, 나머지는 <b>이 PC 기준</b>(이 PC에서 Workspace를 열어 둔 동안 실행된 것)입니다. 같은 자료는 파일 id·메일 id로 걸러 다시 수집해도 중복으로 들어가지 않습니다.</p></div>
       <div class="client-act"><button class="ghost" data-collect-now>Drive 지금 확인</button><button class="ghost" data-run-uni>UNI-PASS 지금 확인</button><button class="primary" data-run-mail>메일 다시 불러오기</button></div></header>

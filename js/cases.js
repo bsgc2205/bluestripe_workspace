@@ -557,6 +557,8 @@ const OVERDUE_H = 24;
 const REQ_SUBJ = /요청|의뢰|부탁|신청|문의|request|inquiry/i;
 const REQ_BODY = /(신고|통관|면장|면허|수입|수출|검역|요건|진행|발급|확인)[^.\n]{0,15}(요청|부탁|의뢰|바랍니다)/;
 const IS_REPLY = /^\s*(\[[^\]]*\]\s*)*(re|답장|회신)\s*(\[\d+\])?\s*[:：]/i;
+/* 11/17: 수집기 지연은 '메일을 불러온 시각' 기준 — 창을 오래 열어 둬서 값이 낡은 것을 수집기 멈춤으로 보지 않음 */
+function collectorLagH(){ if(!mailCollectorAt) return null; const t = new Date(String(mailCollectorAt).slice(0, 16) + ':00+09:00').getTime(); if(isNaN(t)) return null; return ((mailLoadedAt || Date.now()) - t) / 3600e3; }
 function hoursSince(kst){ const t = new Date(String(kst).slice(0, 16) + ':00+09:00').getTime(); return isNaN(t) ? 0 : (Date.now() - t) / 3600e3; }
 function isOwn(addr){ return /@bsgc\.co\.kr\b/i.test(String(addr || '')); }
 /* 누락 경고 기준일: 이 날짜 이전에 끝난 대화는 '이전 메일'로 따로 두고 경고에 넣지 않는다(처음 연결할 때 쌓인 과거 메일 제외) */
@@ -650,7 +652,7 @@ function homeWidgetsHTML(){
   const t16 = s => s ? String(s).replace('T', ' ').slice(5, 16) : '';
   const st = [
     mailCollectorAt   // 수집기가 15분마다 보고한 실행 시각 기준. 새 메일이 없는 주말·야간에는 경고하지 않음
-      ? `메일 수집기 ${t16(mailCollectorAt)} 실행${hoursSince(mailCollectorAt) > 1 ? ' <b class="bad">(1시간 넘게 실행 안 됨 — 사무실 PC 수집기 확인)</b>' : ''} · 최근 메일 ${lastMail ? t16(lastMail) : '없음'}`
+      ? `메일 수집기 ${t16(mailCollectorAt)} 실행${collectorLagH() > 1 ? ' <b class="bad">(1시간 넘게 실행 안 됨 — 사무실 PC 수집기 확인)</b>' : ''}${mailLoadedAt ? ` <span class="hint">(확인 ${new Date(mailLoadedAt).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit', hour12:false})})</span>` : ''} · 최근 메일 ${lastMail ? t16(lastMail) : '없음'}`
       : `최근 메일 수집 ${lastMail ? t16(lastMail) : '기록 없음'}${mailAge !== null && mailAge > 48 ? ' <b class="bad">(48시간 넘게 새 메일 없음 — 사무실 PC 수집기 확인)</b>' : ''}`,
     `UNI-PASS 확인 ${uniAt ? t16(new Date(uniAt).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'})) : '아직 없음'}${uniErr ? ` <b class="bad">(${esc(uniErr)})</b>` : ''}`,
     `Drive 자료 수집 ${lastCollectRun ? t16(new Date(lastCollectRun).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'})) : '기록 없음'}`

@@ -413,6 +413,7 @@ async function checkClientsExt(list, silent){
     const hit = b ? rows.find(x => bizDigits(x.bsnsNo) === b) || null : (rows.filter(same).length === 1 ? rows.filter(same)[0] : null);
     c.ext.ecmN = rows.length;
     if(!hit) return;
+    if(hit.conmNm){ const cn = String(hit.conmNm).trim(); if(cn && cn !== c.ext.conm) c.ext.conm = cn; c.ext.conmAt = today(); }   // 11/17 UNI-PASS 공식 상호(통관고유부호 등록 상호) — 이름은 바꾸지 않고 따로 저장
     const set = (k, v) => { if(v && !String(c[k] || '').trim()){ c[k] = String(v).trim(); filled++; return true; } return false; };
     if(!b && hit.bsnsNo) set('bizNo', String(hit.bsnsNo).replace(/^(\d{3})(\d{2})(\d{5})$/, '$1-$2-$3'));
     set('ecm', hit.ecm); set('rep', hit.rppnNm); set('address', hit.bslcBscsAddr); set('tel', hit.rprsTelno);
@@ -437,10 +438,33 @@ async function checkClientsExt(list, silent){
       else if(prev && prev.tax && cur.tax && prev.tax !== cur.tax) addAlert({key:`ntstax|${c.id}|${cur.tax}`, kind:'nts', ttype:'client', tid:c.id, title:`과세유형 변경: ${nm}`, text:`${prev.tax} → ${cur.tax}`});
     });
   }
+  await checkNtsValidate(withBiz(), errs);                                // 11/17 국세청 진위확인
   clientExtBusy = false;
   commit();
   const na = (db.alerts || []).length - na0;
   if(!silent || na || filled) toast(`업체 정보 확인: ${cs.length}곳${filled ? ` · 빈칸 ${filled}개 채움` : ''}${na ? ` · 새 알림 ${na}건` : ''}${errs.size ? ` · ${[...errs].slice(0, 2).join(' / ')}` : ''}`);
+}
+/* 11/17 국세청 사업자등록정보 진위확인: 사업자번호 + 개업일 + 대표자(필수) + 상호. 대표자·개업일이 있는 업체만.
+   상호까지 넣어 '02'(불일치)면 상호 없이 한 번 더 — 그때 '01'이면 상호만 다름(nameOk false), 또 '02'면 대표자·개업일이 다름 */
+async function checkNtsValidate(list, errs){
+  const ymd = d => String(d || '').replace(/\D/g, '');
+  const vs = list.filter(c => bizDigits(c.bizNo).length === 10 && String(c.rep || '').trim() && ymd(c.openDate).length === 8);
+  const call = async (part, withName) => {
+    let r; try{ r = (await extCall([{svc:'ntsv', p:{list:JSON.stringify(part.map(c => ({b:bizDigits(c.bizNo), s:ymd(c.openDate), p:String(c.rep).trim(), ...(withName ? {n:c.name} : {})})))}}]))[0]; }catch(e){ r = {ok:false, error:e.message}; }
+    if(!r || !r.ok){ errs.add('국세청 진위확인: ' + ((r && r.error) || '응답 없음')); return null; }
+    const m = new Map(); (r.items || []).filter(x => x.b_no && x.valid).forEach(x => m.set(bizDigits(x.b_no), x)); return m;
+  };
+  for(let i = 0; i < vs.length; i += 100){
+    const part = vs.slice(i, i + 100), m1 = await call(part, true); if(!m1) continue;
+    const bad = part.filter(c => (m1.get(bizDigits(c.bizNo)) || {}).valid === '02'), m2 = bad.length ? await call(bad, false) : new Map();
+    part.forEach(c => {
+      const x = m1.get(bizDigits(c.bizNo)); if(!x) return;
+      const prev = (c.ext.ntsv || {}), y = (m2 || new Map()).get(bizDigits(c.bizNo));
+      const v = x.valid === '01' ? {valid:'01', nameOk:true} : y && y.valid === '01' ? {valid:'01', nameOk:false} : {valid:'02', nameOk:null};
+      c.ext.ntsv = {...v, msg:(y || x).valid_msg || '', at:today(), sent:{n:c.name, p:c.rep, s:c.openDate}};
+      if(v.valid === '02' && prev.valid !== '02') addAlert({key:`ntsv|${c.id}|${bizDigits(c.bizNo)}|${ymd(c.openDate)}|${c.rep}`, kind:'nts', ttype:'client', tid:c.id, title:`국세청 진위확인 불일치: ${c.name}`, text:`사업자번호 ${c.bizNo} · 대표자 ${c.rep} · 개업일 ${c.openDate}가 국세청 등록 내용과 다릅니다(대표자 변경·개업일 오기 여부 확인).`});
+    });
+  }
 }
 /* 품목 화면: 품명으로 HS 후보 (참고용, 자동으로 넣지 않음) */
 async function hsCandidates(name){

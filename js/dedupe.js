@@ -379,7 +379,12 @@ function demoteContacts(){
 /* ---------- 11/16 e 업체 정리 (업체등록-정리방안 A·B·E): 상태(확정·임시·보관)·별칭·문제별 정리·기준 목록 CSV ---------- */
 let clientClean = false, ccTab = 'all', ccPage = 0;
 const CL_STATE = {ok:'확정', temp:'임시', arch:'보관'};
-const CC_ISSUE = {nobiz:'사업자번호 없음', badbiz:'번호 검증 오류', samebiz:'같은 번호 2곳 이상', similar:'이름 비슷(중복 후보)', closed:'휴·폐업', role:'역할 미정(의뢰처로 쓰임)', norec:'기록 0건'};
+const CC_ISSUE = {nobiz:'사업자번호 없음', badbiz:'번호 검증 오류', samebiz:'같은 번호 2곳 이상', name:'상호 불일치', ntsv:'국세청 진위 불일치', similar:'이름 비슷(중복 후보)', closed:'휴·폐업', role:'역할 미정(의뢰처로 쓰임)', norec:'기록 0건'};
+/* 11/17 공식 상호: UNI-PASS 통관고유부호 등록 상호(c.ext.conm) 또는 국세청 진위확인(상호만 다름)과 지금 이름이 다르면 '상호 불일치'. '지금 이름 유지'는 c.nameOk에 그때 공식 상호를 기억 */
+function officialName(c){ return String(((c.ext || {}).conm) || '').trim(); }
+function nameMismatch(c){ const o = officialName(c), v = (c.ext || {}).ntsv || {};
+  if(o && dupNameKey(o) !== dupNameKey(c.name) && c.nameOk !== o) return true;
+  return v.nameOk === false && (v.sent || {}).n === c.name && c.nameOk !== 'nts:' + c.name; }
 function clientState(c){ if(c.archived) return 'arch'; return (bizKey(c.bizNo) && bizValid(c.bizNo)) || String(c.ecm || '').trim() ? 'ok' : 'temp'; }
 function clientCleanCtx(){
   const bizCount = new Map(), recN = new Map(), last = new Map(), viaIds = new Set(), dup = new Map();
@@ -393,6 +398,8 @@ function clientIssues(c, X){
   const out = [], k = bizKey(c.bizNo), nts = ((c.ext || {}).nts || {}).cd;
   if(!k) out.push('nobiz'); else if(!bizValid(c.bizNo)) out.push('badbiz');
   if(k && X.bizCount.get(k) > 1) out.push('samebiz');
+  if(nameMismatch(c)) out.push('name');
+  if(((c.ext || {}).ntsv || {}).valid === '02') out.push('ntsv');
   if(X.dup.has(c.id)) out.push('similar');
   if(nts === '02' || nts === '03') out.push('closed');
   if(!c.role && X.viaIds.has(c.id) && !isFwd(c)) out.push('role');
@@ -414,13 +421,14 @@ function clientCleanHTML(){
     if(s === 'arch') acts.push(btn('cc-unarch', c.id, '보관 해제'));
     else {
       if(is.includes('nobiz') || is.includes('badbiz')) acts.push(btn('cc-biz', c.id, '번호 입력', true));
+      if(is.includes('name')){ if(officialName(c) && dupNameKey(officialName(c)) !== dupNameKey(c.name)) acts.push(btn('cc-offname', c.id, '공식 상호로', true)); acts.push(btn('cc-nameok', c.id, '지금 이름 유지')); }
       if(is.includes('samebiz') || is.includes('similar') || is.includes('norec')) acts.push(btn('cc-merge', c.id, '다른 업체에 합치기', is.includes('samebiz')));
       if(is.includes('role')) acts.push(btn('cc-role', c.id + '|fwd', '포워더') + btn('cc-role', c.id + '|shipper', '화주'));
       if(is.includes('norec') || is.includes('closed')) acts.push(btn('cc-arch', c.id, '보관'));
     }
     if(isAdmin() && clientEmpty(c)) acts.push(`<button class="mini danger-lite" data-cc-del="${esc(c.id)}" title="기록·품목·절차·견적이 하나도 없는 업체만 삭제할 수 있습니다">삭제</button>`);
     acts.push(`<button class="mini" data-edit-client="${esc(c.id)}">수정</button>`);
-    return `<tr><td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><b>${esc(c.name)}</b></button>${(c.aliases || []).length ? `<div class="hint">별칭 ${esc(c.aliases.join(', '))}</div>` : ''}${d.length ? `<div class="hint">비슷: ${d.slice(0, 2).map(x => esc(x.c.name)).join(', ')}</div>` : ''}</td>
+    return `<tr><td><button class="linkish" data-go="client" data-id="${esc(c.id)}"><b>${esc(c.name)}</b></button>${officialName(c) && dupNameKey(officialName(c)) !== dupNameKey(c.name) ? `<div class="hint">공식 상호(UNI-PASS) <b>${esc(officialName(c))}</b></div>` : ''}${((c.ext || {}).ntsv || {}).nameOk === false && (c.ext.ntsv.sent || {}).n === c.name ? '<div class="hint">국세청: 상호만 다름(사업자번호·대표자·개업일 일치)</div>' : ((c.ext || {}).ntsv || {}).valid === '02' ? '<div class="hint">국세청: 대표자·개업일 불일치</div>' : ((c.ext || {}).ntsv || {}).valid === '01' ? '<div class="hint">국세청 진위 일치</div>' : ''}${(c.aliases || []).length ? `<div class="hint">별칭 ${esc(c.aliases.join(', '))}</div>` : ''}${d.length ? `<div class="hint">비슷: ${d.slice(0, 2).map(x => esc(x.c.name)).join(', ')}</div>` : ''}</td>
       <td>${c.bizNo ? `${esc(bizFmt(c.bizNo))}${bizKey(c.bizNo) && bizValid(c.bizNo) ? '' : ' <span class="kc-chip bad">검증 오류</span>'}` : '<span class="hint">-</span>'}${c.ecm ? `<div class="hint">통관부호 ${esc(c.ecm)}</div>` : ''}</td>
       <td><span class="kc-chip${st[s]}">${CL_STATE[s]}</span></td><td>${c.role === 'fwd' || (!c.role && isFwd(c)) ? '포워더' : c.role === 'shipper' ? '화주' : '<span class="hint">-</span>'}</td>
       <td>${X.recN.get(c.id) || 0}${X.last.get(c.id) ? `<div class="hint">${esc(X.last.get(c.id))}</div>` : ''}</td>
@@ -464,17 +472,30 @@ function openMergeInto(c){
 }
 /* 삭제는 연결된 자료가 하나도 없는 업체만 (관리자) — 자료가 있으면 합치기·보관 */
 function clientEmpty(c){ const s = dupStats(c); return !s.rec && !s.item && !s.proc && !(db.inquiries || []).some(q => q.clientId === c.id) && !(db.quotes || []).some(q => q.clientId === c.id); }
+/* [공식 상호로]: 이름을 공식 상호로, 예전 이름은 별칭·검색어로 남겨 메일·자료 연결이 끊기지 않게 */
+function applyOfficialName(c){
+  const nw = officialName(c), old = c.name; if(!nw || nw === old) return false;
+  c.name = nw;
+  c.aliases = [...new Set([...(c.aliases || []), old].map(x => String(x).trim()).filter(Boolean))].filter(x => dupNameKey(x) !== dupNameKey(nw));
+  const kws = String(c.keyword || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+  if(!kws.some(k => k.toLowerCase() === old.toLowerCase())) c.keyword = [...kws, old].join(', ');
+  c.nameOk = nw; c.nameSrc = {src:'UNI-PASS 통관고유부호 등록 상호', at:today()};
+  c.bizHist = [...(c.bizHist || []), {at:nowIso(), by:me ? me.id : '', how:'공식 상호로(UNI-PASS)', changes:[{k:'상호', old, nw}]}].slice(-20);
+  c.updatedAt = nowIso();
+  if(typeof aliasCache !== 'undefined' && aliasCache) aliasCache.n = -1;   // 약칭 표 다시 계산
+  return old;
+}
 function clientCsv(){
   const X = clientCleanCtx(), cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const head = ['상호', '사업자번호', '번호 검증', '상태', '역할', '대표자', '주소', '통관고유부호', '국세청 상태', '관세 납부', '별칭', '검색어', '확정 담당자', '기록 수', '최근 업무', '문제'];
-  const body = sortedClients().map(c => [c.name, c.bizNo || '', bizKey(c.bizNo) ? (bizValid(c.bizNo) ? '통과' : '오류') : '', CL_STATE[clientState(c)], c.role === 'fwd' || (!c.role && isFwd(c)) ? '포워더' : c.role === 'shipper' ? '화주' : '',
+  const head = ['상호', '공식 상호(UNI-PASS)', '국세청 진위', '사업자번호', '번호 검증', '상태', '역할', '대표자', '주소', '통관고유부호', '국세청 상태', '관세 납부', '별칭', '검색어', '확정 담당자', '기록 수', '최근 업무', '문제'];
+  const body = sortedClients().map(c => [c.name, officialName(c), (v => v.valid === '01' ? (v.nameOk === false ? '상호만 다름' : '일치') : v.valid === '02' ? '불일치' : '')(((c.ext || {}).ntsv) || {}), c.bizNo || '', bizKey(c.bizNo) ? (bizValid(c.bizNo) ? '통과' : '오류') : '', CL_STATE[clientState(c)], c.role === 'fwd' || (!c.role && isFwd(c)) ? '포워더' : c.role === 'shipper' ? '화주' : '',
     c.rep || '', c.address || '', c.ecm || '', ((c.ext || {}).nts || {}).stt || '', typeof payModeOf === 'function' && payModeOf(c.id) === 'monthly' ? '월별납부' : '', (c.aliases || []).join(', '), c.keyword || '',
     confirmedContacts(c).map(p => p.email).filter(Boolean).join(' '), X.recN.get(c.id) || 0, X.last.get(c.id) || '', clientIssues(c, X).map(k => CC_ISSUE[k]).join(', ')].map(cell).join(','));
   download(`BSGC-업체목록-${today()}.csv`, '﻿' + [head.map(cell).join(','), ...body].join('\r\n'), 'text/csv;charset=utf-8');
 }
 document.addEventListener('click', e => {
   if(!db || e.target.closest('dialog')) return;
-  const t = e.target.closest('[data-clist-clean],[data-cc-tab],[data-cc-page],[data-cc-biz],[data-cc-merge],[data-cc-arch],[data-cc-unarch],[data-cc-role],[data-cc-csv],[data-cc-del]'); if(!t) return;
+  const t = e.target.closest('[data-clist-clean],[data-cc-tab],[data-cc-page],[data-cc-biz],[data-cc-merge],[data-cc-arch],[data-cc-unarch],[data-cc-role],[data-cc-csv],[data-cc-del],[data-cc-offname],[data-cc-nameok]'); if(!t) return;
   const d = t.dataset, cl = id => db.clients.find(x => x.id === id);
   if('clistClean' in d){ clientClean = !clientClean; ccPage = 0; renderView(); window.scrollTo(0, 0); return; }
   if('ccTab' in d){ ccTab = d.ccTab; ccPage = 0; renderView(); return; }
@@ -486,5 +507,8 @@ document.addEventListener('click', e => {
   if('ccUnarch' in d){ const c = cl(d.ccUnarch); if(c){ c.archived = null; c.updatedAt = nowIso(); commit(); } return; }
   if('ccDel' in d){ const c = cl(d.ccDel); if(!c || !isAdmin()) return; if(!clientEmpty(c)){ toast('연결된 기록·품목이 있어 삭제할 수 없습니다. 합치기나 보관을 쓰세요.'); return; }
     if(confirm(`‘${c.name}’을(를) 삭제할까요?\n기록·품목·절차·견적이 없는 업체입니다. 같은 회사가 따로 있으면 ‘다른 업체에 합치기’가 낫습니다(이름이 별칭으로 남음).`)){ db.clients = db.clients.filter(x => x.id !== c.id); commit(); toast(`‘${c.name}’을(를) 삭제했습니다.`); } return; }
+  if('ccOffname' in d){ const c = cl(d.ccOffname); if(!c) return; const o = officialName(c);
+    if(confirm(`‘${c.name}’ → ‘${o}’ (UNI-PASS 공식 상호)\n예전 이름은 별칭·검색어로 남아 메일·자료 연결은 그대로입니다. 바꿀까요?`)){ const old = applyOfficialName(c); if(old){ commit(); toast(`‘${old}’ → ‘${o}’. 예전 이름은 별칭으로 남았습니다.`); } } return; }
+  if('ccNameok' in d){ const c = cl(d.ccNameok); if(!c) return; c.nameOk = officialName(c) && dupNameKey(officialName(c)) !== dupNameKey(c.name) ? officialName(c) : 'nts:' + c.name; c.updatedAt = nowIso(); commit(); toast(`‘${c.name}’ 이름을 그대로 둡니다(공식 상호가 다시 바뀌면 다시 표시).`); return; }
   if('ccRole' in d){ const [id, role] = d.ccRole.split('|'), c = cl(id); if(c){ c.role = role; c.updatedAt = nowIso(); commit(); toast(`‘${c.name}’을(를) ${role === 'fwd' ? '포워더' : '화주'}로 정했습니다.`); } return; }
 });
