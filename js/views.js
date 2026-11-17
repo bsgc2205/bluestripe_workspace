@@ -129,7 +129,7 @@ function recordHTML(r, o = {}){
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
-      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${typeof recPayKind === 'function' && recPayKind(r) === 'monthly' ? '<span class="tag how" title="월별납부 업체 — 관세는 그 달 말일 일괄 납부, 고지서는 업체에 메일로 송부">월별납부</span>' : typeof recPayKind === 'function' && recPayKind(r) === 'single' ? '<span class="tag how" title="개별납부고지서·사후납부 안내 건 — 수리일부터 15일">개별 납부</span>' : ''}${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) + (typeof procPickHTML === 'function' && r.status !== '완료' ? procPickHTML(r) : '') : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
+      <div class="rec-meta">${o.showClient ? `<button class="linkish" data-go="client" data-id="${esc(r.clientId)}">${esc(clientName(r.clientId))}</button>` : ''}<span class="tag type">${esc(r.type)}</span>${typeof recPayKind === 'function' && recPayKind(r) === 'monthly' ? '<span class="tag how" title="월별납부 업체 — 관세는 그 달 말일 일괄 납부, 고지서는 업체에 메일로 송부">월별납부</span>' : typeof recPayKind === 'function' && recPayKind(r) === 'single' ? '<span class="tag how" title="개별납부고지서·사후납부 안내 건 — 수리일부터 15일">개별 납부</span>' : ''}${typeof vatDeferOf === 'function' && vatDeferOf(r) ? `<span class="tag how" title="수입 때 부가세를 내지 않음(부가세 신고 때 정산) — ${esc(vatDeferOf(r).src)} 기준">부가세 납부유예${vatDeferOf(r).duty === 0 ? ' · 관세 0' : ''}</span>` : ''}${r.via ? `<span class="tag via" title="청구처: ${esc(typeof billLabel === 'function' ? billLabel(r) : '')}">의뢰 ${esc(clientName(r.via))}${r.billTo ? ` · 청구 ${r.billTo === 'via' ? '포워더' : '화주'}` : ''}</span>` : ''}${item ? `<span>${hl(item.name)}</span>` : ''}${r.bl ? `<span class="ref">B/L ${hl(r.bl)}</span>` : ''}${r.refNo ? `<span class="ref">${hl(r.refNo)}</span>` : ''}${typeof recLedgerHTML === 'function' ? recLedgerHTML(r) : ''}${typeof recReviewHTML === 'function' ? recReviewHTML(r) : ''}${!o.compact ? procVerHTML(r) + (typeof procPickHTML === 'function' && r.status !== '완료' ? procPickHTML(r) : '') : ''}${r.assignee ? `<span class="who-tag">담당 ${esc(assigneeName(r.assignee))}</span>` : ''}${stageHTML(r)}${causesOf(r).map(c => `<span class="tag cause">${esc(c)}</span>`).join('')}${dls.map(d => `<span class="dl-chip">${ddayHTML(d.due)}${esc(d.kind)}</span>`).join('')}${inqN ? `<button class="tag" data-inq-rec="${esc(r.id)}" title="이 기록과 연결된 세관 질의">세관 질의 ${inqN}</button>` : ''}</div>
       ${active && !o.compact && typeof caseSumHTML === 'function' ? caseSumHTML(r) : ''}
       ${!o.compact && r.summary ? `<p class="rec-sum" title="눌러서 펼치기">${hl(r.summary)}</p>` : ''}
       ${r.special && r.specialNote ? `<div class="special-note"><strong>특이 처리 내용</strong><p class="rec-sum" title="눌러서 펼치기">${hl(r.specialNote)}</p>${(r.reflected||[]).length ? `<span class="reflected">절차에 반영됨</span>` : ''}</div>` : ''}
@@ -519,13 +519,14 @@ function amendSection(c){
 /* 11/16 e 관세 납부 방식(업체 화면) */
 function clientPayHTML(c){
   const m = payModeOf(c.id), a = c.payAuto || {}, ns = (a.notices || []).slice().reverse();
-  const imp = db.records.filter(r => r.clientId === c.id && isImp(r));
-  if(m !== 'monthly' && !imp.some(r => r.payKind === 'single')) return '';
+  const imp = db.records.filter(r => r.clientId === c.id && isImp(r)), vd = c.vatDefer === 'on' || (c.vatDefer !== 'off' && !!c.vatDeferAuto) || imp.some(r => r.tax && (r.tax.vatDefer || r.tax.clct === '14'));
+  if(m !== 'monthly' && !vd && !imp.some(r => r.payKind === 'single')) return '';
   const recent = ns.slice(0, 6).map(x => `${esc(x.month)} (${esc(x.date.slice(5))} 송부)`).join(' · ');
   const single = imp.filter(r => r.payKind === 'single').length;
   return `<section class="pay-sec"><p><b>관세 납부: ${esc(PAY_MODE[m])}</b> <span class="hint">${c.payMode ? '업체 창에서 지정' : a.mode === 'monthly' ? `자동 판단 — 월별납부고지서 메일 ${esc(a.last || '')}` : ''}</span></p>
     ${m === 'monthly' ? `<p class="hint">수입 건의 관세 납부기한 = 수리일부터 15일이 되는 날이 속한 달의 말일(관세법 제9조 제3항). 고지서는 업체에 메일로 보냅니다.${recent ? ` 최근 고지서: ${recent}` : ''}</p>` : ''}
-    ${single ? `<p class="hint">개별 납부(개별납부고지서·사후납부 안내) ${single}건은 수리일부터 15일.</p>` : ''}</section>`;
+    ${single ? `<p class="hint">개별 납부(개별납부고지서·사후납부 안내) ${single}건은 수리일부터 15일.</p>` : ''}
+    ${vd ? `<p><b>부가세 납부유예</b> <span class="hint">${c.vatDefer === 'on' ? '업체 창에서 지정' : c.vatDeferAuto ? `자동 — 필증 ${esc(c.vatDeferAuto.declNo || '')}` : '필증에 납부유예 표시'}</span></p><p class="hint">수입 때 부가세를 내지 않고 부가세 신고 때 정산합니다. 관세가 0(FTA 등)인 건은 관세 납부기한을 잡지 않고, 관세가 있으면 그 금액만 납부기한을 둡니다.</p>` : ''}</section>`;
 }
 function clientContactsSection(c){
   const cc = confirmedContacts(c), cand = (c.contacts || []).filter(p => !contactOk(p)), rw = c.recentWork || [];
@@ -635,7 +636,7 @@ function clientCands(text){
     const mails = confirmedContacts(c).map(p => String(p.email || '').toLowerCase().trim()).filter(e => e.includes('@'));   // 11/16 A4: 확정 담당자만   // 담당자 주소는 공용 메일(naver·kita.net 등)이어도 주소 전체가 같으면 인정 (11/11 c)
     const m1 = Math.max(0, ...mails.filter(e => addrs.includes(e)).map(e => e.length), ...doms.filter(d => addrs.some(a => a.endsWith(d)) || t.includes(d)).map(d => d.length));
     if(m1) return tiers[0].push([c, m1]);
-    const m2 = Math.max(0, ...kws.filter(k => !k.startsWith('@') && nameHit(t, compact, k)).map(k => k.length));
+    const m2 = Math.max(0, ...[...kws.filter(k => !k.startsWith('@')), ...(c.aliases || []).map(a => String(a).toLowerCase().trim()).filter(a => a.length >= 2)].filter(k => nameHit(t, compact, k)).map(k => k.length));   // 11/17 별칭(영문 상호·약칭)도 이름 검색어처럼
     if(m2) return tiers[1].push([c, m2]);
     const nk = nameKey(c.name), alt = nk.replace(/\s*(코리아|korea)$/i, '').trim();   // '티디에프코리아' → '티디에프'처럼 '코리아'를 뺀 약칭도 인정(3글자 이상)
     const al = clientAlias(c);

@@ -163,7 +163,12 @@ function applyCert2Rec(r, d, fname){
   if(cl && d.bizNo && !bizDigits(cl.bizNo) && (findClient(d.party || '') === cl || clientByBiz(d.bizNo) === null && nameKey(d.party || '').replace(/\s/g, '').includes(nameKey(cl.name).replace(/\s/g, '')))){ cl.bizNo = d.bizNo; cl.updatedAt = nowIso(); ch.push('업체 사업자번호'); setTimeout(() => checkClientsExt([cl], true), 1500); }
   if(d.kind && caseCode(r.type) === 'X'){ r.type = d.kind === 'E' ? '수출신고' : '수입통관'; ch.push('유형'); }
   else if((d.kind === 'E' || d.kind === 'I') && caseCode(r.type) !== d.kind && mine && typeAuto(r) && retypeRecord(r, d.kind === 'E' ? '수출신고' : '수입통관', `필증 ${fname}`)) ch.push('유형 정정');   // 11/16
-  r.certs = [...(r.certs || []).filter(x => x.declNo !== d.declNo), {file:fname, declNo:d.declNo, declDate:d.declDate, kind:d.kind, party:d.party, partner:d.partner, country:d.country, terms:d.terms, lines:(d.lines || []).slice(0, 12)}].slice(-10);
+  r.certs = [...(r.certs || []).filter(x => x.declNo !== d.declNo), {file:fname, declNo:d.declNo, declDate:d.declDate, kind:d.kind, party:d.party, partner:d.partner, country:d.country, terms:d.terms, lines:(d.lines || []).slice(0, 12), tax:d.tax || null}].slice(-10);
+  if(d.kind === 'I' && d.tax && mine){                                   // 11/17 세액·징수형태: 부가세 납부유예·관세 0이면 납부기한을 잡지 않음
+    const was = r.tax || {}; r.tax = {...d.tax, declNo:d.declNo || '', file:fname, at:today()};
+    if(d.tax.vatDefer !== was.vatDefer || d.tax.duty !== was.duty) ch.push(d.tax.vatDefer || d.tax.clct === '14' ? `부가세 납부유예${d.tax.duty === 0 ? ' · 관세 0' : d.tax.duty ? ` · 관세 ${d.tax.duty.toLocaleString()}원` : ''}` : '세액');
+    const cl2 = db.clients.find(c => c.id === r.clientId); if(cl2 && (d.tax.vatDefer || d.tax.clct === '14') && !cl2.vatDeferAuto){ cl2.vatDeferAuto = {at:today(), declNo:d.declNo || ''}; cl2.updatedAt = nowIso(); }
+  }
   let made = 0;
   const pc = certParty(d), other = pc && pc.id !== r.clientId ? pc : null;
   (d.lines || []).forEach((ln, i) => { const x = itemFromLine(other ? other.id : r.clientId, ln, d); if(!x) return; if(x.isNew) made++; if(i === 0 && !r.itemId && !other) { r.itemId = x.it.id; ch.push('품목'); } });
@@ -320,6 +325,17 @@ function fixMisplacedItems(r, mineDocs, others){
 }
 /* 한 번만: 예전에 한 장짜리로 읽은 '날짜 이름' 같은 묶음 PDF(파일명에 신고번호·EXP/IMP 없음)를 다시 읽게 함 */
 /* 11/13 g: 견본 필증('견본(수출)'로 시작, '수출신고필증' 제목 없음)과 색인표 신고번호를 잘못 나누던 것을 고쳐(Apps Script cert3_) 한 번 더 다시 읽음 */
+/* 11/17 한 번: 진행 중·최근 수입 기록 중 세액을 아직 안 읽은 필증은 다시 읽음(징수형태·관세·총세액) */
+function recheckTax(){
+  if(db.settings.certTax === '20261117') return 0;
+  const cut = addPeriod(today(), -60, 'd'); let n = 0;
+  db.records.filter(r => recIO(r) === 'I' && (r.status !== '완료' || recDate(r) >= cut) && !r.tax).forEach(r => {
+    const fs = (r.files || []).filter(f => /\.pdf$/i.test(f.name || '') && CERT_HINT.test(f.name || '') && (r.certRead || {})[f.id]);
+    if(!fs.length) return; fs.forEach(f => { delete r.certRead[f.id]; }); r.certAgain = true; n += fs.length;
+  });
+  db.settings.certTax = '20261117';
+  return n;
+}
 function recheckCombined(){                                               // 11/15: 수출신고서(갑지·을지) 머리·신고번호 앞 배치 대응으로 묶음 PDF를 한 번 더 다시 읽음
   if(db.settings.certMulti === '20261115d') return 0;
   let n = 0;
@@ -361,6 +377,7 @@ async function certRead0(manual){
     });
   });
   const rm = pend ? rematchPending() : null;
+  if(recs && typeof fixDutyDues === 'function'){ const dd = fixDutyDues(); if(dd) logProc('cert', `필증 세액 기준으로 관세 납부기한 ${dd}건 정리(부가세 납부유예·관세 0 등)`); }
   typeof markRun === 'function' && markRun('cert', true);
   if(later && (certLaterN = (certLaterN || 0) + 1) <= 12) setTimeout(() => certRead(false), 4000); else if(!later) certLaterN = 0;   // 나눠 읽기 이어서(최대 12번)
   commit();
@@ -375,6 +392,7 @@ async function runCollect(manual){
   collectBusy = true;
   try{
     if(manual){ toast('수입·수출 폴더와 BSGC-Backup 변동사항을 확인하는 중입니다…'); await collectApi({collect:1}); await collectApi({weekly:1}); }
+    const rt = recheckTax(); if(rt) logProc('cert', `세액·징수형태를 읽으려고 수입 필증 ${rt}개를 다시 읽습니다(6개씩)`);
     const rc = recheckCombined(); if(rc) setTimeout(() => toast(`하루치를 한 파일로 묶은 필증 PDF ${rc}개를 필증별 업체로 다시 읽습니다(6개씩).`), 1500);
     const fx = fixCertItems(); if(fx) toast(`필증에서 등록된 품목 ${fx}개의 업체를 바로잡았습니다(필증의 수입자·수출화주 기준).`);
     const j = await collectApi({inbox:1});

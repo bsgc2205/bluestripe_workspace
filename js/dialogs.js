@@ -626,6 +626,7 @@ function openClient(c){
         <label>업체 구분<select name="role">${opts([['', '자동 (업종에 포워더·물류면 포워더)'], ['shipper', '화주'], ['fwd', '포워더']], cl.role || '')}</select></label>
         <label>기본 청구처 <span class="hint">포워더 의뢰 건</span><select name="billDefault">${opts([['', '지정 안 함 (건마다)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], cl.billDefault || '')}</select></label>
         <label>관세 납부 방식 <span class="hint">${cl.payAuto && cl.payAuto.mode === 'monthly' ? `자동 판단: 월별납부고지서 메일 ${esc(cl.payAuto.last || '')}` : '자동: 월별납부고지서를 보낸 메일로 판단'}</span><select name="payMode">${opts([['', '자동'], ['each', PAY_MODE.each], ['monthly', PAY_MODE.monthly]], cl.payMode || '')}</select></label>
+        <label>부가세 납부유예 <span class="hint">${cl.vatDeferAuto ? `자동: 필증에 납부유예 표시(${esc(cl.vatDeferAuto.declNo || '')})` : '자동: 필증의 납부유예 표시·징수형태 14로 판단'}</span><select name="vatDefer">${opts([['', '자동'], ['on', '납부유예 업체 (수입 때 부가세 안 냄)'], ['off', '아님']], cl.vatDefer || '')}</select></label>
         <label>수출 업무 범위 <span class="hint">기본값 — 건마다 바꿀 수 있음</span><select name="scope">${opts([['', '수출통관'], ['logi', '수출통관 + 물류 핸들링'], ['extra', '개별 검토·증명서 등 부가업무']], cl.scope || '')}</select></label>
       </div>
       <div class="row2">
@@ -657,6 +658,7 @@ function openClient(c){
       if((bizChanged || isNew) && (db.settings.mail || {}).endpoint) setTimeout(() => checkClientsExt([cl], true), 600);   // 사업자번호가 바뀌면 통관고유부호·국세청 상태 바로 확인
       cl.role = fd.get('role') || ''; cl.billDefault = fd.get('billDefault') || '';
       { const pm = fd.get('payMode') || ''; if(pm !== (cl.payMode || '')){ cl.payMode = pm; if(typeof fixDutyDues === 'function') setTimeout(() => { const n = fixDutyDues(); if(n){ commit(); toast(`관세 납부기한 ${n}건을 납부 방식에 맞게 고쳤습니다.`); } }, 50); } }   // 11/16 e
+      { const vd = fd.get('vatDefer') || ''; if(vd !== (cl.vatDefer || '')){ cl.vatDefer = vd; if(typeof fixDutyDues === 'function') setTimeout(() => { const n = fixDutyDues(); if(n){ commit(); toast(`관세 납부기한 ${n}건을 정리했습니다(부가세 납부유예).`); } }, 50); } }   // 11/17
       cl.aliases = String(fd.get('aliases') || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
       if(fd.get('archived') ? !cl.archived : cl.archived) cl.archived = fd.get('archived') ? {at:today(), by:me ? me.id : '', why:'직접'} : null;   // 포워더 의뢰 (11/14)
       cl.scope = fd.get('scope') || '';                                    // 11/16 수출 업무 범위 기본값

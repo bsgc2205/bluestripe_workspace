@@ -856,8 +856,13 @@ function fixPayModes(){
 function fixDutyDues(){
   let n = 0;
   db.records.forEach(r => (r.deadlines || []).forEach(d => {
-    if(d.done || d.kind !== '관세 납부기한' || !d.base) return;
-    const want = dutyDue(r, d.base), note = recPayKind(r) === 'monthly' ? '월별납부 — 그 달 말일' : '';
+    if(d.done || d.kind !== '관세 납부기한') return;
+    if(!dutyNeedsPay(r)){                                                 // 11/17 부가세 납부유예 + 관세 0 → 납부할 세액 없음
+      Object.assign(d, {done:true, doneAt:today(), note:'부가세 납부유예 · 관세 0 — 납부할 세액 없음'}); n++;
+      addHist(r, `관세 납부기한 정리: 부가세 납부유예(${(vatDeferOf(r) || {}).src || ''})·관세 0 — 수입 때 낼 세액 없음`); return;
+    }
+    if(!d.base) return;
+    const want = dutyDue(r, d.base), note = dutyNote(r);
     if(d.due !== want){ d.due = want; n++; }
     if(note) d.note = note; else delete d.note;
   }));

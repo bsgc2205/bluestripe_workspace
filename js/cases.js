@@ -38,6 +38,21 @@ const PAY_MODE = {each:'건별 납부 (수리일부터 15일)', monthly:'월별�
 function payModeOf(cid){ const c = db.clients.find(x => x.id === cid); if(!c) return 'each'; if(c.payMode === 'monthly' || c.payMode === 'each') return c.payMode; return c.payAuto && c.payAuto.mode === 'monthly' ? 'monthly' : 'each'; }
 function recPayKind(r){ if(!isImp(r)) return ''; if(r.payKind === 'single') return 'single'; return payModeOf(r.clientId) === 'monthly' ? 'monthly' : 'each'; }
 function monthEnd(d){ const [y, m] = String(d).slice(0, 7).split('-').map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`; }
+/* 11/17 부가세 납부유예: 필증·신고서에 '부가세납부유예' 표시나 징수형태 14면 수입 때 부가세를 내지 않음 → 납부할 세액은 관세(등)뿐.
+   관세가 0(FTA 등)이면 납부기한 자체가 없음. 업체 창에서 '부가세 납부유예 업체'로 지정할 수 있음(필증 세액을 못 읽은 건은 확인 필요로 표시) */
+function vatDeferOf(r){
+  if(!isImp(r)) return null;
+  const t = r.tax || {}, c = db.clients.find(x => x.id === r.clientId) || {};
+  if(t.vatDefer || t.clct === '14') return {src:'필증', duty:typeof t.duty === 'number' ? t.duty : null, total:t.total};
+  if(c.vatDefer === 'on' || (c.vatDefer !== 'off' && c.vatDeferAuto)) return {src:'업체', duty:typeof t.duty === 'number' ? t.duty : null, total:t.total};
+  return null;
+}
+function dutyNeedsPay(r){ const v = vatDeferOf(r); if(v) return v.duty !== 0; const t = r.tax || {}; return !(typeof t.total === 'number' && t.total === 0); }
+function dutyNote(r){
+  const v = vatDeferOf(r), m = recPayKind(r) === 'monthly' ? '월별납부 — 그 달 말일' : '';
+  if(!v) return m;
+  return [v.duty ? `부가세 납부유예 — 관세 ${v.duty.toLocaleString()}원만` : v.duty === null ? '부가세 납부유예 — 관세 있으면 그 금액만(필증 세액 확인)' : '', m].filter(Boolean).join(' · ');
+}
 function dutyDue(r, base){ const d15 = addPeriod(base, 15, 'd'); return recPayKind(r) === 'monthly' ? monthEnd(d15) : d15; }
 function ensureCaseNos(d){
   const max = {};
@@ -458,10 +473,10 @@ async function checkImport(r, u){
     try{ const j = await uni('API050', {impDclrNo:decl}); const nm = pick(j, 'mgPrcsStcdNm'); if(nm) u.bond = nm + (pick(j, 'mgAprvDt') ? ' ' + fmtYmd(pick(j, 'mgAprvDt')).slice(5) : ''); }
     catch(e){ u.err050 = e.message; }
   }
-  if(u.clearedAt && u.paid === false && !r.deadlines.some(x => x.kind === '관세 납부기한'))                 // 수리 후 미납이면 납부기한(수리일 + 15일), 납부 확인되면 처리 표시
-    r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:dutyDue(r, u.clearedAt), done:false, auto:true, ...(recPayKind(r) === 'monthly' ? {note:'월별납부 — 그 달 말일'} : {})});
+  if(u.clearedAt && u.paid === false && dutyNeedsPay(r) && !r.deadlines.some(x => x.kind === '관세 납부기한'))                 // 수리 후 미납이면 납부기한(수리일 + 15일), 납부 확인되면 처리 표시
+    r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:dutyDue(r, u.clearedAt), done:false, auto:true, ...(dutyNote(r) ? {note:dutyNote(r)} : {})});
   if(u.paid) r.deadlines.filter(x => x.kind === '관세 납부기한' && x.auto).forEach(x => x.done = true);
-  if(u.cleared && (u.paid || u.released)) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || '', `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : ''}${u.released ? ', 반출신고' : ''}${u.paidAt || u.releasedAt || u.clearedAt ? '' : ' (날짜 미확인)'}`, 'ok', u.paidAt || u.releasedAt || u.clearedAt ? null : {est:true});   // 11/16: 날짜 없으면 오늘을 실제 날짜로 넣지 않음
+  if(u.cleared && (u.paid || u.released || !dutyNeedsPay(r))) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || '', `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : !dutyNeedsPay(r) ? ', 납부할 세액 없음(부가세 납부유예·관세 0)' : ''}${u.released ? ', 반출신고' : ''}${u.paidAt || u.releasedAt || u.clearedAt ? '' : ' (날짜 미확인)'}`, 'ok', u.paidAt || u.releasedAt || u.clearedAt ? null : {est:true});   // 11/16: 날짜 없으면 오늘을 실제 날짜로 넣지 않음
 }
 async function checkExport(r, u){
   const decl = kDecl(r.refNo);
