@@ -327,13 +327,14 @@ function fixMisplacedItems(r, mineDocs, others){
 /* 11/13 g: 견본 필증('견본(수출)'로 시작, '수출신고필증' 제목 없음)과 색인표 신고번호를 잘못 나누던 것을 고쳐(Apps Script cert3_) 한 번 더 다시 읽음 */
 /* 11/17 한 번: 진행 중·최근 수입 기록 중 세액을 아직 안 읽은 필증은 다시 읽음(징수형태·관세·총세액) */
 function recheckTax(){
-  if(db.settings.certTax === '20261117') return 0;
+  if(db.settings.certTax === '20261117b') return 0;
   const cut = addPeriod(today(), -60, 'd'); let n = 0;
-  db.records.filter(r => recIO(r) === 'I' && (r.status !== '완료' || recDate(r) >= cut) && !r.tax).forEach(r => {
+  const weak = t => !t || ((t.vatDefer || t.clct === '14') && t.duty == null);   // 11/17 b: 세액을 못 읽은(관세 줄 머리 누락) 건도 다시
+  db.records.filter(r => recIO(r) === 'I' && (r.status !== '완료' || recDate(r) >= cut) && weak(r.tax)).forEach(r => {
     const fs = (r.files || []).filter(f => /\.pdf$/i.test(f.name || '') && CERT_HINT.test(f.name || '') && (r.certRead || {})[f.id]);
     if(!fs.length) return; fs.forEach(f => { delete r.certRead[f.id]; }); r.certAgain = true; n += fs.length;
   });
-  db.settings.certTax = '20261117';
+  db.settings.certTax = '20261117b';
   return n;
 }
 function recheckCombined(){                                               // 11/15: 수출신고서(갑지·을지) 머리·신고번호 앞 배치 대응으로 묶음 PDF를 한 번 더 다시 읽음
@@ -348,7 +349,7 @@ function recheckCombined(){                                               // 11/
   db.settings.certMulti = '20261115d';
   return n;
 }
-let certBusy = false, certLaterN = 0;
+let certBusy = false, certLaterN = 0, certMoreN = 0;
 async function certRead(manual){                                          // 11/15: 같은 필증을 동시에 두 번 읽지 않게
   if(certBusy){ if(manual) toast('필증을 읽는 중입니다.'); return null; }
   certBusy = true;
@@ -380,6 +381,7 @@ async function certRead0(manual){
   if(recs && typeof fixDutyDues === 'function'){ const dd = fixDutyDues(); if(dd) logProc('cert', `필증 세액 기준으로 관세 납부기한 ${dd}건 정리(부가세 납부유예·관세 0 등)`); }
   typeof markRun === 'function' && markRun('cert', true);
   if(later && (certLaterN = (certLaterN || 0) + 1) <= 12) setTimeout(() => certRead(false), 4000); else if(!later) certLaterN = 0;   // 나눠 읽기 이어서(최대 12번)
+  if(!later && certQueue().some(x => x.rec && x.rec.certAgain) && (certMoreN = (certMoreN || 0) + 1) <= 15) setTimeout(() => certRead(false), 6000);   // 11/17 b: 다시 읽을 필증이 남았으면 이어서(6개씩, 최대 15번)
   commit();
   const cmsg = `필증 읽기: 기록 ${recs}건 반영, 품목 DB ${items}개 추가${rm && (rm.made || rm.upd) ? `, 미분류 자료 ${rm.made + rm.upd}건 업체 확인` : ''}`;
   if(recs || items || (rm && (rm.made || rm.upd))) logProc('cert', cmsg);
