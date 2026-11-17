@@ -516,16 +516,42 @@ function amendSection(c){
   </section>`;
 }
 
+/* 11/18 미처리 관세 납부기한 점검(업체 화면): 건마다 필증 세액 판정 상태 + [필증 다시 읽기] [납부할 세액 없음] */
+function dutyOpenHTML(c){
+  const rows = db.records.filter(r => r.clientId === c.id && isImp(r) && (r.deadlines || []).some(d => !d.done && d.kind === '관세 납부기한'));
+  if(!rows.length) return '';
+  const st = r => { const t = r.tax, v = vatDeferOf(r), pdf = (r.files || []).some(f => /\.pdf$/i.test(f.name || '') && f.id);
+    if(t && (t.vatDefer || t.clct === '14')) return t.duty === 0 ? '필증: 납부유예·관세 0' : t.duty ? `필증: 납부유예·관세 ${t.duty.toLocaleString()}원` : '필증: 납부유예, 관세 미판독';
+    if(t) return `필증: 납부유예 아님(징수형태 ${esc(t.clct || '-')}${t.total != null ? ` · 총세액 ${t.total.toLocaleString()}원` : ''})`;
+    if(r.certAgain) return '필증 읽는 중';
+    return pdf ? '필증 세액 아직 안 읽음' : '연결된 필증 PDF 없음' + (v ? ' (업체 기준 납부유예)' : ''); };
+  return `<details class="more fold"${rows.length <= 8 ? ' open' : ''}><summary>미처리 관세 납부기한 ${rows.length}건</summary><div class="table-wrap"><table class="grid"><thead><tr><th>건</th><th>기한</th><th>세액 판정</th><th></th></tr></thead><tbody>${rows.map(r => { const d = r.deadlines.find(x => !x.done && x.kind === '관세 납부기한');
+    return `<tr><td><button class="linkish" data-edit-rec="${esc(r.id)}">${esc(r.bl || r.refNo || r.title)}</button><div class="hint">${esc(r.refNo || '')}</div></td><td>${ddayHTML(d.due)} <span class="hint">${esc(d.due)}</span></td><td>${esc(st(r))}</td>
+      <td class="cc-acts">${(r.files || []).some(f => /\.pdf$/i.test(f.name || '') && f.id) ? `<button class="mini" data-cert-again="${esc(r.id)}">필증 다시 읽기</button>` : ''}<button class="mini" data-duty-none="${esc(r.id)}" title="부가세 납부유예·관세 0 등 수입 때 낼 세액이 없는 건 — 기한을 처리하고 이 건을 납부유예·관세 0으로 기록">납부할 세액 없음</button></td></tr>`; }).join('')}</tbody></table></div></details>`;
+}
+document.addEventListener('click', e => {
+  if(!db || e.target.closest('dialog')) return;
+  const a = e.target.closest('[data-cert-again]'), b = e.target.closest('[data-duty-none]');
+  if(a){ const r = db.records.find(x => x.id === a.dataset.certAgain); if(!r) return;
+    (r.files || []).filter(f => /\.pdf$/i.test(f.name || '')).forEach(f => { if(r.certRead) delete r.certRead[f.id]; if(r.certErr) delete r.certErr[f.id]; }); r.certAgain = true; commit();
+    toast('이 건의 필증을 다시 읽습니다(큰 PDF는 몇 분 걸림). 결과는 처리 기록에 남습니다.'); if(typeof certRead === 'function') certRead(true); return; }
+  if(b){ const r = db.records.find(x => x.id === b.dataset.dutyNone); if(!r) return;
+    if(!confirm(`${r.bl || r.refNo || r.title}\n수입 때 낼 세액이 없는 건(부가세 납부유예·관세 0 등)으로 보고 관세 납부기한을 처리할까요?`)) return;
+    r.tax = {...(r.tax || {}), vatDefer:true, duty:0, src:'직접 확인', at:today()};
+    (r.deadlines || []).filter(d => !d.done && d.kind === '관세 납부기한').forEach(d => Object.assign(d, {done:true, doneAt:today(), note:'납부할 세액 없음(직접 확인)'}));
+    addHist(r, '관세 납부기한 처리: 납부할 세액 없음(부가세 납부유예·관세 0 — 직접 확인)'); r.updatedAt = nowIso(); commit(); toast('처리했습니다.'); }
+});
 /* 11/16 e 관세 납부 방식(업체 화면) */
 function clientPayHTML(c){
   const m = payModeOf(c.id), a = c.payAuto || {}, ns = (a.notices || []).slice().reverse();
   const imp = db.records.filter(r => r.clientId === c.id && isImp(r)), vd = c.vatDefer === 'on' || (c.vatDefer !== 'off' && !!c.vatDeferAuto) || imp.some(r => r.tax && (r.tax.vatDefer || r.tax.clct === '14'));
-  if(m !== 'monthly' && !vd && !imp.some(r => r.payKind === 'single')) return '';
+  if(m !== 'monthly' && !vd && !imp.some(r => r.payKind === 'single') && !imp.some(r => (r.deadlines || []).some(d => !d.done && d.kind === '관세 납부기한'))) return '';
   const recent = ns.slice(0, 6).map(x => `${esc(x.month)} (${esc(x.date.slice(5))} 송부)`).join(' · ');
   const single = imp.filter(r => r.payKind === 'single').length;
   return `<section class="pay-sec"><p><b>관세 납부: ${esc(PAY_MODE[m])}</b> <span class="hint">${c.payMode ? '업체 창에서 지정' : a.mode === 'monthly' ? `자동 판단 — 월별납부고지서 메일 ${esc(a.last || '')}` : ''}</span></p>
     ${m === 'monthly' ? `<p class="hint">수입 건의 관세 납부기한 = 수리일부터 15일이 되는 날이 속한 달의 말일(관세법 제9조 제3항). 고지서는 업체에 메일로 보냅니다.${recent ? ` 최근 고지서: ${recent}` : ''}</p>` : ''}
     ${single ? `<p class="hint">개별 납부(개별납부고지서·사후납부 안내) ${single}건은 수리일부터 15일.</p>` : ''}
+    ${dutyOpenHTML(c)}
     ${vd ? `<p><b>부가세 납부유예</b> <span class="hint">${c.vatDefer === 'on' ? '업체 창에서 지정' : c.vatDeferAuto ? `자동 — 필증 ${esc(c.vatDeferAuto.declNo || '')}` : '필증에 납부유예 표시'}</span></p><p class="hint">수입 때 부가세를 내지 않고 부가세 신고 때 정산합니다. 관세가 0(FTA 등)인 건은 관세 납부기한을 잡지 않고, 관세가 있으면 그 금액만 납부기한을 둡니다.</p>` : ''}</section>`;
 }
 function clientContactsSection(c){
