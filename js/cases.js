@@ -133,9 +133,13 @@ function addFiles(r, items){
    r.stage = {customs:'YYYY-MM-DD', customsBy:'UNI-PASS…|메일|직접', settle:'YYYY-MM-DD', settleBy}
    수입: API001 수리 + (API049 납부 또는 반출신고) → 통관완료 (자동)
    수출: API002 수리일자 → 수리완료(stage.accept, 적재기한 등록) / 선적완료 → stage.customs('선적완료'로 표시) (자동)
-   정산: customs@ 메일 제목에 '정산서' → 정산완료 (자동). 업체 정산 방식이 '월 정산'이면 통관완료만으로 완료.
+   정산: 우리가 보낸 정산서·정산내역 메일(PDF 첨부, settleMail) → 청구 완료 (자동). 업체 정산 방식이 '월 정산'이면 통관완료만으로 완료.
    둘 다 되면 기록을 자동 완료하고(되돌리기 가능) r.autoDone에 근거를 남긴다. */
-const SETTLE_RE = /정산서/;
+const SETTLE_RE = /정산서|정산\s*내역|비용\s*정산/;
+/* 11/19: '청구 완료'로 보는 메일 = 제목 키워드(정산서·정산내역·비용 정산) + 우리 회사(@bsgc.co.kr)가 보냄 + PDF 첨부(또는 제목 머리말 [정산서…]).
+   업체가 보낸 '정산 문의'·첨부 없는 안내는 청구 완료로 보지 않음. 메일이 빠진 건은 정산서 폴더(settle.js)가 메움 */
+const SETTLE_TAG = /\[[^\]]*(정산서|정산\s*내역)[^\]]*\]/;                   // 우리 제목 머리말 '[정산서]'·'[163.정산서]'·'[11월 1차분 정산서 5건]' — 첨부 이름이 색인에 없는 메일도 인정
+function settleMail(m){ return !!m && SETTLE_RE.test(m.subject || '') && isOwn(m.from) && !m.fwdFrom && ((m.files || m.attachments || []).some(f => /\.pdf\b/i.test(String(f))) || SETTLE_TAG.test(m.subject || '')); }
 const kDecl = s => String(s || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 function stageOf(r){ return r.stage || {}; }
 const isExp = r => recIO(r) === 'E';                                       // 11/16 c: 신고번호 끝자리(X/M)·필증이 유형보다 우선
@@ -329,7 +333,7 @@ function autoChecklist(r){
 function evalStages(){
   let n = 0, done = 0, ck = 0;
   db.records.filter(r => r.status !== '완료' && r.status !== '보류').forEach(r => {
-    const m = (r.mails || []).filter(x => SETTLE_RE.test(x.subject || '')).slice(-1)[0];
+    const m = (r.mails || []).filter(settleMail).slice(-1)[0];
     if(m && setStage(r, 'settle', m.date, `메일: ${m.subject}`, 'ok', {mail:m.id})) n++;
     if(autoChecklist(r)) ck++;
     if(autoComplete(r)) done++;
