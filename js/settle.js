@@ -45,7 +45,8 @@ function settleApply(r, sec, f){
   s.tax = {amt:amt || null, due:(rc[0] || {}).due || '', paid:paid.length ? paid.map(x => x.paidAt).sort().slice(-1)[0] : '', n:rc.length, clct:sec.clct || ''};
   s.mode = rc.length ? (paid.length === rc.length ? 'paid' : 'billed') : sec.taxInv ? 'billed' : 'self';
   const ch = [];
-  if(sec.ctax && !r.tax && (!sec.ctax.declNo || !dt || refTail(sec.ctax.declNo) === dt)){ r.tax = {...sec.ctax, file:f.name, at:today(), src:'정산서'}; ch.push('필증 세액'); }
+  const ctaxOk = t => t && (t.vatDefer || t.clct || t.duty != null || t.vat != null || t.total != null);   // 필증 쪽을 안 읽어 빈 값이면 넣지 않음(나중에 필증 읽기가 채움)
+  if(ctaxOk(sec.ctax) && !r.tax && (!sec.ctax.declNo || !dt || refTail(sec.ctax.declNo) === dt)){ r.tax = {...sec.ctax, file:f.name, at:today(), src:'정산서'}; ch.push('필증 세액'); }
   if(s.mode === 'paid'){
     const ds = (r.deadlines || []).filter(d => !d.done && d.kind === '관세 납부기한');
     ds.forEach(d => Object.assign(d, {done:true, doneAt:s.tax.paid, note:`정산서 영수일 ${s.tax.paid}${amt ? ` · ${amt.toLocaleString()}원` : ''} (대납)`}));
