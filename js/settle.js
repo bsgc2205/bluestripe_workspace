@@ -33,12 +33,7 @@ function settleNameRecs(f, why = {}){
   return out;
 }
 const SETTLE_WHY = {none:'이름에 B/L 번호 없음(묶음 파일 등)', multi:'같은 번호 기록이 여러 건 — 골라 주세요', nofind:'그 번호의 기록이 Workspace에 없음(시작 전 건 등)', read:'읽었지만 기록 없음'};
-/* 확인함에 올릴 미연결: 고를 후보가 있거나, 이름에 번호가 없거나, 이름의 업체에 그 달 진행 중 수입 건이 있을 때만(기록 없는 옛 건은 관리 화면 목록에만) */
-function settleUnNeedsLook(x){
-  if(x.k === 'multi' || x.k === 'none' || x.k === 'read') return true;
-  const c = settleClient(settleName(x.name).party);
-  return !!c && db.records.some(r => r.clientId === c.id && r.status !== '완료' && isImp(r) && ymOf(recDate(r)) <= x.ym);
-}
+function settleUnNeedsLook(x){ return x.k === 'multi' || x.k === 'read'; }   // 11/19 e: 확인함에는 '같은 번호 기록 여럿'·'읽었지만 기록 없음'만. 번호 없음·기록 없음은 관리 화면 목록에만
 function settleLink(r, f){
   r.settle = {...(r.settle || {}), fid:f.id, name:f.name, link:f.link || '', ym:f.ym, fat:f.created};
   if(r.status !== '완료' && r.status !== '보류' && !(r.stage || {}).settle) setStage(r, 'settle', f.created || today(), `정산서 폴더: ${f.name}`, 'ok');
@@ -148,7 +143,7 @@ function settleSectionHTML(){
     ${L ? (() => { const rs = db.records.filter(r => r.settle && r.settle.fid), n = k => rs.filter(r => r.settle.mode === k).length;
       const un = (db.settleUn || []).filter(x => ((db.settleSeen || {})[x.id] || {}).s !== 'x'), uk = k => un.filter(x => (x.k || '') === k), look = un.filter(settleUnNeedsLook).length;
       return `<p class="hint">최근 확인 ${esc(kstT(L.at))}(${esc(L.from)}~${esc(L.to)}, 파일 ${L.files}개) · 정산서가 연결된 기록 ${rs.length}건 — 읽어서 판정: 대납 확인 ${n('paid')} · 영수 미확인 ${n('billed')} · 대납 없음 ${n('self')} <span class="hint">(나머지는 이름 연결만 — 관세 납부기한이 이미 처리돼 읽을 필요 없음)</span></p>
-      ${un.length ? `<details class="more fold"><summary>미연결 정산서 ${un.length}개 — 확인함에 올린 것 ${look}개</summary><p class="hint">같은 번호 기록 여럿 ${uk('multi').length} · 이름에 번호 없음 ${uk('none').length} · 읽었지만 기록 없음 ${uk('read').length} · <b>Workspace에 그 번호 기록 없음 ${uk('nofind').length}</b>(Workspace 시작 전 건·메일 없이 처리한 건 등 — 진행 중 수입 건이 없는 업체는 확인함에 올리지 않음)</p>
+      ${un.length ? `<details class="more fold"><summary>미연결 정산서 ${un.length}개 — 확인함에 올린 것 ${look}개</summary><p class="hint">같은 번호 기록 여럿 ${uk('multi').length} · 이름에 번호 없음 ${uk('none').length} · 읽었지만 기록 없음 ${uk('read').length} · <b>Workspace에 그 번호 기록 없음 ${uk('nofind').length}</b>(Workspace 시작 전 건·메일 없이 처리한 건 등 — 확인함에는 올리지 않음)</p>
         <div class="table-wrap"><table class="grid"><thead><tr><th>정산서</th><th>월</th><th>이유</th></tr></thead><tbody>${un.slice().sort((a, b) => (a.k || '').localeCompare(b.k || '') || a.name.localeCompare(b.name)).slice(0, 300).map(x => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}</td><td>${esc(x.ym)}</td><td>${esc(x.why || '')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}`; })() : ''}</section>`;
 }
 /* 기록·업체 화면에 쓰는 한 줄 */
