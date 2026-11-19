@@ -37,7 +37,7 @@ function viewTools(){
 }
 
 /* ---- 수집 상태 ---- */
-const RUN_KEYS = {mail:'메일 불러오기 (customs@ 색인)', drive:'Drive 자료 수집', cert:'필증 읽기', uni:'UNI-PASS 통관 확인', ext:'공공데이터 (요건·관세율 등)', law:'법령 시행일 확인'};
+const RUN_KEYS = {mail:'메일 불러오기 (customs@ 색인)', drive:'Drive 자료 수집', cert:'필증 읽기', settle:'정산서 확인', uni:'UNI-PASS 통관 확인', ext:'공공데이터 (요건·관세율 등)', law:'법령 시행일 확인'};
 const RUN_LS = 'bsgc-runstat';
 let runStat = (() => { try{ return JSON.parse(localStorage.getItem(RUN_LS) || '{}') || {}; }catch(e){ return {}; } })();
 /* 11/15 H-01: 자동 처리 결과를 잠깐 뜨는 알림뿐 아니라 '수집 상태 › 최근 처리 기록'에 남김(200건, 모든 PC 공유) */
@@ -97,7 +97,7 @@ function procLogHTML(){
   if(!all.length) return '';
   if(procPage * 20 >= all.length) procPage = 0;
   const L = all.slice(procPage * 20, (procPage + 1) * 20);
-  const lab = {mail:'메일', drive:'Drive 자료', cert:'필증 읽기', fail:'실패', move:'연결 변경', uni:'UNI-PASS'};
+  const lab = {mail:'메일', drive:'Drive 자료', cert:'필증 읽기', settle:'정산서', fail:'실패', move:'연결 변경', uni:'UNI-PASS'};
   return `<details class="proc-log"><summary>최근 처리 기록 <span class="cnt">${(db.procLog || []).length}</span></summary><ul class="plain">${L.map(x => `<li><span class="rec-date">${esc(kstT(x.at))}</span> <span class="tag${x.kind === 'fail' ? ' bad' : ''}">${esc(lab[x.kind] || x.kind)}</span> ${esc(x.text)}${x.n > 1 ? ` <span class="hint">×${x.n}</span>` : ''} <span class="hint">${esc(x.by || '')}</span></li>`).join('')}</ul>${pagerHTML('proc-page', procPage, all.length)}</details>`;
 }
 /* ---- 확인함 ---- */
@@ -173,6 +173,7 @@ function checkGroups(){
       : `이 PC: “${cv(x.mine).slice(0, 40)}” · ${x.by || '다른 PC'}: “${cv(x.theirs).slice(0, 40)}” · ${String(x.at).slice(5, 16).replace('T', ' ')}`, lvl:'chk',
     acts:x.del ? BTN.ok(`data-conf-ok="${esc(x.id)}"`, '살린 대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '지우기')
       : BTN.ok(`data-conf-ok="${esc(x.id)}"`, '이대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '다른 PC 값으로')}))});
+  if(typeof settleCheckGroups === 'function') settleCheckGroups(g);   // 11/19 정산서
   const rf = runFails();
   if(rf.length) g.push({k:'run', s:'수집 실패', title:'수집 실패', why:'자동 수집·확인이 실패하고 있습니다', rows:rf.map(x => ({key:'run:' + x.label, t1:x.label, t2:`${x.s.fail ? kstT(x.s.fail) + ' · ' : ''}${x.s.err}`, lvl:'act', acts:`<button class="mini" data-go="status">수집 상태</button>`}))});
   const L = db.checkLater || {}, td = today();                             // '나중에' 날짜가 남은 행은 빼서 later로

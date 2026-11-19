@@ -858,8 +858,9 @@ function fixDutyDues(){
   db.records.forEach(r => (r.deadlines || []).forEach(d => {
     if(d.done || d.kind !== '관세 납부기한') return;
     if(!dutyNeedsPay(r)){                                                 // 11/17 부가세 납부유예 + 관세 0 → 납부할 세액 없음
-      Object.assign(d, {done:true, doneAt:today(), note:'부가세 납부유예 · 관세 0 — 납부할 세액 없음'}); n++;
-      addHist(r, `관세 납부기한 정리: 부가세 납부유예(${(vatDeferOf(r) || {}).src || ''})·관세 0 — 수입 때 낼 세액 없음`); return;
+      const vd = vatDeferOf(r);                                           // 11/19: 납부유예가 아니라 총세액 0(감면 등)인 건은 그렇게 적음
+      Object.assign(d, {done:true, doneAt:today(), note:vd ? '부가세 납부유예 · 관세 0 — 납부할 세액 없음' : '총세액 0(감면 등) — 납부할 세액 없음'}); n++;
+      addHist(r, vd ? `관세 납부기한 정리: 부가세 납부유예(${vd.src || ''})·관세 0 — 수입 때 낼 세액 없음` : `관세 납부기한 정리: 총세액 0(감면 등${r.tax && r.tax.src ? ', ' + r.tax.src : ''}) — 수입 때 낼 세액 없음`); return;
     }
     if(!d.base) return;
     const want = dutyDue(r, d.base), note = dutyNote(r);

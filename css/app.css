@@ -702,3 +702,7 @@ label.check.chg input{margin-right:.3rem}
 .pay-sec p{margin:.2rem 0}
 .mini.danger-lite{color:var(--bad,#b42318)}
 .cc-table td:nth-child(5){white-space:nowrap}
+/* 11/19 정산서 확인 */
+.stl-row{flex-wrap:wrap;gap:.5rem;align-items:center;margin:.3rem 0}
+.stl-row label{display:inline-flex;gap:.3rem;align-items:center;margin:0}
+.stl-row input[type=month]{width:auto}

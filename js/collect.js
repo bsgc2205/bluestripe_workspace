@@ -409,6 +409,7 @@ async function runCollect(manual){
     } else if(manual) toast('새로 반영할 자료가 없습니다.');
     typeof markRun === 'function' && markRun('drive', true);
     setTimeout(() => certRead(false), manual ? 2500 : 4000);
+    if(typeof runSettle === 'function' && db.settings.settleOff !== true && db.settings.settleAt !== today()) setTimeout(() => runSettle({}), manual ? 9000 : 12000);   // 11/19 정산서(하루 한 번)
   }catch(e){ typeof markRun === 'function' && markRun('drive', false, e.message); if(manual) toast('자동 수집을 확인하지 못했습니다: ' + e.message); }
   finally{ collectBusy = false; }
 }
@@ -417,6 +418,7 @@ function viewInbox(){
   return `<header class="client-head"><div><h2>자동 수집</h2><p class="client-meta">매일 08시 수입·수출 폴더의 새 자료를 신고번호·B/L이 같은 케이스에 근거 자료로 붙입니다(같은 이름의 수정 자료는 새 버전). 신고번호·B/L이 없거나 업체를 알아보지 못한 자료는 여기 남습니다(업체를 알아본 자료는 추천 업체가 미리 선택됨). 매주 월요일 15시 BSGC-Backup 변동사항은 케이스·실적을 만들지 않고 업체 화면의 ‘자료 갱신 이력’에만 남깁니다.${db.settings.statusDate ? ` 진행현황 반영 기준일 ${esc(db.settings.statusDate)}.` : ''}</p></div>
       <div class="client-act"><button class="ghost" data-mail-audit>업체 미인식 점검</button><button class="primary" data-collect-now>지금 확인</button></div></header>
     ${updateRecsBanner()}
+    ${typeof settleSectionHTML === 'function' ? settleSectionHTML() : ''}
     ${pend.length ? `<div class="table-wrap" style="margin-top:1rem"><table class="grid"><thead><tr><th>자료</th><th>폴더</th><th>올린 날</th><th>메일</th><th>업체 지정</th></tr></thead><tbody>
       ${pend.map((x,i) => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}${(x.special || []).length ? ` <span class="stamp sm">특이</span>` : ''}</td><td>${esc(x.kind)} / ${esc(x.path)}</td><td>${esc(x.created)}</td><td>${x.mail ? esc(x.mail.subject) : ''}</td>
         <td><div class="btn-row"><select data-pend-client="${esc(pendKey(x))}"><option value="">업체 선택</option>${opts(sortedClients().map(c => [c.id, c.name]), x.sug || '')}</select><button class="mini strong" data-pend-apply="${esc(pendKey(x))}">반영</button><button class="mini ghosty" data-pend-drop="${esc(pendKey(x))}">업무 아님</button></div></td></tr>`).join('')}
