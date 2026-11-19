@@ -18,16 +18,26 @@ function settleName(name){
 }
 function settleClient(party){ return party ? findClient(party) || (typeof fuzzyClient === 'function' ? fuzzyClient(party) : null) : null; }
 /* 번호 하나로 기록 찾기 — 여러 건이면 이름의 업체·진행 중으로 좁히고, 그래도 여럿이면 고르지 않음 */
-function settleFind(x, c){
+function settleFind(x, c, why){
   const hits = db.records.filter(r => refMatch(r, x) || (x.bl && x.bl.length >= 8 && String(r.title || '').toUpperCase().includes(x.bl)));
   let pick = hits.length > 1 && c ? hits.filter(r => r.clientId === c.id) : hits;
   if(pick.length > 1){ const op = pick.filter(r => r.status !== '완료'); if(op.length === 1) pick = op; }
+  if(why && pick.length > 1) why.cands = [...new Set([...(why.cands || []), ...pick.slice(0, 6).map(r => r.id)])];
   return pick.length === 1 ? pick[0] : null;
 }
-function settleNameRecs(f){
+/* 11/19 b: 못 찾은 이유 — none(이름에 번호 없음·묶음) / multi(같은 번호 기록 여럿) / nofind(그 번호 기록이 Workspace에 없음 — 시작 전 건 등) */
+function settleNameRecs(f, why = {}){
   const n = settleName(f.name), c = settleClient(n.party), out = [];
-  n.toks.forEach(t => { const r = settleFind({bl:t}, c); if(r && !out.includes(r)) out.push(r); });
+  n.toks.forEach(t => { const r = settleFind({bl:t}, c, why); if(r && !out.includes(r)) out.push(r); });
+  why.k = out.length ? '' : !n.toks.length ? 'none' : (why.cands || []).length ? 'multi' : 'nofind';
   return out;
+}
+const SETTLE_WHY = {none:'이름에 B/L 번호 없음(묶음 파일 등)', multi:'같은 번호 기록이 여러 건 — 골라 주세요', nofind:'그 번호의 기록이 Workspace에 없음(시작 전 건 등)', read:'읽었지만 기록 없음'};
+/* 확인함에 올릴 미연결: 고를 후보가 있거나, 이름에 번호가 없거나, 이름의 업체에 그 달 진행 중 수입 건이 있을 때만(기록 없는 옛 건은 관리 화면 목록에만) */
+function settleUnNeedsLook(x){
+  if(x.k === 'multi' || x.k === 'none' || x.k === 'read') return true;
+  const c = settleClient(settleName(x.name).party);
+  return !!c && db.records.some(r => r.clientId === c.id && r.status !== '완료' && isImp(r) && ymOf(recDate(r)) <= x.ym);
 }
 function settleLink(r, f){
   r.settle = {...(r.settle || {}), fid:f.id, name:f.name, link:f.link || '', ym:f.ym, fat:f.created};
@@ -56,11 +66,11 @@ function settleApply(r, sec, f){
   r.updatedAt = nowIso();
   return s.mode;
 }
-function settleUnAdd(f, why){
+function settleUnAdd(f, why, k, cands){
   const un = db.settleUn = (db.settleUn || []).filter(x => x.id !== f.id);
-  un.push({id:f.id, name:f.name, link:f.link || '', ym:f.ym, created:f.created, why:why || ''});
+  un.push({id:f.id, name:f.name, link:f.link || '', ym:f.ym, created:f.created, why:why || '', k:k || '', ...(cands && cands.length ? {cands} : {})});
   const cut = ymOf(addPeriod(today(), -2, 'm'));
-  db.settleUn = un.filter(x => x.ym >= cut).slice(-80);
+  db.settleUn = un.filter(x => x.ym >= cut).slice(-400);
 }
 const settleUnDel = id => { db.settleUn = (db.settleUn || []).filter(x => x.id !== id); };
 let settleBusy = false;
@@ -77,11 +87,11 @@ async function runSettle(opt = {}){
       let o = seen[f.id];
       if(o && o.s === 'x') return;
       if(!o || o.m !== f.mod || o.s === 'u'){                             // 새 파일·고친 파일·아직 못 찾은 파일은 이름으로 다시 찾음
-        const recs = settleNameRecs(f), changed = o && o.m && o.m !== f.mod;
+        const why = {}, recs = settleNameRecs(f, why), changed = o && o.m && o.m !== f.mod;
         if(changed) recs.forEach(r => { if(r.settle && r.settle.fid === f.id) delete r.settle.read; });   // 정산서 파일을 고쳤으면 다시 읽음
         o = seen[f.id] = {...(o || {}), m:f.mod, s:recs.length ? 'n' : 'u', r:recs.map(r => r.id)};
         recs.forEach(r => { if(!r.settle || r.settle.fid !== f.id){ settleLink(r, f); st.linked++; } });
-        if(recs.length) settleUnDel(f.id); else settleUnAdd(f, settleName(f.name).bundle ? '묶음 파일' : '이름의 번호로 기록을 찾지 못함');
+        if(recs.length) settleUnDel(f.id); else settleUnAdd(f, SETTLE_WHY[why.k], why.k, why.cands);
       }
       if(o.rd === f.mod) return;
       const recs = (o.r || []).map(id => db.records.find(r => r.id === id)).filter(Boolean);
@@ -108,7 +118,7 @@ async function runSettle(opt = {}){
           st[settleApply(r, sec, f)]++; hit.add(r.id);
         });
         if(hit.size){ o.s = 'n'; o.r = [...new Set([...(o.r || []), ...hit])]; settleUnDel(f.id); }
-        else if(o.s === 'u') settleUnAdd(f, secs.length ? `읽었지만 기록 없음: ${secs.map(s => s.declNo || s.bl).filter(Boolean).slice(0, 3).join(', ')}` : '글자를 읽지 못함');
+        else if(o.s === 'u') settleUnAdd(f, secs.length ? `읽었지만 기록 없음: ${secs.map(s => s.declNo || s.bl).filter(Boolean).slice(0, 3).join(', ')}` : '글자를 읽지 못함', 'read');
         else (o.r || []).forEach(id => { const r = db.records.find(x => x.id === id); if(r && isImp(r)) r.settle = {...(r.settle || {}), read:today(), mode:'none'}; });
       });
       left = left.filter(x => !batch.some(b => b.id === x.id) || later.has(x.id));
@@ -136,7 +146,10 @@ function settleSectionHTML(){
       <label class="chk"><input type="checkbox" id="stlAll"> 세액도 모두 읽기(느림)</label><button class="primary" data-settle-run>정산서 확인</button></div>
     <p class="hint">권장 기간: <b>2026-10부터</b>(미처리 관세 납부기한이 있는 건). 그 전 달은 이름 연결만으로 충분하며 글자 읽기는 하지 않습니다. 한 번에 최대 40개 읽고, 남으면 다시 누르면 이어서 읽습니다.</p>
     ${L ? (() => { const rs = db.records.filter(r => r.settle && r.settle.fid), n = k => rs.filter(r => r.settle.mode === k).length;
-      return `<p class="hint">최근 확인 ${esc(kstT(L.at))}(${esc(L.from)}~${esc(L.to)}, 파일 ${L.files}개) · 정산서가 연결된 기록 ${rs.length}건 — 대납 확인 ${n('paid')} · 영수 미확인 ${n('billed')} · 대납 없음 ${n('self')} · 미연결 정산서 ${(db.settleUn || []).length}개</p>`; })() : ''}</section>`;
+      const un = (db.settleUn || []).filter(x => ((db.settleSeen || {})[x.id] || {}).s !== 'x'), uk = k => un.filter(x => (x.k || '') === k), look = un.filter(settleUnNeedsLook).length;
+      return `<p class="hint">최근 확인 ${esc(kstT(L.at))}(${esc(L.from)}~${esc(L.to)}, 파일 ${L.files}개) · 정산서가 연결된 기록 ${rs.length}건 — 읽어서 판정: 대납 확인 ${n('paid')} · 영수 미확인 ${n('billed')} · 대납 없음 ${n('self')} <span class="hint">(나머지는 이름 연결만 — 관세 납부기한이 이미 처리돼 읽을 필요 없음)</span></p>
+      ${un.length ? `<details class="more fold"><summary>미연결 정산서 ${un.length}개 — 확인함에 올린 것 ${look}개</summary><p class="hint">같은 번호 기록 여럿 ${uk('multi').length} · 이름에 번호 없음 ${uk('none').length} · 읽었지만 기록 없음 ${uk('read').length} · <b>Workspace에 그 번호 기록 없음 ${uk('nofind').length}</b>(Workspace 시작 전 건·메일 없이 처리한 건 등 — 진행 중 수입 건이 없는 업체는 확인함에 올리지 않음)</p>
+        <div class="table-wrap"><table class="grid"><thead><tr><th>정산서</th><th>월</th><th>이유</th></tr></thead><tbody>${un.slice().sort((a, b) => (a.k || '').localeCompare(b.k || '') || a.name.localeCompare(b.name)).slice(0, 300).map(x => `<tr><td>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.name)}</a>` : esc(x.name)}</td><td>${esc(x.ym)}</td><td>${esc(x.why || '')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}`; })() : ''}</section>`;
 }
 /* 기록·업체 화면에 쓰는 한 줄 */
 function settleTagHTML(r){
@@ -150,9 +163,10 @@ function settleDutyCell(r){
 }
 /* 확인함: 미연결 정산서 / 대납 없음(업체 자체 납부?) / 영수 미확인(기한 3일 안·지남) */
 function settleCheckGroups(g){
-  const un = (db.settleUn || []).filter(x => ((db.settleSeen || {})[x.id] || {}).s !== 'x');
+  const un = (db.settleUn || []).filter(x => ((db.settleSeen || {})[x.id] || {}).s !== 'x' && settleUnNeedsLook(x));
   const recOpts = x => { const c = settleClient(settleName(x.name).party), cut = addPeriod(today(), -120, 'd');
-    return db.records.filter(r => (!c || r.clientId === c.id) && recDate(r) >= cut).sort(byDateDesc).slice(0, 40).map(r => [r.id, `${r.caseNo || ''} ${r.bl || r.refNo || r.title}`.slice(0, 50)]); };
+    const cs = (x.cands || []).map(id => db.records.find(r => r.id === id)).filter(Boolean);   // 같은 번호 후보를 맨 앞에
+    return [...cs, ...db.records.filter(r => !cs.includes(r) && (!c || r.clientId === c.id) && recDate(r) >= cut).sort(byDateDesc).slice(0, 40)].map(r => [r.id, `${cs.includes(r) ? '★ ' : ''}${r.caseNo || ''} ${r.bl || r.refNo || r.title} · ${r.status}`.slice(0, 60)]); };
   if(un.length) g.push({k:'stlun', s:'정산서 미연결', title:'기록을 찾지 못한 정산서', why:'파일 이름의 번호(B/L·PO)로 기록을 찾지 못했습니다. 기록을 고르거나, 글자를 읽어 신고번호로 찾게 하세요', rows:un.map(x => ({key:'stl:' + x.id, t1:x.name, t2:`${x.ym} · ${x.why || ''}`, lvl:'ref',
     acts:`${safeUrl(x.link) ? `<a class="mini" href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">열기</a>` : ''}<select data-stl-rec="${esc(x.id)}"><option value="">기록 선택</option>${opts(recOpts(x), '')}</select>` + BTN.ok(`data-stl-pick="${esc(x.id)}"`) + BTN.link(`data-stl-read="${esc(x.id)}"`, '읽어서 연결') + BTN.later('stl:' + x.id) + BTN.no(`data-stl-ign="${esc(x.id)}"`)}))});
   const self = db.records.filter(r => r.settle && r.settle.mode === 'self' && openDuty(r) && recPayKind(r) !== 'monthly' && !vatDeferOf(r));
