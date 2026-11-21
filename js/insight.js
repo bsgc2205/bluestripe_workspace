@@ -235,9 +235,10 @@ function autoPcHTML(){
   const who = !a ? '<b>지정 안 함</b> — Workspace를 연 모든 PC가 각자 자동 처리(중복 글자 인식·UNI-PASS 조회·저장 충돌이 생길 수 있음)'
     : me1 ? '<b>이 PC</b>' : `<b>${esc(p ? p.name || '' : '')}</b> <span class="hint">${esc(p ? p.label || '' : '')}${p && p.at ? ` · 마지막 소식 ${esc(ago(p.at))}` : ' · 소식 없음'}</span>`;
   const st = !a || me1 ? '이 PC가 자동 처리합니다.' : take ? '<b class="bad">지정 PC 소식이 70분 넘게 없어 이 PC가 대신 자동 처리 중</b>' : '이 PC는 메일 목록만 새로 받고, 자동 처리는 지정 PC가 합니다(버튼을 직접 누르면 이 PC에서 실행).';
+  const rf = typeof routeFixHTML === 'function' ? routeFixHTML() : '';
   return `<section class="auto-pc" style="margin:.2rem 0 1rem"><div class="sec-head"><h3>자동 처리 PC</h3><span class="hint">늘 켜 두는 PC 한 대에서 Workspace 창을 열어 두고 지정하세요</span></div>
     <p>${who}</p><p class="hint">${st}</p>
-    ${isAdmin() ? `<p>${me1 ? '' : '<button class="mini strong" data-auto-pc="me">이 PC를 자동 처리 PC로</button> '}${a ? '<button class="mini" data-auto-pc="off">지정 해제(모든 PC)</button>' : ''}</p>` : ''}</section>`;
+    ${isAdmin() ? `<p>${me1 ? '' : '<button class="mini strong" data-auto-pc="me">이 PC를 자동 처리 PC로</button> '}${a ? '<button class="mini" data-auto-pc="off">지정 해제(모든 PC)</button>' : ''}</p>` : ''}${rf}</section>`;
 }
 document.addEventListener('click', e => {
   const b = db && e.target.closest('[data-auto-pc]'); if(!b || e.target.closest('dialog')) return;

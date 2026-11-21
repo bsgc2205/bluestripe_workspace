@@ -713,3 +713,6 @@ label.check.chg input{margin-right:.3rem}
 .biz-file{display:flex;gap:.4rem;align-items:baseline;padding:.25rem 0;border-bottom:1px dashed var(--line)}
 .biz-file[hidden]{display:none}
 p.warn{color:var(--stamp);margin:.4rem 0}
+/* 11/21 의뢰처·청구처 상태 */
+.tag.via small{font-weight:400;opacity:.85}
+.tag.via .st-re,.tag.via .st-none{color:var(--stamp);opacity:1}

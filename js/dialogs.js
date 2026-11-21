@@ -83,7 +83,7 @@ function openRecord(r, preset = {}){
       </div>
       ${typeof fwdClients === 'function' && fwdClients().length ? `<div class="row2">
         <label>의뢰처 (포워더) <span class="hint">이 건을 보낸 포워더 — 직거래면 비움</span><select name="via">${opts([['', '직거래 (없음)'], ...fwdClients().map(f => [f.id, f.name])], rec.via || '')}</select></label>
-        <label>청구처 <span class="hint">${rec.billBy && rec.billBy !== 'manual' ? '자동: ' + esc({mail:'청구서 메일', pair:'지난 건', client:'화주 기본', fwd:'포워더 기본'}[rec.billBy] || '') : '건마다 다를 수 있음'}</span><select name="billTo">${opts([['', '정하지 않음 (자동)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], rec.billTo || '')}</select></label>
+        <label>청구처 <span class="hint">${typeof billStOf === 'function' && rec.billTo ? esc(ST_LAB[billStOf(rec)] + (rec.billWhy ? ' — ' + rec.billWhy : '')) + (billStOf(rec) === 'sure' ? '' : ' · 고르면 수동 확인') : '건마다 다를 수 있음'}</span><select name="billTo">${opts([['', '정하지 않음 (자동)'], ['self', '화주에 청구'], ['via', '포워더에 청구']], rec.billTo || '')}</select></label>
       </div>` : ''}
       <label>제목<input name="title" required value="${esc(rec.title)}" placeholder="예: 미국산 유기농 옥수수분말 수입통관"></label>
       <p class="hint sim-hint" data-x="simHint" hidden></p>
@@ -154,8 +154,10 @@ function openRecord(r, preset = {}){
         tags: fd.get('tags').split(',').map(x => x.trim()).filter(Boolean), links, assignee: fd.get('assignee') || '', updatedAt: t,
         reqApreNo: String(fd.get('reqApreNo') || '').trim(),
         reqRqstNo: String(fd.get('reqRqstNo') || '').trim(),
-        ...(fd.has('via') ? (() => { const v = fd.get('via') || '', b = fd.get('billTo') || ''; const o = {via:v, viaOff:!v && !!rec.via ? true : rec.viaOff || false};
-          if(b !== (rec.billTo || '')){ o.billTo = b; o.billBy = b ? 'manual' : ''; } if(!v){ o.billTo = ''; o.billBy = ''; } return o; })() : {}),
+        ...(fd.has('via') ? (() => { const v = fd.get('via') || '', b = fd.get('billTo') || ''; const o = {via:v, viaOff:!v && !!rec.via ? true : rec.viaOff || false, ...(v !== (rec.via || '') ? {viaBy:v ? 'manual' : '', viaSt:v ? 'sure' : '', viaWhy:v ? '기록 창에서 직접 지정' : '', viaCands:null} : {})};   // 11/21: 사람이 고친 의뢰처는 확정
+          if(b !== (rec.billTo || '')){ Object.assign(o, {billTo:b, billBy:b ? 'manual' : '', billSt:b ? 'sure' : '', billWhy:b ? '기록 창에서 직접 지정' : '', billRef:null}); }
+          else if(v !== (rec.via || '') && rec.billTo){ if(!v) Object.assign(o, {billTo:'', billBy:'', billSt:'', billWhy:'', billRef:null}); else if(rec.billBy === 'manual' && rec.billTo === 'via') Object.assign(o, {billSt:'re', billWhy:'의뢰처가 바뀜 — 포워더 청구를 사람이 정했던 건'}); else Object.assign(o, {billTo:'', billBy:'', billSt:'', billWhy:'', billRef:null}); }   // F5: 의뢰처 바뀌면 청구처 재검토
+          if(!v){ o.billTo = ''; o.billBy = ''; o.billSt = ''; } return o; })() : {}),
         cond: fd.get('condKind') ? {...(rec.cond || {}), kind: fd.get('condKind'), ln: String(fd.get('condLn') || '').trim(), stsz: String(fd.get('condStsz') || '').trim()} : null,
         mdfy: fd.get('mdfyNo') ? {dcshSbmtNo: String(fd.get('mdfyNo')).trim(), dgcnt: String(fd.get('mdfyDg') || '').trim(), date: fd.get('mdfyDt') || ''} : null
       });

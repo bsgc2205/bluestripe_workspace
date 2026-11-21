@@ -481,7 +481,7 @@ function intakeRecord(t, c, why, bl, bls, ci){
     title:(intakeTitle(first.subject, why) || `[${type}] ${cm ? cm.decl : bl}`) + (multi ? ` (B/L ${bl})` : ''), summary:String(first.snippet || '').slice(0, 300), special:false, specialNote:'', tags:['자동접수'], links:[], fee:null, itemId:'', checklist:[], docs:[], deadlines:[], reflected:[],
     assignee:(cm ? staffAccount(ci[0].m) : '') || t.ms.filter(x => isOwn(x.from)).map(staffAccount).find(Boolean) || '', history:[], createdAt:nowIso(), updatedAt:nowIso(), createdBy:'auto'};
   const gi = guessItem(txt, c.id); if(gi) r.itemId = gi.id;
-  if(typeof forwarderOf === 'function' && !isFwd(c)){ const f = forwarderOf(t.ms, c.id); if(f) r.via = f.id; }   // 의뢰처(포워더) (11/14 P2)
+  if(typeof forwarderPick === 'function' && !isFwd(c)) applyViaPick(r, forwarderPick(t.ms, c.id));   // 의뢰처(포워더) (11/14 P2) — 11/21 F1: 후보가 여럿이면 정하지 않고 후보만(확인함)
   applyProcAuto(r);
   if(!r.assignee) r.assignee = clientAssignee(c.id);
   const who = src.fromName || src.fwdFrom || src.from, at = String(src.date).slice(0, 16);
@@ -1211,6 +1211,7 @@ function moveMails(r, ids, to, why){
     db.mailSeen = (db.mailSeen || []).filter(id => !set.has(id));          // 미연결 목록(확인함)으로 돌려 사람이 다시 판단
   }
   stageSrcLost(r, 'mail', moved.map(x => ({...x, files:x.files || []})), to ? `${to.caseNo || '다른 기록'}으로 옮김` : '연결 끊음');   // S-01: 근거 메일 id로 판단 (11/15 b)
+  if(typeof billSrcLost === 'function') billSrcLost(r, moved.map(x => x.id));   // 11/21 F5: 청구처 근거 메일이면 재확인
   addHist(r, `메일 ${moved.length}통 ${to ? `옮김 → ${to.caseNo || to.title}` : '연결 끊음'}: “${moved[0].subject || ''}”${sfx}`.slice(0, 280));
   r.updatedAt = nowIso();
   if(typeof autoLog === 'function') autoLog('mailMove', moved.length, {from:r.id, to:to ? to.id : ''});

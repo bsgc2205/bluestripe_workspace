@@ -105,7 +105,7 @@ function procLogHTML(){
 /* 11/15: 확인함 처리 뜻 통일 — 확정(근거 보고 반영) · 연결 변경(기록·업체 바꿈) · 나중에(날짜까지 숨김) · 업무 아님(목록에서 빼되 '나중에·제외' 탭에서 복구)
    종류별 탭 + 20건 페이지. 행마다 key가 있어 '나중에'를 기억한다(db.checkLater). */
 const CHK_PAGE = 20;
-const CHK_BUNDLES = [['link', '메일·자료 연결', ['mail', 'nocl', 'amb', 'pend', 'cert', 'recdup']], ['stage', '업무 단계', ['collchk', 'ledger', 'typechk', 'procpick', 'pver', 'billtbd']], ['money', '정산·관세', ['stlduty', 'stlun']], ['etc', '알림·기타', []]];   // 11/20
+const CHK_BUNDLES = [['link', '메일·자료 연결', ['mail', 'nocl', 'amb', 'pend', 'cert', 'recdup', 'viachk']], ['stage', '업무 단계', ['collchk', 'ledger', 'typechk', 'procpick', 'pver', 'billtbd']], ['money', '정산·관세', ['stlduty', 'stlun']], ['etc', '알림·기타', []]];   // 11/20
 function chkBundleOf(k){ if(k === 'off') return 'off'; const b = CHK_BUNDLES.find(x => x[2].includes(k)); return b ? b[0] : 'etc'; }
 let checkTab = '', checkPage = 0;
 const BTN = {
@@ -157,9 +157,13 @@ function checkGroups(){
     if(rd.length) g.push({k:'recdup', s:'중복 기록', title:'같은 신고번호·B/L 기록', why:'두 PC·Drive 합치기·묶음 필증 등으로 한 건이 두 기록이 됐을 수 있습니다 — 합치면 메일·자료·단계가 한 기록에 모입니다', rows:rd.map(x => { const [k, o] = recKeepFirst(x.a, x.b) <= 0 ? [x.a, x.b] : [x.b, x.a], key = 'rdup:' + dupPairKey(k.id, o.id);
       return {key, t1:`${clientName(k.clientId)} · ${x.why}`, t2:`남김: ${lab(k)} ← ${lab(o)}`, lvl:x.lvl === 3 ? 'chk' : 'ref', acts:BTN.ok(`data-rdup-merge="${esc(k.id)}|${esc(o.id)}"`, '합치기') + BTN.link(`data-rdup-swap="${esc(o.id)}|${esc(k.id)}" title="반대쪽을 남기고 합치기"`, '반대로') + BTN.link(`data-rdup-no="${esc(k.id)}|${esc(o.id)}"`, '다른 건') + BTN.later(key)}; })});
   }
-  if(typeof resolveBillTo === 'function'){                                 // 11/14 P2: 포워더 의뢰 건 청구처 미정
-    const cut = addPeriod(today(), -60, 'd'), tb = db.records.filter(r => r.via && !r.billTo && recDate(r) >= cut);
-    if(tb.length) g.push({k:'billtbd', s:'청구처 미정', title:'청구처 미정 — 포워더 의뢰 건', why:'청구서 메일·지난 건·기본값으로 정하지 못했습니다. 한 번 정하면 같은 화주·포워더의 다음 건은 따라갑니다', rows:tb.map(r => ({key:'bill:' + r.id, t1:`${r.caseNo || ''} ${r.title}`.trim(), t2:`${clientName(r.clientId)} · 의뢰 ${clientName(r.via)}`, lvl:'chk',
+  if(typeof resolveBillTo === 'function'){                                 // 11/14 P2: 포워더 의뢰 건 청구처 미정 — 11/21: '옮길 때 넣은 추정'도
+    const cut = addPeriod(today(), -60, 'd');
+    const vc = db.records.filter(r => (r.viaCands || []).length > 1 && viaStOf(r) !== 'sure' && !r.viaOff && billDue(r) && (r.status !== '완료' || recDate(r) >= cut));   // 11/21 F1 의뢰처 후보 여럿 — 새 메일로 자동 재판단, 청구 단계까지 안 풀리면 확인함
+    if(vc.length) g.push({k:'viachk', s:'의뢰처 확인', title:'의뢰처(포워더) 확인 — 후보 여럿', why:'사건번호·B/L로 붙은 메일·의뢰 메일·지난 거래로도 하나로 좁히지 못했습니다(청구 단계 건만 표시). 새 메일이 오면 자동으로 다시 판단하고, 고르면 수동 확인', rows:vc.map(r => ({key:'via:' + r.id, t1:`${r.caseNo || ''} ${clientName(r.clientId)} · ${r.title}`.slice(0, 90), t2:`${r.via ? `지금: ${clientName(r.via)}(${ST_LAB[viaStOf(r)]}) · ` : '지금: 미정 · '}근거: ${r.viaWhy || '메일 주소·제목'}`, lvl:r.via ? 'act' : 'chk',
+      acts:r.viaCands.map(id => BTN.ok(`data-via-set="${esc(r.id)}|${esc(id)}"`, clientName(id))).join('') + BTN.link(`data-via-set="${esc(r.id)}|"`, '직거래(포워더 없음)') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later('via:' + r.id)}))});
+    const tb = db.records.filter(r => r.via && billDue(r) && (!r.billTo || r.billBy === 'move' || billStOf(r) === 're') && (recDate(r) >= cut || billStOf(r) === 're'));   // 청구 단계 건만(그 전엔 단계·완료 자동 처리에 영향 없음)
+    if(tb.length) g.push({k:'billtbd', s:'청구처 확인', title:'청구처 미정·추정·재확인 — 포워더 의뢰 건', why:'근거(이 사건에 확실히 붙은 청구서 메일·확정된 지난 건·기본값)로 정하지 못했거나, 화주로 옮길 때 넣은 추정값, 근거 메일·의뢰처가 바뀐 건입니다. 한 번 정하면 같은 화주·포워더의 다음 건은 따라갑니다', rows:tb.map(r => ({key:'bill:' + r.id, t1:`${r.caseNo || ''} ${clientName(r.clientId)} · 의뢰 ${clientName(r.via)}`, t2:`${r.billTo ? `지금: ${billLabel(r)}(${ST_LAB[billStOf(r)]}${r.billWhy ? ' — ' + r.billWhy : ''}) · ` : '지금: 미정 · '}${r.title}`.slice(0, 140), lvl:billStOf(r) === 're' ? 'act' : 'chk',
       acts:BTN.ok(`data-bill-set="${esc(r.id)}|via"`, '포워더 청구') + BTN.ok(`data-bill-set="${esc(r.id)}|self"`, '화주 청구') + BTN.later('bill:' + r.id)}))});
   }
   const tc = db.records.filter(r => r.typeChk && r.typeChk.to && r.typeChk.to !== r.type && (r.status !== '완료' || recDate(r) >= addPeriod(today(), -60, 'd')));   // 11/16 업무 유형 확인

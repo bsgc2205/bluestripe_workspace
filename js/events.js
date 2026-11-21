@@ -93,7 +93,7 @@ document.addEventListener('click', e => {
   else if('rdupMerge' in d || 'rdupSwap' in d){ const [k, o] = (d.rdupMerge || d.rdupSwap).split('|'), rk = findRec(k), ro = findRec(o); if(rk && ro && confirm(`‘${ro.title}’을(를) ‘${rk.title}’에 합칩니다. 메일·자료·단계·이력이 한 기록에 모입니다(확인 알림에서 되돌리기 가능).`)){ mergeRecords(k, o); commit(); toast('기록을 합쳤습니다.'); } }
   else if('rdupNo' in d){ db.settings.recNotDup = [...new Set([...(db.settings.recNotDup || []), dupPairKey(...d.rdupNo.split('|'))])]; commit(); toast('다른 건으로 표시했습니다.'); }
   else if('rdupUndo' in d){ if(confirm('기록 합치기를 되돌릴까요? 합친 기록은 합치기 직전 상태로 돌아갑니다(그 뒤 고친 내용은 없어짐).')){ if(unmergeRecords(d.rdupUndo)){ commit(); toast('되돌렸습니다.'); } else toast('되돌리지 못했습니다.'); } }
-  else if('billSet' in d){ const [id, v] = d.billSet.split('|'), r = findRec(id); if(r){ r.billTo = v; r.billBy = 'manual'; addHist(r, `청구처: ${billLabel(r)} (직접 지정)`); r.updatedAt = nowIso(); commit(); toast(`청구처를 ${billLabel(r)}로 정했습니다.`); } }
+  else if('billSet' in d){ const [id, v] = d.billSet.split('|'), r = findRec(id); if(r){ const was = r.billTo ? `${billLabel(r)}(${typeof billStOf === 'function' ? ST_LAB[billStOf(r)] : ''})` : '미정'; if(typeof setBill === 'function') setBill(r, v, 'manual', null, 'sure', '직접 지정'); else { r.billTo = v; r.billBy = 'manual'; } addHist(r, `청구처: ${was} → ${billLabel(r)} (수동 확인 — 직접 지정)`); r.updatedAt = nowIso(); commit(); toast(`청구처를 ${billLabel(r)}로 정했습니다.`); } }
   else if('fwdMove' in d) openFwdMove(d.fwdMove);
   else if('clistFwd' in d){ clientListByFwd = !clientListByFwd; renderView(); }
   else if('actMore' in d){ activePage++; renderView(); }
