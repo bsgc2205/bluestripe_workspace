@@ -5,7 +5,7 @@
    수집 상태(status): 메일 수집기·메일 불러오기·Drive 자료 수집·필증 읽기·UNI-PASS·공공데이터·법령 확인·Drive 자동 저장의 마지막 성공·실패(이 PC 기준, 메일 수집기는 서버 기준).
    사유서·B/L 조회는 케이스 요약 줄에서 바로(도구 탭에도 남김). */
 const NAV = [
-  {k:'home', go:'home', tabs:[['home', '오늘 할 일'], ['alerts', '확인 알림']]},
+  {k:'home', go:'home', tabs:[['home', '오늘 할 일']]},                    // 11/20: 확인 알림은 확인함 '기타 › 알림'으로
   {k:'cases', go:'active', tabs:[['active', '진행 중'], ['check', '확인함'], ['mail', 'customs@ 메일']]},
   {k:'clients', go:'clientlist', tabs:[['clientlist', '거래업체 리스트'], ['contacts', '연락처']]},
   {k:'docs', go:'manual', tabs:[['manual', '업무 매뉴얼'], ['inquiries', '세관 질의 DB'], ['itemdb', '품목 DB'], ['tools', '도구']]},
@@ -16,13 +16,14 @@ function navOf(name){
   if(name === 'client') return NAV[2];
   if(name === 'common') return NAV[3];
   if(TOOL_ROUTES.includes(name)) return NAV[3];
+  if(name === 'alerts') return NAV[1];                                     // 11/20: 알림 화면은 확인함에서 여는 상세
   return NAV.find(n => n.tabs.some(t => t[0] === name)) || null;
 }
 function navTabsHTML(){
   const n = navOf(route.name);
   if(!n || route.name === 'client' || route.name === 'home') return '';   // 11/15: 홈은 자체 필터 줄(확인 알림·회신 대기 포함)
-  const cur = TOOL_ROUTES.includes(route.name) ? 'tools' : route.name === 'common' ? 'manual' : route.name;
-  const cnt = {check:checkCount(), mail:typeof mailAlerts === 'function' ? mailAlerts().total : 0, alerts:openAlerts().length, inbox:(db.collectPending || []).length,
+  const cur = TOOL_ROUTES.includes(route.name) ? 'tools' : route.name === 'common' ? 'manual' : route.name === 'alerts' ? 'check' : route.name;
+  const cnt = {check:checkCount(), mail:0, alerts:openAlerts().length, inbox:(db.collectPending || []).length,
     status:runFails().length, '@wait':mailCache && typeof waitSummary === 'function' ? waitSummary().n : 0};
   const tab = ([k, l]) => (k === 'accounts' && !isAdmin()) ? '' : k === '@wait'
     ? `<button class="nav-tab" data-wait-list>${l}${cnt[k] ? ` <span class="cnt">${cnt[k]}</span>` : ''}</button>`
@@ -104,6 +105,8 @@ function procLogHTML(){
 /* 11/15: 확인함 처리 뜻 통일 — 확정(근거 보고 반영) · 연결 변경(기록·업체 바꿈) · 나중에(날짜까지 숨김) · 업무 아님(목록에서 빼되 '나중에·제외' 탭에서 복구)
    종류별 탭 + 20건 페이지. 행마다 key가 있어 '나중에'를 기억한다(db.checkLater). */
 const CHK_PAGE = 20;
+const CHK_BUNDLES = [['link', '메일·자료 연결', ['mail', 'nocl', 'amb', 'pend', 'cert', 'recdup']], ['stage', '업무 단계', ['collchk', 'ledger', 'typechk', 'procpick', 'pver', 'billtbd']], ['money', '정산·관세', ['stlduty', 'stlun']], ['etc', '알림·기타', []]];   // 11/20
+function chkBundleOf(k){ if(k === 'off') return 'off'; const b = CHK_BUNDLES.find(x => x[2].includes(k)); return b ? b[0] : 'etc'; }
 let checkTab = '', checkPage = 0;
 const BTN = {
   ok:(attr, label = '확정') => `<button class="mini strong" ${attr}>${label}</button>`,
@@ -174,6 +177,9 @@ function checkGroups(){
     acts:x.del ? BTN.ok(`data-conf-ok="${esc(x.id)}"`, '살린 대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '지우기')
       : BTN.ok(`data-conf-ok="${esc(x.id)}"`, '이대로 확정') + BTN.link(`data-conf-theirs="${esc(x.id)}"`, '다른 PC 값으로')}))});
   if(typeof settleCheckGroups === 'function') settleCheckGroups(g);   // 11/19 정산서
+  { const al = openAlerts().filter(a => a.kind !== 'ledger').sort((a, b) => String(b.at).localeCompare(String(a.at)));   // 11/20: '확인 알림' 화면을 확인함으로 합침(법령·요건·관세율·업체 정보 등)
+    if(al.length) g.push({k:'alerts', s:'알림', title:'확인 알림 — 법령·요건·관세율·업체 정보 변경', why:'공공데이터·자동 처리에서 바뀐 점입니다. 자세한 내용·지난 알림은 ‘알림 화면’에서', rows:al.map(a => ({key:'alert:' + a.id, t1:`[${(typeof EXT_NAMES !== 'undefined' && EXT_NAMES[a.kind]) || a.kind}] ${a.title}`, t2:String(a.text || '').split('\n')[0].slice(0, 160), lvl:'chk',
+      acts:alertTargetHTML(a) + BTN.ok(`data-alert-done="${esc(a.id)}"`, '확인함') + BTN.link('data-go="alerts"', '알림 화면') + BTN.later('alert:' + a.id)}))}); }
   const rf = runFails();
   if(rf.length) g.push({k:'run', s:'수집 실패', title:'수집 실패', why:'자동 수집·확인이 실패하고 있습니다', rows:rf.map(x => ({key:'run:' + x.label, t1:x.label, t2:`${x.s.fail ? kstT(x.s.fail) + ' · ' : ''}${x.s.err}`, lvl:'act', acts:`<button class="mini" data-go="status">수집 상태</button>`}))});
   const L = db.checkLater || {}, td = today();                             // '나중에' 날짜가 남은 행은 빼서 later로
@@ -203,13 +209,19 @@ function viewCheck(){
   const g = checkGroups(), n = g.reduce((s, x) => s + x.rows.length, 0), off = checkOffRows(g);
   const tabs = [...g.map(x => ({k:x.k, s:x.s, n:x.rows.length, act:x.rows.some(r => r.lvl === 'act')})), ...(off.length ? [{k:'off', s:'나중에·제외', n:off.length}] : [])];
   if(!tabs.some(t => t.k === checkTab)){ checkTab = (tabs.find(t => t.act) || tabs[0] || {}).k || ''; checkPage = 0; }
+  /* 11/20: 종류(약 20가지)를 4묶음 + 나중에·제외로 — 묶음 안에 종류가 둘 이상이면 아래 줄에 작은 탭 */
+  const bund = [...CHK_BUNDLES.map(([b, l]) => ({b, l, ts:tabs.filter(t => t.k !== 'off' && chkBundleOf(t.k) === b)})), {b:'off', l:'나중에·제외', ts:tabs.filter(t => t.k === 'off')}].filter(x => x.ts.length);
+  const curB = chkBundleOf(checkTab), inB = (bund.find(x => x.b === curB) || {ts:[]}).ts;
+  const bTab = x => { const n = x.ts.reduce((a, t) => a + t.n, 0), act = x.ts.some(t => t.act), first = (x.ts.find(t => t.k === checkTab) || x.ts.find(t => t.act) || x.ts[0]).k;
+    return `<button class="tab${x.b === curB ? ' on' : ''}${act ? ' act' : ''}" data-chk-tab="${first}">${esc(x.l)} <span class="cnt">${n}</span></button>`; };
+  const subTabs = inB.length > 1 ? `<div class="tabs chk-sub" role="tablist">${inB.map(t => `<button class="tab sm${t.k === checkTab ? ' on' : ''}${t.act ? ' act' : ''}" data-chk-tab="${t.k}">${esc(t.s)} <span class="cnt">${t.n}</span></button>`).join('')}</div>` : '';
   const cur = checkTab === 'off' ? {k:'off', title:'나중에 볼 것 · 업무 아님으로 뺀 것', why:'복구하면 원래 목록으로 돌아갑니다', rows:off} : g.find(x => x.k === checkTab);
   const row = x => `<div class="todo lv-${x.lvl}"><div class="t-main"><strong>${esc(x.t1)}</strong><span class="hint">${esc(x.t2)}</span></div><div class="t-act">${x.acts}</div></div>`;
   const pages = cur ? Math.max(1, Math.ceil(cur.rows.length / CHK_PAGE)) : 1;
   if(checkPage >= pages) checkPage = pages - 1;
   const pager = pages > 1 ? `<div class="pager"><button class="mini" data-chk-page="${checkPage - 1}"${checkPage ? '' : ' disabled'}>‹ 이전</button><span>${checkPage + 1} / ${pages} 쪽 · ${cur.rows.length}건</span><button class="mini" data-chk-page="${checkPage + 1}"${checkPage < pages - 1 ? '' : ' disabled'}>다음 ›</button></div>` : '';
   return `<header class="client-head"><div><h2>확인함 <span class="cnt">${n}건</span></h2><p class="client-meta">자동으로 정하지 못한 것만 모았습니다. <b>확정</b> = 보고 반영 · <b>연결 변경</b> = 기록·업체 바꿈 · <b>나중에</b> = 날짜까지 숨김 · <b>업무 아님</b> = 빼되 복구 가능${mailCache ? '' : ' (메일을 불러오는 중이면 메일 항목은 잠시 뒤 보입니다)'}</p></div></header>
-    ${tabs.length ? `<div class="tabs chk-tabs" role="tablist">${tabs.map(t => `<button class="tab${t.k === checkTab ? ' on' : ''}${t.act ? ' act' : ''}" data-chk-tab="${t.k}">${esc(t.s)} <span class="cnt">${t.n}</span></button>`).join('')}</div>` : ''}
+    ${bund.length ? `<div class="tabs chk-tabs" role="tablist">${bund.map(bTab).join('')}</div>${subTabs}` : ''}
     ${cur ? `<section class="chk-grp"><div class="sec-head"><h3>${esc(cur.title)}</h3><span class="hint">${esc(cur.why)}</span></div>${cur.rows.slice(checkPage * CHK_PAGE, (checkPage + 1) * CHK_PAGE).map(row).join('')}${pager}</section>` : '<p class="empty">확인할 것이 없습니다.</p>'}`;
 }
 function openCheckLater(key){
@@ -237,7 +249,7 @@ function caseToolLinks(r){
 }
 
 /* ---- 화면 그리기에 끼우기 ---- */
-const NAV_VIEWS = {check:viewCheck, status:viewStatus, tools:viewTools};
+const NAV_VIEWS = {check:() => viewCheck(), status:() => viewStatus(), tools:() => viewTools()};   // 11/20: 나중에 덮어쓴 viewStatus(모든 PC·자동 처리 PC)도 보이게 — 예전엔 처음 함수가 고정돼 '모든 PC' 칸이 안 나왔음
 const renderViewBase4 = renderView;
 renderView = function(){
   const v = $('#view');
@@ -246,11 +258,15 @@ renderView = function(){
   const tabs = navTabsHTML();
   if(tabs) v.insertAdjacentHTML('afterbegin', tabs);
 };
-const renderSidebarBase4 = renderSidebar;
-renderSidebar = function(){
-  renderSidebarBase4();
+const sideActiveBase4 = sideActive;
+sideActive = function(){
+  sideActiveBase4();
   const n = navOf(route.name);
   document.querySelectorAll('.side-link[data-go]').forEach(b => b.classList.toggle('on', !!n && b.dataset.go === n.go));
+};
+const renderSidebarNowBase4 = renderSidebarNow;
+renderSidebarNow = function(){
+  renderSidebarNowBase4();
   const ck = checkCount(), cc = $('#cntCheck'); if(cc){ cc.textContent = ck ? `확인 ${ck}` : ''; cc.classList.toggle('warn', ck > 0); }
   const rf = runFails().length, ca = $('#cntAdmin'); if(ca){ ca.textContent = rf ? '!' : ''; ca.classList.toggle('warn', rf > 0); ca.title = rf ? `수집 실패 ${rf}건 — 관리 → 수집 상태` : ''; }
 };
@@ -263,3 +279,8 @@ document.addEventListener('click', e => {
   else if('runMail' in d) loadMail(true);
   else if('runUni' in d){ toast('UNI-PASS로 진행 중 수입·수출 건을 확인합니다…'); refreshCustoms(true).then(() => { renderView(); toast('UNI-PASS 확인을 마쳤습니다.'); }); }
 });
+/* 11/20: ⑤ 관리에 '!'(수집 실패)가 있으면 메뉴를 눌렀을 때 바로 수집 상태로 */
+document.addEventListener('click', e => {
+  const b = db && e.target.closest('.side-link[data-go="report"]'); if(!b || !runFails().length) return;
+  e.stopImmediatePropagation(); e.preventDefault(); $('#q').value = ''; go('status');
+}, true);

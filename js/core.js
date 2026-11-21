@@ -166,7 +166,7 @@ async function wrapFor(id, name, role, pw){
   return {id, name, role, salt:b64(sl), iter:ITER, iv:b64(iv), wrapped:b64(w)};
 }
 /* 압축 (11/14 P1): 이 PC 브라우저 저장본은 gzip으로 줄여 암호화한다(z:'gzip'). 읽을 때는 z가 있으면 풀고, 없으면 예전 형식 그대로.
-   Drive 저장(sync)·암호화 파일 받기는 settings.syncZip이 켜졌을 때만 압축 — 예전 화면이 남은 PC가 Drive 파일을 못 여는 일을 막기 위해 기본은 끔. */
+   Drive 저장(sync)·암호화 파일 받기는 settings.syncZip이 false가 아니면 압축(11/20 기본 켬 — 모든 PC가 v20261114b 이후). */
 const canZip = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
 async function zipBytes(u8){ const s = new Blob([u8]).stream().pipeThrough(new CompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
 async function unzipBytes(u8){ const s = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip')); return new Uint8Array(await new Response(s).arrayBuffer()); }
@@ -363,7 +363,11 @@ function enterApp(){
   if(n){ commit(); setTimeout(() => toast(`예시 업체 ${n}곳과 관련 기록을 지웠습니다.`), 600); }
   render();
   if(ensureCaseNos(db)) commit();
-  if((db.settings.mail || {}).endpoint){ setTimeout(() => runCollect(false), 1200); setTimeout(() => loadMail(false), 2500); setTimeout(() => refreshCustoms(false), 6000); setTimeout(() => autoExtChecks(), 12000); }
+  if((db.settings.mail || {}).endpoint){                                   // 11/20: 자동 처리 PC가 정해져 있으면 그 PC만(소식이 70분 넘게 없으면 이 PC가 대신)
+    setTimeout(() => loadMail(false), 2500);
+    setTimeout(async () => { if(typeof autoPcCheck === 'function') await autoPcCheck(); if(typeof isAutoPc === 'function' && !isAutoPc()) return;
+      runCollect(false); setTimeout(() => refreshCustoms(false), 4800); setTimeout(() => autoExtChecks(), 10800); }, 1200);
+  }
 }
 
 /* ---------- save state ---------- */

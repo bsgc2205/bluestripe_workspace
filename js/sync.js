@@ -237,7 +237,7 @@ async function syncNow(){
       if(!isDirty()){ sync.state = 'ok'; sync.err = ''; break; }
       sync.state = 'busy'; updateSaveState();
       const text = jstr(db), who = me.name || me.id;
-      const blob = await encryptDb(text, {zip:!!(db.settings || {}).syncZip});   // Drive 압축은 모든 PC가 새 버전일 때 관리자가 켬(데이터 메뉴)
+      const blob = await encryptDb(text, {zip:(db.settings || {}).syncZip !== false});   // 11/20: Drive 압축 기본 켬(모든 PC가 v20261114b 이후) — 데이터 메뉴에서 끌 수 있음
       const res = await syncPost(cfg, {op:'save', baseRev:sync.rev, by:who, blob});
       if(res.ok){ blob.rev = res.rev; blob.savedAt = res.savedAt; blob.savedBy = who; setBase(blob, JSON.parse(text)); continue; }
       if(res.conflict && res.blob){ await absorb(res.blob); continue; }

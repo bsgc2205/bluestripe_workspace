@@ -1,18 +1,26 @@
 'use strict';
 /* ---------- render ---------- */
 function render(){renderSidebar(); renderView(); updateSaveState(); $('#who').textContent = me ? `${me.name} (${me.id})` : ''; const al = $('.side-link[data-go=accounts]'); if(al) al.hidden = !isAdmin();}
-function renderSidebar(){
+/* 11/20: 왼쪽 메뉴 — 선택 표시는 바로, 숫자·업체 목록은 조작이 멈춘 뒤 한 번만(여러 번 고쳐도 한 번 계산) */
+let sideT = 0;
+function renderSidebar(){ sideActive(); clearTimeout(sideT); sideT = setTimeout(() => { const run = () => { if(db) renderSidebarNow(); }; if(window.requestIdleCallback) requestIdleCallback(run, {timeout:800}); else run(); }, 250); }
+function sideActive(){
   document.querySelectorAll('.side-link').forEach(b => b.classList.toggle('on', b.dataset.go === route.name));
   if(['report', 'inbox', 'accounts'].includes(route.name) && $('#navAdmin')) $('#navAdmin').open = true;
+  const cur = route.name === 'client' ? route.id : null;
+  document.querySelectorAll('#clientList button[data-go="client"]').forEach(b => b.classList.toggle('on', b.dataset.id === cur));
+}
+function renderSidebarNow(){
   if($('#cntToday')){ const t = todayItems(), red = t.filter(x => x.lvl === 'act').length; $('#cntToday').textContent = red || ''; $('#cntToday').classList.toggle('warn', red > 0); $('#cntToday').title = red ? `조치 필요 ${red}건` : ''; }
   const active = db.records.filter(r => r.status !== '완료').length;
-  $('#cntActive').textContent = active || '';
+  $('#cntActive').textContent = ''; const sl = $('.side-link[data-go="active"]'); if(sl) sl.title = `진행 중 ${active}건`;   // 11/20: 숫자는 확인 건수 하나만
   const ma = mailAlerts();  // customs@ 메일 중 아직 기록과 연결하지 않은 대화
   $('#cntMail').textContent = ma.total || ''; $('#cntMail').classList.toggle('warn', ma.overdue > 0); $('#cntMail').title = ma.overdue ? `${OVERDUE_H}시간 넘게 연결 안 된 대화 ${ma.overdue}건` : '';
   const ppN = (db.procProposals || []).filter(x => x.status === 'pending').length; if($('#cntManual')) $('#cntManual').textContent = ppN || '';
   if($('#cntInq')) $('#cntInq').textContent = (db.inquiries || []).length || '';
   if($('#cntAlert')){ const n = openAlerts().length; $('#cntAlert').textContent = n || ''; $('#cntAlert').classList.toggle('warn', n > 0); }
   $('#cntInbox').textContent = (db.collectPending || []).length || '';
+  if(document.activeElement && document.activeElement.id === 'sideQ') return;   // 업체 검색 입력 중에는 목록을 다시 만들지 않음
   const counts = {}; db.records.forEach(r => counts[r.clientId] = (counts[r.clientId] || 0) + 1);
   const list = sortedClients();
   if(!list.length){$('#clientList').innerHTML = '<p class="hint side-empty">업체를 추가하세요</p>'; return;}
@@ -254,18 +262,18 @@ function viewHome(){
   const now = homeRowsNow(), nowRows = now.filter(x => x.lvl === 'act' || x.lvl === 'chk');
   const active = db.records.filter(r => r.status !== '완료');
   const waits = homeWaitRows(), nCheck = checkCount(), urgent = nowRows.filter(x => x.lvl === 'act').length;
-  const tabs = [['now', '지금 처리', nowRows.length], ['check', '확인 필요', nCheck], ['wait', '회신 대기', mailCache ? waits.length : '–'], ['all', '전체', active.length]];
-  const rows = homeTab === 'check' ? checkRowsFlat() : homeTab === 'wait' ? waits : homeTab === 'all' ? homeRowsAll(now) : nowRows;
+  if(homeTab === 'check') homeTab = 'now';                                 // 11/20: 확인은 확인함 한 곳으로
+  const tabs = [['now', '지금 처리', nowRows.length], ['wait', '회신 대기', mailCache ? waits.length : '–'], ['all', '전체', active.length]];
+  const rows = homeTab === 'wait' ? waits : homeTab === 'all' ? homeRowsAll(now) : nowRows;
   const pages = Math.max(1, Math.ceil(rows.length / HOME_PAGE)); if(homePage >= pages) homePage = pages - 1;
   const pager = pages > 1 ? `<div class="pager"><button class="mini" data-home-page="${homePage - 1}"${homePage ? '' : ' disabled'}>‹ 이전</button><span>${homePage + 1} / ${pages} 쪽 · ${rows.length}건</span><button class="mini" data-home-page="${homePage + 1}"${homePage < pages - 1 ? '' : ' disabled'}>다음 ›</button></div>` : '';
   const auto7 = db.records.filter(r => r.autoDone && r.status === '완료' && daysLeft((r.autoDone.at || '').slice(0, 10)) >= -7).length;
   const up = openDeadlines().filter(x => daysLeft(x.d.due) > 3).length;
   const empty = {now:'지금 처리할 항목이 없습니다. ‘전체’에서 진행 중 업무를 보세요.', check:'확인할 것이 없습니다.', wait:mailCache ? '회신을 기다리는 건이 없습니다.' : '메일을 불러오는 중입니다.', all:'진행 중인 업무가 없습니다. 새 건은 ‘업무 시작’으로 등록하세요.'}[homeTab];
-  const nAl = openAlerts().length;
   const tabHTML = ([k, l, n]) => `<button class="tab${homeTab === k ? ' on' : ''}" data-home-tab="${k}">${l} <span class="cnt">${n}</span>${k === 'now' && urgent ? ` <span class="urg">긴급 ${urgent}</span>` : ''}</button>`;
   return `<div class="tabs home-tabs" role="tablist">${tabs.map(tabHTML).join('')}
     <details class="help-mini"><summary title="안내">?</summary><div><p class="legend"><span class="lg act">긴급: 지난 기한·새 의뢰·24시간 넘은 메일·재확인일</span><span class="lg chk">확인: 3일 안 기한·확인 알림·근거 확인</span><span class="lg prog">진행</span><span class="lg ref">참고: 무변동·보류</span></p><p class="hint">숫자는 사건(메일 대화) 기준. 행을 누르면 항목별 처리 버튼·다음 조치·단계 근거가 펼쳐집니다. 업체·B/L·신고번호는 위 검색(/)으로 찾으세요.</p></div></details>
-    <span class="sp"></span>${nAl ? `<button class="mini" data-go="alerts">확인 알림 ${nAl}</button>` : ''}${accounts.length > 1 ? `<button class="mini" data-today-mine>${todayMine ? '내 담당만 ✓' : '내 담당만'}</button>` : ''}
+    <span class="sp"></span>${nCheck ? `<button class="mini" data-go="check" title="자동으로 정하지 못한 것·알림 — 확인함에서 종류별로">확인함 <span class="cnt warn">${nCheck}</span></button>` : ''}${accounts.length > 1 ? `<button class="mini" data-today-mine>${todayMine ? '내 담당만 ✓' : '내 담당만'}</button>` : ''}
     <button class="primary" data-new-rec data-status="진행중">업무 시작</button><details class="more-act"><summary class="ghost">더 ▾</summary><div><button class="ghost" data-new-rec data-status="완료">완료 기록 남기기</button><button class="ghost" data-new-proc>처리 절차 추가</button><button class="ghost" data-new-client>업체 추가</button></div></details>
   </div>
   <div class="wlist">
@@ -273,7 +281,7 @@ function viewHome(){
     ${rows.length ? rows.slice(homePage * HOME_PAGE, (homePage + 1) * HOME_PAGE).map(homeRowHTML).join('') : `<p class="empty">${empty}</p>`}
     ${pager}
   </div>
-  <p class="home-foot hint">${homeTab === 'check' ? '<button class="linkish" data-go="check">확인함에서 종류별로 보기 →</button> · ' : ''}${auto7 ? `<button class="linkish" data-go="active" data-auto-open>자동 처리 확인 ${auto7}건(7일)</button> · ` : ''}${up ? `4일 이후 기한 ${up}건은 ‘전체’ 기한 열 · ` : ''}<button class="linkish" data-go="active">진행 중 전체·검색 →</button>${todayMine ? ' · 기한·제안·무변동은 내 담당 건만, 메일·알림은 모두' : ''}</p>`;
+  <p class="home-foot hint">${auto7 ? `<button class="linkish" data-go="active" data-auto-open>자동 처리 확인 ${auto7}건(7일)</button> · ` : ''}${up ? `4일 이후 기한 ${up}건은 ‘전체’ 기한 열 · ` : ''}<button class="linkish" data-go="active">진행 중 전체·검색 →</button>${todayMine ? ' · 기한·제안·무변동은 내 담당 건만, 메일·알림은 모두' : ''}</p>`;
 }
 
 let activeMode = 'list', activeSort = {k:'band', dir:1}, activePage = 0, activeQ = '', activeAutoOpen = false;
@@ -354,10 +362,10 @@ function viewActive(){
   const hold = db.records.filter(r => r.status === '보류' && mine(r)).sort((a,b) => (a.startDate||'').localeCompare(b.startDate||''));
   const dls = openDeadlines();
   const head = `<header class="client-head"><div><h2>진행 중 업무</h2><p class="client-meta">진행중 ${act.length}건, 보류 ${hold.length}건, 남은 기한 ${dls.length}건</p></div>
-    <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button><button class="${activeMode === 'board' ? 'on' : ''}" data-amode="board" title="접수 → 서류대기 → 신고진행 → 보완요청 → 검사 → 수리완료 → 종결">보드</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
+    <div class="client-act"><div class="seg" role="group" aria-label="보기"><button class="${activeMode === 'list' ? 'on' : ''}" data-amode="list">목록</button><button class="${activeMode === 'table' ? 'on' : ''}" data-amode="table">표</button></div><button class="ghost" data-mine>${mineOnly ? '전체 보기' : '내 담당만'}</button><button class="primary" data-new-rec data-status="진행중">업무 시작</button></div></header>`;
   const H = head + exportBarHTML(act);                                     // 11/16 수입·수출 빠른 필터
   if(expF) return H + exportTableHTML(act.filter(r => ioMatch(r, expF)));
-  if(activeMode === 'board') return H + boardHTML({list:[...act, ...hold], mine});
+  if(activeMode === 'board') activeMode = 'list';                        // 11/20: 보드 보기 없앰(목록·표와 겹치고 전체를 한 번에 그림)
   if(activeMode === 'table') return H + `<p class="legend"><span class="lg act">조치 필요</span><span class="lg prog">진행</span><span class="lg ship">선적 대기</span><span class="lg settle">청구 대기</span><span class="lg ref">보류</span> <span class="hint">· 제목 줄을 누르면 정렬됩니다</span></p>`
     + ([...act, ...hold].length ? activeTableHTML([...act, ...hold]) : '<p class="empty">진행 중인 업무가 없습니다.</p>')
     + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>전체 기한</h3></div>${dls.length ? dls.slice(0, 30).map(deadlineRow).join('') + (dls.length > 30 ? `<p class="hint">외 ${dls.length - 30}건 — 가까운 순 30건만</p>` : '') : '<p class="empty">남은 기한이 없습니다.</p>'}</section>`;
@@ -403,6 +411,7 @@ function viewClient(){
         
         <a class="btn" href="${esc(drive)}" target="_blank" rel="noopener noreferrer">Drive에서 찾기</a>
         ${safeUrl(c.bizDoc) ? `<a class="btn" href="${esc(c.bizDoc)}" target="_blank" rel="noopener noreferrer">사업자등록증</a>` : ''}
+        <button class="ghost" data-biz-pick="${esc(c.id)}" title="사업자등록증 폴더에서 이 업체 이름이 든 파일을 찾아 고른 파일 하나만 읽고 빈 칸·바뀐 칸을 채웁니다">${c.bizDoc ? '등록증 다시 읽기' : '사업자등록증에서 채우기'}</button>
         <button class="ghost" data-client-report="${esc(c.id)}" title="기간을 골라 이 업체의 업무 처리 내역서를 PDF로 만들거나 메일 본문 표로 복사">업무 내역서</button>
         <button class="ghost" data-letter data-client="${esc(c.id)}">사유서 작성</button>
         <button class="ghost" data-edit-client="${esc(c.id)}">업체 정보 수정</button>
@@ -688,7 +697,7 @@ function viewClientList(){
   const temp = typeof clientState === 'function' ? list.filter(c => clientState(c) === 'temp').length : 0;
   const types = c => [...new Set(db.records.filter(r => r.clientId === c.id).map(r => r.type))];
   return `<header class="client-head"><div><h2>거래업체 리스트</h2><p class="client-meta">업체 ${list.length}곳${temp ? ` (임시 ${temp} — 사업자번호 없음)` : ''}${arch ? ` · 보관 ${arch}곳은 ‘업체 정리 › 보관’` : ''}. 사업자등록증과 메일 기준으로 채웁니다.</p></div>
-      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import>사업자등록증 폴더 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button><button class="ghost" data-clist-clean title="상태(확정·임시·보관)·문제별로 업체를 정리합니다 — 번호 입력·합치기(별칭)·보관·기준 목록 CSV">업체 정리</button><button class="ghost" data-clist-fwd title="포워더 아래에 그 포워더가 보낸 화주를 묶어 봅니다">${typeof clientListByFwd !== 'undefined' && clientListByFwd ? '전체 목록' : '포워더별로 묶어 보기'}</button></div></header>
+      <div class="client-act"><button class="ghost" data-client-ext="all" title="통관고유부호(UNI-PASS)와 국세청 사업자 상태를 모든 업체에 대해 확인하고 빈칸을 채웁니다">업체 정보 일괄 확인</button><button class="primary" data-biz-import title="새로 올라오거나 바뀐 파일만 읽습니다">새 사업자등록증 반영</button>${(() => { const n = typeof dupCount === 'function' ? dupCount() : 0; return `<button class="ghost${n ? ' warn-btn' : ''}" data-client-dup title="같은 회사가 두 번 등록된 업체를 찾아 합칩니다">중복 점검${n ? ` <span class="cnt">${n}</span>` : ''}</button>`; })()}<button class="ghost" data-new-client>업체 추가</button><button class="ghost" data-clist-clean title="상태(확정·임시·보관)·문제별로 업체를 정리합니다 — 번호 입력·합치기(별칭)·보관·기준 목록 CSV">업체 정리</button><button class="ghost" data-clist-fwd title="포워더 아래에 그 포워더가 보낸 화주를 묶어 봅니다">${typeof clientListByFwd !== 'undefined' && clientListByFwd ? '전체 목록' : '포워더별로 묶어 보기'}</button></div></header>
     ${typeof clientListByFwd !== 'undefined' && clientListByFwd ? clientListFwdHTML() : `
     ${list.length ? `<div class="table-wrap" style="margin-top:1.25rem"><table class="grid"><thead><tr><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>업무담당자</th><th>관련업무</th></tr></thead><tbody>
       ${list.map(c => { const cc = (c.contacts || []).slice(0,2), ty = types(c), rw = (c.recentWork || []).slice(0,2); return `<tr>
@@ -698,29 +707,87 @@ function viewClientList(){
         <td>${cc.length ? cc.map(p => `<div>${esc(p.name || '')} <span class="hint">${esc(p.email)}</span></div>`).join('') : esc(c.contact || '')}</td>
         <td>${ty.map(t => `<span class="tag type">${esc(t)}</span> `).join('')}${rw.map(w => `<div class="hint">${esc(w.date)} ${esc(w.subject)}</div>`).join('')}</td>
       </tr>`; }).join('')}
-    </tbody></table></div>` : '<p class="empty">업체가 없습니다. ‘사업자등록증 폴더 반영’으로 한 번에 채울 수 있습니다.</p>'}`}`;
+    </tbody></table></div>` : '<p class="empty">업체가 없습니다. 업체 정리의 ‘새 사업자등록증 반영’으로 채울 수 있습니다.</p>'}`}`;
 }
-async function bizImport(){
+/* ---------- 사업자등록증 (11/20 개편) ----------
+   · 폴더 반영(bizImport): 새로 올라왔거나 바뀐 파일만 글자 인식, 아직 확인하지 않은 것만 팝업 — 팝업에서 반영(또는 건너뜀)하면 '새 파일' 표시를 지움(bizack).
+     새 파일이 없으면 '읽어 둔 전체 보기'(글자 인식 없음)만 고를 수 있음.
+   · 업체별(bizPick): 파일 이름만 검색(글자 인식 없음) → 고른 파일 하나만 읽고(읽어 둔 것은 그대로) 그 업체에만 변경분 반영.
+   업체 판별은 bizMatch(사업자번호 우선, 상호만 같고 번호 다르면 합치지 않음), 기존 값은 덮어쓰지 않고 고른 변경분만(11/16 A1·A2). */
+const BIZ_FLD = [['name', 'name', '상호'], ['biz', 'bizNo', '사업자번호'], ['rep', 'rep', '대표자'], ['addr', 'address', '주소'], ['open', 'openDate', '개업일']];
+function bizSame(k, a, b){ return k === 'biz' ? bizKey(a) === bizKey(b) : k === 'name' ? normName(a) === normName(b) : String(a || '').replace(/\s+/g, '') === String(b || '').replace(/\s+/g, ''); }
+function bizDiffs(it, c){
+  return BIZ_FLD.map(([ik, ck, lab]) => ({ik, ck, lab, old:c[ck] || '', nw:it[ik] || ''})).filter(x => x.nw && !bizSame(x.ik, x.old, x.nw))
+    .map(x => ({...x, fill:!x.old, keep:!!(c.manualAt || {})[x.ck] && !x.fill, older:!x.fill && !!(it.fileAt && c.bizDocAt && it.fileAt < c.bizDocAt)}));
+}
+function bizNewClient(it){
+  return {id:uid(), name:it.name || it.fileName, bizNo:bizFmt(it.biz || ''), rep:it.rep || '', address:it.addr || '', openDate:it.open || '', industry:[it.type, it.item].filter(Boolean).join(' / '), contact:'', keyword:'', notes:'', createdAt:nowIso(), bizDoc:safeUrl(it.link) ? it.link : '', bizDocAt:it.fileAt || today(), bizHist:[{at:nowIso(), by:me ? me.id : '', file:it.fileName || '', how:'사업자등록증으로 새로 등록'}]};
+}
+/* pick(x): 빈 칸이 아닌 칸(x.fill false)을 바꿀지. 반환 = 바꾼 칸 목록 */
+function bizApplyTo(c, it, pick, note){
+  const done = [];
+  bizDiffs(it, c).forEach(x => { if(!x.fill && !pick(x)) return;
+    if(x.ck === 'name' && x.old){ c.keyword = [...new Set([...String(c.keyword || '').split(/[,;\n]/).map(y => y.trim()).filter(Boolean), x.old])].join(', '); }   // 예전 상호는 검색어로 남김
+    c[x.ck] = x.ck === 'bizNo' ? bizFmt(x.nw) : x.nw; done.push({k:x.lab, old:x.old, nw:x.nw}); });
+  if(!c.industry && (it.type || it.item)) c.industry = [it.type, it.item].filter(Boolean).join(' / ');
+  if(safeUrl(it.link)) c.bizDoc = it.link;
+  if(!c.bizDocAt || (it.fileAt && it.fileAt > c.bizDocAt)) c.bizDocAt = it.fileAt || c.bizDocAt || today();
+  if(done.length || note){ c.bizHist = [...(c.bizHist || []), {at:nowIso(), by:me ? me.id : '', file:it.fileName || '', ...(done.length ? {changes:done} : {how:note})}].slice(-20); c.updatedAt = nowIso(); }
+  return done;
+}
+async function bizCall(params){
   const cfg = db.settings.mail || {};
-  if(!cfg.endpoint || !cfg.token){toast('먼저 데이터 메뉴에서 Apps Script 웹 앱 주소와 토큰을 넣어 주세요.'); return;}
-  const call = async params => { const u = new URL(cfg.endpoint); u.searchParams.set('token', cfg.token); Object.entries(params).forEach(([k,v]) => u.searchParams.set(k, v)); const j = await (await fetch(u.href)).json(); if(!j.ok) throw new Error(j.error || '응답 오류'); return j; };
+  if(!cfg.endpoint || !cfg.token) throw new Error('먼저 데이터 메뉴에서 Apps Script 웹 앱 주소와 토큰을 넣어 주세요');
+  const u = new URL(cfg.endpoint); u.searchParams.set('token', cfg.token); Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  const j = await (await fetch(u.href)).json();
+  if(!j.ok) throw new Error(/알 수 없는 요청/.test(j.error || '') ? 'Apps Script를 새 버전으로 배포해야 합니다(배포.bat)' : (j.error || '응답 오류'));
+  return j;
+}
+function bizAck(ids){ ids = [...new Set(ids.filter(Boolean))]; if(!ids.length) return; (async () => { for(let i = 0; i < ids.length; i += 25){ try{ await bizCall({bizack:ids.slice(i, i + 25).join(',')}); }catch(e){} } })(); }
+async function bizMailScan(touched, msg){                                   // 메일에서 담당자 후보·관련업무 (업체당 몇 초)
+  let k = 0;
+  for(const c of touched){
+    k++; toast(`메일 확인 중… ${k}/${touched.length} ${c.name}`);
+    try{
+      const r = await bizCall({scan: primaryKw(c), days: 365});
+      const map = new Map((c.contacts || []).map(p => [p.email, p]));
+      (r.contacts || []).filter(p => p.count >= 2).slice(0,5).forEach(p => { const o = map.get(p.email); map.set(p.email, {...(o || {}), ...p, st:o && o.st ? o.st : contactStatus(c, p.email, false)}); });   // 11/16 A4: 빈도로 확정하지 않음 — 업체 도메인 주소만 확정, 나머지는 후보
+      c.contacts = [...map.values()].sort((a,b) => (b.count || 0) - (a.count || 0));
+      if((r.subjects || []).length) c.recentWork = r.subjects.slice(0,15);
+      c.scannedAt = today();
+    }catch(e){}
+  }
+  commit(); toast(`${msg}. 메일 담당자 후보를 넣었습니다(업체 화면에서 확정).`);
+}
+let bizBusy = false;
+async function bizImport(mode = 'new'){
+  if(bizBusy){ toast('사업자등록증을 읽는 중입니다.'); return; }
+  bizBusy = true;
   let j;
   try{
-    do { j = await call({bizscan:1}); toast(`사업자등록증 읽는 중… ${j.items.length}/${j.total}`); } while(j.remaining > 0);
-  }catch(e){toast('읽지 못했습니다: ' + e.message + ' (Apps Script 재배포와 Drive API 서비스 추가를 확인하세요)'); return;}
-  const items = j.items.filter(x => x.name || x.biz);
-  /* 11/16 A1·A2·A3: 업체 판별은 bizMatch(사업자번호 우선, 상호만 같고 번호 다르면 합치지 않음), 기존 값은 덮어쓰지 않고 변경분만 골라 반영, 팝업 안 검색 */
-  const FLD = [['name', 'name', '상호'], ['biz', 'bizNo', '사업자번호'], ['rep', 'rep', '대표자'], ['addr', 'address', '주소'], ['open', 'openDate', '개업일']];
-  const same = (k, a, b) => k === 'biz' ? bizKey(a) === bizKey(b) : k === 'name' ? normName(a) === normName(b) : String(a || '').replace(/\s+/g, '') === String(b || '').replace(/\s+/g, '');
-  const diffs = (it, c) => FLD.map(([ik, ck, lab]) => ({ik, ck, lab, old:c[ck] || '', nw:it[ik] || ''})).filter(x => x.nw && !same(x.ik, x.old, x.nw))
-    .map(x => ({...x, fill:!x.old, keep:!!(c.manualAt || {})[x.ck] && !x.fill, older:!x.fill && !!(it.fileAt && c.bizDocAt && it.fileAt < c.bizDocAt)}));
+    let n = 0;
+    do { j = await bizCall({bizscan:1, mode}); n += j.read || 0; if(j.remaining > 0) toast(`새 사업자등록증 읽는 중… ${n}개 읽음, 남은 ${j.remaining}개`); } while(j.remaining > 0);
+  }catch(e){ toast('읽지 못했습니다: ' + e.message); return; }
+  finally{ bizBusy = false; }
+  const fails = j.fails || [];
+  const items = (j.items || []).filter(x => x.name || x.biz);
+  const blank = (j.items || []).filter(x => !(x.name || x.biz));
+  const failHTML = fails.length || blank.length ? `<details class="home-more"><summary>글자를 읽지 못한 파일 ${fails.length + blank.length}개 — 파일이 바뀌기 전에는 다시 읽지 않음</summary><ul>${[...fails, ...blank].map(x => `<li>${safeUrl(x.link) ? `<a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.fileName || '')}</a>` : esc(x.fileName || '')}</li>`).join('')}</ul></details>` : '';
+  if(typeof logProc === 'function' && j.read) logProc('drive', `사업자등록증: 새 파일 ${j.read}개 글자 인식`);
+  if(!items.length){
+    openDialog({title:'사업자등록증 폴더 반영', saveLabel: mode === 'all' ? '닫기' : '읽어 둔 전체 보기',
+      body:`<p>${mode === 'all' ? '읽어 둔 사업자등록증이 없습니다.' : `새로 올라오거나 바뀐 사업자등록증이 없습니다. <span class="hint">(폴더 파일 ${j.total}개 — 모두 읽어 둠, 글자 인식 0회)</span>`}</p>${failHTML}
+        <p class="hint">특정 업체만 다시 확인하려면 업체 화면의 <b>‘사업자등록증에서 채우기’</b>를 쓰세요(파일 이름으로 찾아 그 파일만 읽음).</p>`,
+      onSave(){ $('#dlg').close(); bizAck([...fails, ...blank].map(x => x.fileId)); if(mode !== 'all') setTimeout(() => bizImport('all'), 50); return false; }});
+    return;
+  }
   const plan = items.map(it => { const M = bizMatch(it); const sim = M.kind === 'new' && typeof similarClients === 'function' ? similarClients(it.name || '', it.biz || '') : []; return {it, M, sim}; });
   const KIND = {same:'기존 업체(사업자번호 같음)', update:'기존 업체 · 정보 변경', link:'기존 업체 연결 후보(한쪽 번호 없음)', conflict:'⚠ 상호 같고 사업자번호 다름 — 별도 업체로', check:'⚠ 사업자번호 확인 필요', new:'새 업체'};
   const rowHTML = ({it, M, sim}, i) => {
     const base = ['same', 'update', 'link'].includes(M.kind) ? M.c : null;
     const sel = M.kind === 'conflict' || (M.kind === 'check' && M.c) ? `<select name="to${i}">${opts([['', '새 업체로 추가'], [M.c.id, `기존 ‘${M.c.name}’에 반영(같은 회사일 때만)`]], '')}</select>`
       : M.kind === 'new' && sim.length ? `<select name="to${i}" title="비슷한 기존 업체가 있습니다. 같은 회사면 그 업체에 반영하세요.">${opts([['', '새 업체로 추가'], ...sim.slice(0, 3).filter(x => !(bizKey(x.c.bizNo) && bizKey(it.biz) && bizKey(x.c.bizNo) !== bizKey(it.biz))).map(x => [x.c.id, `기존 ‘${x.c.name}’에 반영 (${x.why})`])], sim[0] && !bizKey(sim[0].c.bizNo) ? sim[0].c.id : '')}</select>` : '';
-    const ds = base ? diffs(it, base) : [];
+    const ds = base ? bizDiffs(it, base) : [];
     const chg = ds.filter(x => !x.fill).map(x => `<label class="check chg"><input type="checkbox" name="chg${i}_${x.ck}"${x.keep || x.older ? '' : ' checked'}> ${x.lab}: <s>${esc(x.old)}</s> → <b>${esc(x.nw)}</b>${x.keep ? ' <span class="hint">(직접 입력한 값 — 기본 유지)</span>' : x.older ? ' <span class="hint">(더 예전 등록증 — 기본 유지)</span>' : ''}</label>`).join('');
     const fill = ds.filter(x => x.fill).map(x => x.lab).join('·');
     const q = [it.name, it.biz, bizKey(it.biz), it.rep, it.addr, base ? base.name : ''].join(' ').toLowerCase();
@@ -728,9 +795,9 @@ async function bizImport(){
       <td><span class="tag ${['conflict', 'check'].includes(M.kind) ? 'bad' : ''}">${KIND[M.kind]}</span>${base ? ` <b>${esc(base.name)}</b>` : ''}${M.why && M.kind !== 'same' ? `<div class="hint">${esc(M.why)}</div>` : ''}${sel}${fill ? `<div class="hint">빈 칸 채움: ${fill}</div>` : ''}${chg}</td></tr>`;
   };
   openDialog({
-    title: `사업자등록증 ${items.length}건 반영`,
+    title: mode === 'all' ? `사업자등록증 ${items.length}건 (읽어 둔 전체)` : `새 사업자등록증 ${items.length}건 반영`,
     saveLabel: '선택 항목 반영',
-    body: `<p class="hint">폴더의 파일 ${j.total}개 중 ${items.length}건을 읽었습니다${j.failed ? `(읽기 실패 ${j.failed}건)` : ''}. <b>사업자번호가 같으면 기존 업체</b>, 상호만 같고 번호가 다르면 합치지 않습니다. 기존 값과 다른 칸은 고른 것만 바꾸고 이력에 남깁니다.</p>
+    body: `<p class="hint">${mode === 'all' ? `폴더 파일 ${j.total}개 중 읽어 둔 ${items.length}건입니다(글자 인식 없음).` : `새로 올라오거나 바뀐 파일 ${items.length}건입니다(이번에 글자 인식 ${j.read || 0}회). 반영하면 다음부터는 이 파일들이 나오지 않습니다.`} <b>사업자번호가 같으면 기존 업체</b>, 상호만 같고 번호가 다르면 합치지 않습니다. 기존 값과 다른 칸은 고른 것만 바꾸고 이력에 남깁니다.</p>${failHTML}
       <label class="check"><input type="checkbox" name="mail" checked> 메일에서 담당자 후보와 관련업무도 찾기 (업체당 몇 초씩, 담당자는 '후보'로 들어가고 업체 화면에서 확정)</label>
       <div class="pick-bar"><input type="search" data-x-q class="item-q" placeholder="상호·사업자번호·대표자·주소 검색" style="max-width:16rem"><button type="button" class="mini" data-x-pick="all">전체 선택</button><button type="button" class="mini" data-x-pick="none">전체 해제</button><button type="button" class="mini" data-x-pick="new">새 업체만</button><button type="button" class="mini" data-x-pick="old">기존 업체만</button><span class="hint" data-x-pick-n></span></div>
       <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-x-pick-all checked title="보이는 항목 전체 선택 / 해제"></th><th>회사명</th><th>대표자</th><th>사업장 소재지</th><th>판별·반영</th></tr></thead><tbody>
@@ -756,37 +823,78 @@ async function bizImport(){
         const {it, M} = plan[i]; let c = ['same', 'update', 'link'].includes(M.kind) ? M.c : null;
         if(!c && fd.get('to' + i)) c = db.clients.find(x => x.id === fd.get('to' + i)) || null;
         if(c && bizKey(c.bizNo) && bizKey(it.biz) && bizKey(c.bizNo) !== bizKey(it.biz) && !fd.get('to' + i)) c = null;   // 번호가 다른 업체에는 사람이 고른 경우에만
-        if(!c){ c = {id:uid(), name:it.name || it.fileName, bizNo:bizFmt(it.biz || ''), rep:it.rep || '', address:it.addr || '', openDate:it.open || '', industry:[it.type, it.item].filter(Boolean).join(' / '), contact:'', keyword:'', notes:'', createdAt:nowIso(), bizDoc:safeUrl(it.link) ? it.link : '', bizDocAt:it.fileAt || today(), bizHist:[{at:nowIso(), by:me ? me.id : '', file:it.fileName || '', how:'사업자등록증으로 새로 등록'}]}; db.clients.push(c); nNew++; touched.push(c); return; }
-        const ds = diffs(it, c), done = [];
-        ds.forEach(x => { if(!x.fill && !fd.get(`chg${i}_${x.ck}`)) return;
-          if(x.ck === 'name' && x.old){ c.keyword = [...new Set([...String(c.keyword || '').split(/[,;\n]/).map(y => y.trim()).filter(Boolean), x.old])].join(', '); }   // 예전 상호는 검색어로 남김
-          c[x.ck] = x.ck === 'bizNo' ? bizFmt(x.nw) : x.nw; done.push({k:x.lab, old:x.old, nw:x.nw}); });
-        if(!c.industry && (it.type || it.item)) c.industry = [it.type, it.item].filter(Boolean).join(' / ');
-        if(safeUrl(it.link)) c.bizDoc = it.link;
-        if(!c.bizDocAt || (it.fileAt && it.fileAt > c.bizDocAt)) c.bizDocAt = it.fileAt || c.bizDocAt || today();
-        if(done.length){ c.bizHist = [...(c.bizHist || []), {at:nowIso(), by:me ? me.id : '', file:it.fileName || '', changes:done}].slice(-20); c.updatedAt = nowIso(); nChg++; }
+        if(!c){ c = bizNewClient(it); db.clients.push(c); nNew++; touched.push(c); return; }
+        if(bizApplyTo(c, it, x => !!fd.get(`chg${i}_${x.ck}`)).length) nChg++;
         touched.push(c);
       });
+      bizAck([...items, ...fails, ...blank].map(x => x.fileId));              // 보여 준 파일은 반영 여부와 상관없이 '확인함'
       $('#dlg').close(); route = {name:'clientlist', id:null}; commit();
       const msg = `업체 ${touched.length}곳 반영(새 업체 ${nNew}, 정보 변경 ${nChg})`;
       if(typeof logProc === 'function') logProc('drive', '사업자등록증: ' + msg);
       if(!withMail){ toast(msg + '.'); return false; }
-      (async () => {
-        let k = 0;
-        for(const c of touched){
-          k++; toast(`메일 확인 중… ${k}/${touched.length} ${c.name}`);
-          try{
-            const r = await call({scan: primaryKw(c), days: 365});
-            const map = new Map((c.contacts || []).map(p => [p.email, p]));
-            (r.contacts || []).filter(p => p.count >= 2).slice(0,5).forEach(p => { const o = map.get(p.email); map.set(p.email, {...(o || {}), ...p, st:o && o.st ? o.st : contactStatus(c, p.email, false)}); });   // 11/16 A4: 빈도로 확정하지 않음 — 업체 도메인 주소만 확정, 나머지는 후보
-            c.contacts = [...map.values()].sort((a,b) => (b.count || 0) - (a.count || 0));
-            if((r.subjects || []).length) c.recentWork = r.subjects.slice(0,15);
-            c.scannedAt = today();
-          }catch(e){}
-        }
-        commit(); toast(`${msg}. 메일 담당자 후보를 넣었습니다(업체 화면에서 확정).`);
-      })();
+      bizMailScan(touched, msg);
       return false;
     }
   });
 }
+/* 업체별: 파일 이름으로 찾기(글자 인식 없음) → 고른 파일 하나만 읽기 */
+function bizTerms(c){
+  return [...new Set([c.name, ...(c.aliases || []), (c.ext || {}).conm, ...kwList(c).filter(k => !k.includes('@'))].map(x => dupNameKey(normName(x || ''))).filter(x => x.length >= 2))];
+}
+function bizScore(fileName, terms){ const k = dupNameKey(normName(String(fileName || '').replace(/\.[^.]+$/, ''))); return Math.max(0, ...terms.map(t => k.includes(t) ? t.length : 0)); }
+async function bizPick(cid){
+  const c = db.clients.find(x => x.id === cid); if(!c) return;
+  let list;
+  try{ toast('사업자등록증 폴더에서 파일 이름을 찾는 중…'); list = (await bizCall({bizlist:1})).items || []; }
+  catch(e){ toast('파일 목록을 받지 못했습니다: ' + e.message); return; }
+  const terms = bizTerms(c);
+  const rows = list.map(x => ({...x, sc:bizScore(x.fileName, terms)})).sort((a, b) => b.sc - a.sc || String(b.fileAt).localeCompare(String(a.fileAt)));
+  const hit = rows.filter(x => x.sc > 0).length;
+  const tag = x => x.err ? '<span class="tag bad">읽기 실패</span>' : x.read ? `<span class="tag">읽어 둠${x.isNew ? ' · 새 파일' : ''}</span>` : '<span class="tag warn">새 파일 — 고르면 읽음</span>';
+  const li = (x, i) => `<label class="check biz-file" data-n="${esc(dupNameKey(normName(x.fileName)))}"${!hit || x.sc > 0 || i < 15 ? '' : ' hidden'}><input type="radio" name="file" value="${esc(x.fileId)}"${hit && i === 0 ? ' checked' : ''}> ${esc(x.fileName)} <span class="hint">${esc(x.fileAt || '')}</span> ${tag(x)}${safeUrl(x.link) ? ` <a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">보기</a>` : ''}</label>`;
+  openDialog({title:`${c.name} — 사업자등록증에서 채우기`, saveLabel:'이 파일로 채우기',
+    body:`<p class="hint">${hit ? `파일 이름에 업체명(별칭·공식 상호 포함)이 든 파일 <b>${hit}개</b>를 위에 놓았습니다.` : '이름이 맞는 파일이 없습니다 — 최근 파일입니다. 검색칸에 다른 이름을 넣어 보세요.'} 고른 파일 <b>하나만</b> 읽습니다(읽어 둔 파일은 글자 인식 없음).</p>
+      <input type="search" data-x-bq class="item-q" placeholder="파일 이름 검색 (예: 영문명·약칭)" style="max-width:18rem">
+      <div class="biz-files" style="max-height:22rem;overflow:auto;margin-top:.5rem">${rows.length ? rows.map(li).join('') : '<p class="empty">폴더에 파일이 없습니다.</p>'}</div>`,
+    onOpen(f){
+      const q = f.querySelector('[data-x-bq]');
+      q.addEventListener('input', () => { const t = dupNameKey(normName(q.value)); f.querySelectorAll('.biz-file').forEach((el, i) => { el.hidden = t ? !el.dataset.n.includes(t) : !(!hit || rows[i].sc > 0 || i < 15); }); });
+      q.addEventListener('keydown', e => { if(e.key === 'Enter') e.preventDefault(); });
+    },
+    onSave(fd){
+      const id = fd.get('file'); if(!id){ toast('파일을 고르세요.'); return false; }
+      const x = rows.find(r => r.fileId === id);
+      $('#dlg').close();
+      (async () => {
+        toast(x && x.read ? '읽어 둔 내용을 불러옵니다…' : '이 파일 하나만 글자 인식 중… (몇 초~30초)');
+        try{ const j = await bizCall({bizread:id}); if(j.ocr && typeof logProc === 'function') logProc('drive', `사업자등록증 1개 글자 인식(${c.name})`); bizApplyOne(c, j.item); }
+        catch(e){ toast('읽지 못했습니다: ' + e.message); }
+      })();
+      return false;
+    }});
+}
+function bizApplyOne(c, it){
+  const M = bizMatch(it);
+  const other = M.c && M.c.id !== c.id && bizKey(M.c.bizNo) && bizKey(M.c.bizNo) === bizKey(it.biz) ? M.c : null;   // 같은 사업자번호가 다른 업체에 있음
+  const diff = bizKey(c.bizNo) && bizKey(it.biz) && bizKey(c.bizNo) !== bizKey(it.biz);
+  const ds = bizDiffs(it, c);
+  const row = x => `<label class="check chg"><input type="checkbox" name="k_${x.ck}"${(x.fill || !(x.keep || x.older)) && !(other && x.ck === 'bizNo') ? ' checked' : ''}> ${x.lab}: ${x.fill ? '<span class="hint">(빈 칸)</span>' : `<s>${esc(x.old)}</s>`} → <b>${esc(x.nw)}</b>${x.keep ? ' <span class="hint">(직접 입력한 값 — 기본 유지)</span>' : x.older ? ' <span class="hint">(등록증이 더 오래됨 — 기본 유지)</span>' : ''}</label>`;
+  openDialog({title:`${c.name} — 사업자등록증 반영`, saveLabel:'선택한 칸 반영',
+    body:`<p class="hint">파일 ${safeUrl(it.link) ? `<a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">${esc(it.fileName || '')}</a>` : esc(it.fileName || '')}${it.fileAt ? ` · ${esc(it.fileAt)}` : ''} — 읽은 상호 <b>${esc(it.name || '(미인식)')}</b> ${esc(bizFmt(it.biz || ''))}</p>
+      ${other ? `<p class="warn">⚠ 사업자번호가 같은 업체 <b>${esc(other.name)}</b>가 이미 있습니다. 같은 회사면 업체 정리에서 <b>합치기</b>를 쓰세요(사업자번호 칸은 기본 해제).</p>` : ''}
+      ${diff ? `<p class="warn">⚠ 이 업체의 사업자번호(${esc(c.bizNo)})와 등록증 번호가 다릅니다. 다른 회사·지점 파일이 아닌지 확인하세요.</p>` : ''}
+      ${M.kind === 'check' ? `<p class="warn">⚠ ${esc(M.why)}</p>` : ''}
+      ${ds.length ? ds.map(row).join('') : '<p>바뀐 칸이 없습니다. 반영하면 등록증 링크·날짜만 연결합니다.</p>'}`,
+    onSave(fd){
+      const done = bizApplyTo(c, it, x => fd.get('k_' + x.ck) === 'on', '등록증 확인(바뀐 칸 없음)');
+      bizAck([it.fileId]);
+      if(typeof logProc === 'function') logProc('drive', `사업자등록증: ${c.name} ${done.length ? done.map(x => x.k).join('·') + ' 반영' : '등록증 연결'}`);
+      toast(done.length ? `${done.map(x => x.k).join('·')}을(를) 반영했습니다.` : '등록증 링크·날짜를 연결했습니다.');
+    }});
+}
+
+
+document.addEventListener('click', e => {                                    // 11/20 업체별 사업자등록증 (업체 화면·업체 정리)
+  const b = db && e.target.closest('[data-biz-pick]'); if(!b || e.target.closest('dialog')) return;
+  e.preventDefault(); bizPick(b.dataset.bizPick);
+});

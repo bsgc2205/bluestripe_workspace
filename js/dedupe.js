@@ -420,7 +420,7 @@ function clientCleanHTML(){
     const d = X.dup.get(c.id) || [], acts = [];
     if(s === 'arch') acts.push(btn('cc-unarch', c.id, '보관 해제'));
     else {
-      if(is.includes('nobiz') || is.includes('badbiz')) acts.push(btn('cc-biz', c.id, '번호 입력', true));
+      if(is.includes('nobiz') || is.includes('badbiz')) acts.push(btn('biz-pick', c.id, '등록증에서 채우기', true) + btn('cc-biz', c.id, '번호 입력'));   // 11/20 파일 이름 검색 → 그 파일만 읽기
       if(is.includes('name')){ if(officialName(c) && dupNameKey(officialName(c)) !== dupNameKey(c.name)) acts.push(btn('cc-offname', c.id, '공식 상호로', true)); acts.push(btn('cc-nameok', c.id, '지금 이름 유지')); }
       if(is.includes('samebiz') || is.includes('similar') || is.includes('norec')) acts.push(btn('cc-merge', c.id, '다른 업체에 합치기', is.includes('samebiz')));
       if(is.includes('role')) acts.push(btn('cc-role', c.id + '|fwd', '포워더') + btn('cc-role', c.id + '|shipper', '화주'));
@@ -436,8 +436,8 @@ function clientCleanHTML(){
       <td class="cc-acts">${acts.join('')}</td></tr>`;
   };
   return `<header class="client-head"><div><h2>업체 정리</h2><p class="client-meta">한 회사 = 한 업체(기준: 사업자등록번호, 보조: 통관고유부호). 약칭·영문명·옛 상호는 별칭으로, 거래가 끝난 업체는 보관으로 정리합니다.</p></div>
-      <div class="client-act"><button class="ghost" data-biz-import>사업자등록증 폴더 반영</button><button class="ghost" data-client-ext="all">업체 정보 일괄 확인</button><button class="ghost" data-client-dup>중복 점검</button><button class="ghost" data-cc-csv>기준 목록 CSV</button><button class="primary" data-clist-clean>목록으로</button></div></header>
-    <p class="hint">확정 ${rows.filter(x => x.st === 'ok').length} · 임시 ${n('temp')} · 보관 ${n('arch')} — 순서: ① 사업자등록증 폴더 반영으로 번호 채우기 → ② 업체 정보 일괄 확인(통관고유부호·휴폐업) → ③ 아래 문제별로 합치기·보관 → ④ 기준 목록 CSV로 월 1회 점검.</p>
+      <div class="client-act"><button class="ghost" data-biz-import title="사업자등록증 폴더에 새로 올라오거나 바뀐 파일만 읽어 반영합니다(읽어 둔 파일은 다시 읽지 않음). 업체 하나는 줄의 ‘등록증에서 채우기’">새 사업자등록증 반영</button><button class="ghost" data-client-ext="all">업체 정보 일괄 확인</button><button class="ghost" data-client-dup>중복 점검</button><button class="ghost" data-cc-csv>기준 목록 CSV</button><button class="primary" data-clist-clean>목록으로</button></div></header>
+    <p class="hint">확정 ${rows.filter(x => x.st === 'ok').length} · 임시 ${n('temp')} · 보관 ${n('arch')} — 순서: ① 새 사업자등록증 반영·줄마다 ‘등록증에서 채우기’로 번호 채우기 → ② 업체 정보 일괄 확인(통관고유부호·휴폐업) → ③ 아래 문제별로 합치기·보관 → ④ 기준 목록 CSV로 월 1회 점검.</p>
     <div class="tabs">${tabs.map(([k, l]) => { const c = n(k); return c || k === 'all' ? `<button class="tab${ccTab === k ? ' on' : ''}${['samebiz', 'badbiz', 'closed'].includes(k) && c ? ' act' : ''}" data-cc-tab="${k}">${esc(l)} <span class="cnt">${c}</span></button>` : ''; }).join('')}</div>
     ${list.length ? `<div class="table-wrap"><table class="grid cc-table"><thead><tr><th>업체·별칭</th><th>사업자번호</th><th>상태</th><th>역할</th><th>기록</th><th>문제</th><th>처리</th></tr></thead><tbody>${list.slice(ccPage * 20, ccPage * 20 + 20).map(row).join('')}</tbody></table></div>${pagerHTML('cc-page', ccPage, list.length)}` : '<p class="empty">해당하는 업체가 없습니다.</p>'}`;
 }

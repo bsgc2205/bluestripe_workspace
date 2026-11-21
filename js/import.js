@@ -21,7 +21,7 @@ async function readBizFile(file, onMsg){
     const page = await pdf.getPage(1);
     text = joinPdfItems((await page.getTextContent()).items);
   }
-  if(text.replace(/\s/g,'').length < 30) throw new Error('글자가 들어 있지 않은 스캔본·사진입니다. Drive의 BSGC-Backup/사업자등록증 폴더에 올린 뒤 거래업체 리스트의 ‘사업자등록증 폴더 반영’으로 읽어 주세요');
+  if(text.replace(/\s/g,'').length < 30) throw new Error('글자가 들어 있지 않은 스캔본·사진입니다. Drive의 BSGC-Backup/사업자등록증 폴더에 올린 뒤 업체 화면의 ‘사업자등록증에서 채우기’로 그 파일만 읽어 주세요');
   return parseBiz(text);
 }
 function parseBiz(t){
@@ -53,7 +53,7 @@ function openDataMenu(){
         <label>웹 앱 주소<input name="mailEndpoint" value="${esc(mail.endpoint)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
         <label>이 PC의 토큰 <span class="hint">(업무 데이터에는 저장되지 않고 이 PC 브라우저에만 남습니다. 직원 PC는 '계정 관리 → PC 연결'의 연결 코드로 받습니다)</span><input type="password" name="mailToken" value="${esc(mail.token)}" autocomplete="off"></label>
       </div>
-      ${isAdmin() ? `<label class="check"><input type="checkbox" name="syncZip"${db.settings.syncZip ? ' checked' : ''}> Drive 저장 압축 (파일이 약 4분의 1로 줄어 저장·불러오기가 빨라짐) — <b>모든 PC·휴대폰을 v20261114b 이후로 새로 고친 뒤</b> 켜세요. 예전 화면은 압축된 파일을 열지 못합니다.</label>` : ''}
+      ${isAdmin() ? `<label class="check"><input type="checkbox" name="syncZip"${db.settings.syncZip !== false ? ' checked' : ''}> Drive 저장 압축 (파일이 약 4분의 1로 줄어 저장·불러오기가 빨라짐) — <b>모든 PC·휴대폰을 v20261114b 이후로 새로 고친 뒤</b> 켜세요. 예전 화면은 압축된 파일을 열지 못합니다.</label>` : ''}
       <div class="dlg-section">
         <h4>내 비밀번호 변경 (${esc(me.id)})</h4>
         <p class="hint">Drive 자동 저장을 쓰면 다른 PC에도 바로 반영됩니다. Drive의 이전 버전·날짜별 사본은 예전 비밀번호로 열립니다.</p>

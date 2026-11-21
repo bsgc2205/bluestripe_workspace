@@ -972,6 +972,7 @@ function autoAttachMails0(){
 let mailRun = null;
 /* 11/17: 창을 열어 둔 동안에도 15분마다(보이는 창만) 메일·수집기 상태를 다시 받고, 다른 창에 있다 돌아오면 15분 지났을 때 바로 받음 */
 const MAIL_AUTO_MS = 15 * 60 * 1000; let mailTryAt = 0;
+const autoRunAt = {collect:Date.now(), uni:Date.now()};                  // 로그인 때 한 번 돌리므로 그 시각부터 셈
 function mailAutoOk(){ return typeof db !== 'undefined' && db && (db.settings.mail || {}).endpoint && !document.hidden && !mailRun && !($('#dlg') && $('#dlg').open); }
 setInterval(() => { if(mailAutoOk() && mailTryAt && Date.now() - mailTryAt >= MAIL_AUTO_MS - 5000) loadMail(false); }, 60 * 1000);
 document.addEventListener('visibilitychange', () => { if(mailAutoOk() && mailTryAt && Date.now() - mailTryAt >= MAIL_AUTO_MS) loadMail(false); });
@@ -986,6 +987,15 @@ async function loadMail0(manual){
   try{
     const j = await collectApi({mails:1, days:60});
     mailCache = (j.items || []).map(cleanMailBL); mailCollectorAt = j.collectorAt || ''; mailLoadedAt = Date.now();
+    if(typeof markRun === 'function') markRun('mail', true);
+    if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
+    if(typeof autoPcCheck === 'function') await autoPcCheck();
+    if(manual || typeof isAutoPc !== 'function' || isAutoPc()){          // 11/20: 자동 처리 PC가 따로 있으면 이 PC는 메일 목록만 새로 받음(자동 접수·연결·단계 반영은 그 PC가, 직접 누르면 이 PC도)
+    if(typeof autoBeat === 'function') autoBeat();
+    if(!manual){                                                          // 11/20: 창을 계속 열어 두는 자동 처리 PC — Drive 자료·필증·정산서 6시간마다, UNI-PASS 1시간마다(12시간 지난 건만)
+      if(Date.now() - autoRunAt.collect > 6 * 3600e3){ autoRunAt.collect = Date.now(); setTimeout(() => runCollect(false), 3000); }
+      if(Date.now() - autoRunAt.uni > 3600e3){ autoRunAt.uni = Date.now(); setTimeout(() => refreshCustoms(false), 8000); }
+    }
     const fx = fixBogusLinks(); trimMailFiles(); const dc = typeof demoteContacts === 'function' ? demoteContacts() : 0;   // 11/16 A4 한 번 정리
     const sa = fixSharedAddr();                                          // 11/16 b 공용 주소·잘못 잡힌 업체 한 번 정리
     if(sa.list.length) logProc('move', `공용 주소 정리: 검색어 ${sa.kw}개 뺌, 담당자 ${sa.cc}명 후보로, 기록 ${sa.rec}건 업체 정정 — ${sa.list.slice(0, 6).join(' · ')}${sa.list.length > 6 ? ' …' : ''}`);
@@ -994,14 +1004,14 @@ async function loadMail0(manual){
     const ft = fixTypes();                                               // 11/16 업무 유형 한 번 다시 보기
     if(ft.n || ft.chk) logProc('move', `업무 유형: ${ft.n}건 자동 정정${ft.chk ? `, ${ft.chk}건 확인함 '업무 유형 확인'` : ''}`);
     if(dc && typeof logProc === 'function') logProc('move', `담당자 ${dc}명을 '후보'로 내림(다른 업체·포워더 주소이거나 여러 업체에 같이 있음) — 업체 화면에서 확정 가능`);
-    if(typeof markRun === 'function') markRun('mail', true);
-    if(typeof loadReviews === 'function') await loadReviews();            // 검토 문의·필증 의뢰 메일 전문 (11/12)
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
     const rt = typeof routeRecords === 'function' ? routeRecords() : 0;      // 의뢰처·청구처 (11/14 P2)
     if(fx || dc || pm.cl || pm.rec || dd || sa.kw || sa.cc || sa.rec || ft.n || ft.chk || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu || rt){ pruneThreads(); commit(); }
     if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
-    if(fx || n || made.length || ln || cs || ev.done || cu){ const tmsg = [fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '); toast(tmsg); logProc('mail', tmsg); }
+    if(fx || n || made.length || ln || cs || ev.done || cu){ const tmsg = [fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '); logProc('mail', tmsg);
+      toast('메일 자동 처리: ' + [made.length && `접수 ${made.length}`, (n + ln) && `연결 ${n + ln}`, cs && `단계 ${cs}`, ev.done && `완료 ${ev.done}`, cu && `유의사항 ${cu}`, fx && `잘못 붙은 메일 정리 ${fx}`].filter(Boolean).join(' · ') + ' — 자세한 내용은 관리 › 처리 기록'); }   // 11/20: 토스트는 한 줄, 문장은 처리 기록에
+    }
   }catch(e){
     mailErr = `메일을 불러오지 못했습니다 (${e.message}).`;
     if(typeof markRun === 'function') markRun('mail', false, e.message);

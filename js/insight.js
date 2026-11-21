@@ -209,10 +209,49 @@ function runStatAllHTML(){
     ${pcs.map(([id, p]) => `<tr${id === pcId() ? ' class="me-row"' : ''}><td>${esc(p.name || '')}${id === pcId() ? ' <span class="tag">이 PC</span>' : ''}<div class="hint">${esc(p.label || '')}</div></td>${Object.keys(RUN_KEYS).map(k => `<td>${cell((p.stat || {})[k])}</td>`).join('')}<td class="hint">${esc(ago(p.at))}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
+/* ---------- 11/20 자동 처리 PC ----------
+   settings.autoPc(공유) = 자동 수집·필증·정산서·UNI-PASS·공공데이터·메일 자동 접수를 돌릴 PC 하나. 비어 있으면 예전처럼 모든 PC가 돌림.
+   지정 PC는 자동 처리할 때 30분마다 Apps Script에 '살아 있음'(runstat)을 남기고, 다른 PC는 20분마다 그것을 보고
+   70분 넘게 소식이 없으면(PC 꺼짐·창 닫힘) 대신 자동 처리한다. 다른 PC도 버튼을 직접 누르면 그 작업은 그 PC에서 한다. */
+const AUTO_HB_MS = 30 * 60e3, AUTO_TAKE_MS = 70 * 60e3;
+let autoChkAt = 0;
+function pcKey(id){ return String(id || '').replace(/[^\w\-]/g, '').slice(0, 40); }
+function autoPcSet(){ return (db && db.settings.autoPc) || ''; }
+function autoPcInfo(){ const a = autoPcSet(); return a && rsAll.data ? rsAll.data[pcKey(a)] || null : null; }
+function isAutoPc(){
+  const a = autoPcSet(); if(!a || a === pcId()) return true;
+  if(!rsAll.at || !rsAll.data) return !!rsAll.at;                           // 다른 PC 기록을 못 받으면 예전처럼 이 PC도 처리
+  const p = autoPcInfo(), t = p && p.at ? Date.parse(p.at) : 0;
+  return !t || Date.now() - t > AUTO_TAKE_MS;
+}
+async function autoPcCheck(){
+  const a = autoPcSet(); if(!a || a === pcId()) return;
+  if(rsAll.at && Date.now() - autoChkAt < 20 * 60e3) return;
+  autoChkAt = Date.now(); await loadRunStatAll();
+}
+function autoBeat(){ if(autoPcSet() === pcId() && Date.now() - rsPostAt > AUTO_HB_MS) postRunStat(); }
+function autoPcHTML(){
+  const a = autoPcSet(), me1 = a === pcId(), p = autoPcInfo(), take = a && !me1 && isAutoPc();
+  const who = !a ? '<b>지정 안 함</b> — Workspace를 연 모든 PC가 각자 자동 처리(중복 글자 인식·UNI-PASS 조회·저장 충돌이 생길 수 있음)'
+    : me1 ? '<b>이 PC</b>' : `<b>${esc(p ? p.name || '' : '')}</b> <span class="hint">${esc(p ? p.label || '' : '')}${p && p.at ? ` · 마지막 소식 ${esc(ago(p.at))}` : ' · 소식 없음'}</span>`;
+  const st = !a || me1 ? '이 PC가 자동 처리합니다.' : take ? '<b class="bad">지정 PC 소식이 70분 넘게 없어 이 PC가 대신 자동 처리 중</b>' : '이 PC는 메일 목록만 새로 받고, 자동 처리는 지정 PC가 합니다(버튼을 직접 누르면 이 PC에서 실행).';
+  return `<section class="auto-pc" style="margin:.2rem 0 1rem"><div class="sec-head"><h3>자동 처리 PC</h3><span class="hint">늘 켜 두는 PC 한 대에서 Workspace 창을 열어 두고 지정하세요</span></div>
+    <p>${who}</p><p class="hint">${st}</p>
+    ${isAdmin() ? `<p>${me1 ? '' : '<button class="mini strong" data-auto-pc="me">이 PC를 자동 처리 PC로</button> '}${a ? '<button class="mini" data-auto-pc="off">지정 해제(모든 PC)</button>' : ''}</p>` : ''}</section>`;
+}
+document.addEventListener('click', e => {
+  const b = db && e.target.closest('[data-auto-pc]'); if(!b || e.target.closest('dialog')) return;
+  if(!isAdmin()) return;
+  if(b.dataset.autoPc === 'me'){ db.settings.autoPc = pcId(); postRunStat(); toast('이 PC를 자동 처리 PC로 정했습니다. 다른 PC는 메일 목록만 새로 받습니다.'); }
+  else { delete db.settings.autoPc; toast('자동 처리 PC 지정을 풀었습니다. 모든 PC가 자동 처리합니다.'); }
+  if(typeof logProc === 'function') logProc('move', b.dataset.autoPc === 'me' ? `자동 처리 PC 지정: ${me ? me.name : ''} (${pcLabel()})` : '자동 처리 PC 지정 해제');
+  commit();
+});
+
 const viewStatusBase5 = viewStatus;
 viewStatus = function(){
   if(!rsAll.at || Date.now() - rsAll.at > 60e3) setTimeout(loadRunStatAll, 0);
-  return viewStatusBase5() + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>모든 PC</h3><span class="hint">각 PC가 Apps Script에 남긴 마지막 상태 (성공↔실패가 바뀔 때와 3시간마다 보고)</span></div><div id="rsAll">${runStatAllHTML()}</div></section>`;
+  return viewStatusBase5().replace('</header>', '</header>' + autoPcHTML()) + `<section style="margin-top:1.5rem"><div class="sec-head"><h3>모든 PC</h3><span class="hint">각 PC가 Apps Script에 남긴 마지막 상태 (성공↔실패가 바뀔 때와 3시간마다 보고)</span></div><div id="rsAll">${runStatAllHTML()}</div></section>`;
 };
 
 document.addEventListener('click', e => {

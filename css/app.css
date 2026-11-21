@@ -706,3 +706,10 @@ label.check.chg input{margin-right:.3rem}
 .stl-row{flex-wrap:wrap;gap:.5rem;align-items:center;margin:.3rem 0}
 .stl-row label{display:inline-flex;gap:.3rem;align-items:center;margin:0}
 .stl-row input[type=month]{width:auto}
+/* 11/20 확인함 묶음 아래 작은 탭 · 사업자등록증 파일 고르기 */
+.chk-sub{border-bottom:0;margin:-.3rem 0 .5rem;gap:.2rem}
+.chk-sub .tab.sm{font-size:.82rem;padding:.2rem .55rem;border:1px solid var(--line);border-radius:999px;margin-bottom:0}
+.chk-sub .tab.sm.on{border-color:var(--accent);background:var(--accent-weak, rgba(0,0,0,.04))}
+.biz-file{display:flex;gap:.4rem;align-items:baseline;padding:.25rem 0;border-bottom:1px dashed var(--line)}
+.biz-file[hidden]{display:none}
+p.warn{color:var(--stamp);margin:.4rem 0}
