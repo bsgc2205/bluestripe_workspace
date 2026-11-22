@@ -170,7 +170,14 @@ function ccctSplit(list, it){
   return {rel, cond};
 }
 const ccctSig = xs => xs.map(x => x.law + '/' + x.org).sort().join('|');
+/* 11/22 c: 품목 알림이 새로 생기면 품목 변경 표시(it.chg — 업체 화면 N) */
+const ALERT_CHG = {ccct:'세관장확인 변경', trrt:'세율 변경', chem:'화학물질 분류', hs:'HS 부호 확인', food:'식품원재료 조건'};
 function itemAlerts(it, prev, cur){
+  const before = new Set((db.alerts || []).map(a => a.id));
+  itemAlerts0(it, prev, cur);
+  (db.alerts || []).filter(a => !before.has(a.id) && a.tid === it.id && ALERT_CHG[a.kind]).forEach(a => { if(typeof itemChg === 'function') itemChg(it, ALERT_CHG[a.kind]); });
+}
+function itemAlerts0(it, prev, cur){
   const nm = `${it.name} (${clientName(it.clientId)}${it.hs ? ', HS ' + it.hs : ''})`;
   const p0 = prev || {};
   if(cur.ccct && !cur.ccct.err){

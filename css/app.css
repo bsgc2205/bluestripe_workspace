@@ -716,3 +716,30 @@ p.warn{color:var(--stamp);margin:.4rem 0}
 /* 11/21 의뢰처·청구처 상태 */
 .tag.via small{font-weight:400;opacity:.85}
 .tag.via .st-re,.tag.via .st-none{color:var(--stamp);opacity:1}
+/* 11/22 c 업체 화면 패널·N 표시 */
+.client-more{position:relative}
+.client-more>summary{list-style:none;cursor:pointer;padding:.42rem .8rem;border:1px solid var(--line);border-radius:6px;font-size:.9rem}
+.client-more>summary::-webkit-details-marker{display:none}
+.client-more-in{position:absolute;right:0;top:calc(100% + .3rem);z-index:20;display:flex;flex-direction:column;gap:.3rem;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.5rem;box-shadow:0 6px 18px rgba(0,0,0,.12);min-width:11rem}
+.cpanel-bar{display:flex;flex-wrap:wrap;gap:.4rem;margin:1rem 0 .25rem}
+.cp-btn{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--line);background:transparent;color:inherit;border-radius:999px;padding:.3rem .75rem;font-size:.86rem;cursor:pointer}
+.cp-btn.btn{border-radius:6px}
+.cp-btn.on{border-color:var(--accent);background:var(--chip)}
+.cp-btn.warn{border-color:var(--chk)}
+.cp-n{font-weight:700;font-variant-numeric:tabular-nums}
+.cp-sub{color:var(--chk);font-size:.8rem}
+.cp-arr{color:var(--muted);font-size:.75rem}
+.cp-new{display:inline-block;background:var(--stamp);color:#fff;border-radius:4px;padding:0 .3rem;font-size:.72rem;font-weight:700;line-height:1.35}
+.cpanels{display:flex;flex-direction:column;gap:.75rem;margin:.5rem 0 1rem}
+.cpanel{position:relative;border:1px solid var(--line);border-radius:8px;padding:.25rem .9rem .75rem;background:var(--surface)}
+.cpanel>.cp-close{position:absolute;right:.6rem;top:.55rem;z-index:2}
+.cpanel>section,.cpanel>details{margin-top:0}
+.cpanel .sec-head{padding-right:5rem}
+.cpanel>.route-line{margin:.6rem 5rem .2rem 0}
+.req-line{margin:.45rem 0}
+.req-line b{color:var(--chk)}
+tr.is-new td{background:var(--stamp-bg)}
+.rec.sp{background:linear-gradient(90deg,var(--stamp-bg),transparent 60%)}
+.proc.is-ov{border-left:3px solid var(--prog);padding-left:.7rem}
+.rec-sum-line{margin:.5rem 0 .25rem;font-size:.88rem;color:var(--muted)}
+.rec-sum-line .sp-n{color:var(--stamp)}

@@ -133,7 +133,7 @@ function recordHTML(r, o = {}){
   const moreInner = o.compact ? '' : (missDocs ? '' : dsHtml) + (guideTop ? '' : guide) + tags + linkHtml + stageWhyHTML(r) + filesHTML(r) + mailsHTML(r);
   const nM = (r.mails || []).length, nF = (r.files || []).filter(f => f.name).length;
   const more = moreInner.trim() ? `<details class="more" data-more-rec="${esc(r.id)}"${moreOpen.has(r.id) ? ' open' : ''}><summary>더보기${nM ? ` · 메일 ${nM}` : ''}${nF ? ` · 자료 ${nF}` : ''}${guide && !guideTop ? ' · 유사 업무' : ''}</summary>${moreInner}</details>` : '';
-  return `<article class="rec b-${band.k}" title="${esc(band.t)}">
+  return `<article class="rec b-${band.k}${r.special ? ' sp' : ''}" title="${esc(band.t)}">
     <div class="rec-date">${dateCol}${byLine}</div>
     <div class="rec-body">
       <div class="rec-head">${caseTagHTML(r)}${active ? `<span class="status ${esc(r.status)}">${esc(r.status)}</span>` : ''}${r.special ? '<span class="stamp">특이</span>' : ''}<h4>${hl(r.title)}</h4></div>
@@ -157,7 +157,7 @@ function recordHTML(r, o = {}){
   </article>`;
 }
 function procHTML(p, o = {}){
-  return `<section class="proc${o.common ? ' is-common' : ''}">
+  return `<section class="proc${o.common ? ' is-common' : ''}${isOverlay(p) ? ' is-ov' : ''}">
     <header><span class="tag type">${esc(p.type)}</span><h4>${hl(p.title)}</h4>${o.common ? '<span class="note">공통 절차</span>' : ''}${isOverlay(p) ? '<span class="note">업체 특이사항</span>' : ''}${o.showClient ? `<span class="note">${esc(clientName(p.clientId))}</span>` : ''}<span class="tag">${esc(procVerStr(p))}</span>
       <span class="p-act"><button class="mini" data-start-proc="${esc(p.id)}">이 절차로 시작</button><button class="mini" data-edit-proc="${esc(p.id)}">수정</button></span></header>
     ${overlayHeadHTML(p)}
@@ -404,31 +404,29 @@ function viewClient(){
   const ex = c.ext || {}, nts = ex.nts;
   const extLine = [nts ? `<span class="kc-chip ${nts.cd === '01' ? 'ok' : 'bad'}" title="국세청 ${esc(nts.at)} 확인">${esc(nts.stt || nts.tax || '국세청 확인')}${nts.cd === '01' && nts.tax ? ' · ' + esc(nts.tax) : ''}</span>` : '', ex.ecmUse ? `<span class="kc-chip ${ex.ecmUse === 'Y' ? 'ok' : 'bad'}">통관고유부호 ${ex.ecmUse === 'Y' ? '사용' : '사용 안 함'}</span>` : '', ex.at ? `<span class="hint">${esc(ex.at.slice(0, 10))} 확인</span>` : ''].filter(Boolean).join(' ');
   const rel = relationOf(c);
+  const meta2 = [meta, c.address && esc(c.address), c.openDate && '개업 ' + esc(c.openDate)].filter(Boolean).join(' / ');
+  const ip = cpanelInfo(c, items);
   return `<header class="client-head">
-      <div><h2>${esc(c.name)}</h2>${meta ? `<p class="client-meta">${meta}</p>` : ''}${extLine ? `<div class="ext-row">${extLine} <button class="mini" data-client-ext="${esc(c.id)}">다시 확인</button></div>` : `<div class="ext-row"><button class="mini" data-client-ext="${esc(c.id)}">통관고유부호·국세청 상태 확인</button></div>`}
+      <div><h2>${esc(c.name)}</h2>${meta2 ? `<p class="client-meta">${meta2}</p>` : ''}${extLine ? `<div class="ext-row">${extLine} <button class="mini" data-client-ext="${esc(c.id)}">다시 확인</button></div>` : `<div class="ext-row"><button class="mini" data-client-ext="${esc(c.id)}">통관고유부호·국세청 상태 확인</button></div>`}
         <div class="rel" title="${esc(rel.basis)}">${rel.longTerm ? '<span class="badge-long">1년 이상 거래</span>' : '<span class="badge-other">1년 미만·확인 필요</span>'}<span>${esc(relationText(rel))}</span>${cautionBadge(c)}</div>${(() => { const x = clientCaution(c); return x.level === '보통' ? '' : `<p class="caution-why">주의 등급 ${esc(x.level)}: ${esc(x.reasons.join(' · '))}</p>`; })()}</div>
       <div class="client-act">
-        
         <a class="btn" href="${esc(drive)}" target="_blank" rel="noopener noreferrer">Drive에서 찾기</a>
-        ${safeUrl(c.bizDoc) ? `<a class="btn" href="${esc(c.bizDoc)}" target="_blank" rel="noopener noreferrer">사업자등록증</a>` : ''}
-        <button class="ghost" data-biz-pick="${esc(c.id)}" title="사업자등록증 폴더에서 이 업체 이름이 든 파일을 찾아 고른 파일 하나만 읽고 빈 칸·바뀐 칸을 채웁니다">${c.bizDoc ? '등록증 다시 읽기' : '사업자등록증에서 채우기'}</button>
-        <button class="ghost" data-client-report="${esc(c.id)}" title="기간을 골라 이 업체의 업무 처리 내역서를 PDF로 만들거나 메일 본문 표로 복사">업무 내역서</button>
-        <button class="ghost" data-letter data-client="${esc(c.id)}">사유서 작성</button>
-        <button class="ghost" data-edit-client="${esc(c.id)}">업체 정보 수정</button>
+        ${cpanelBtn(c, ip.find(x => x.k === 'items'), true)}
+        ${safeUrl(c.bizDoc) ? `<a class="btn ghost" href="${esc(c.bizDoc)}" target="_blank" rel="noopener noreferrer">사업자등록증</a>` : ''}
+        <details class="client-more"><summary class="ghost">업체 작업 ▾</summary><div class="client-more-in">
+          <button class="ghost" data-biz-pick="${esc(c.id)}" title="사업자등록증 폴더에서 이 업체 이름이 든 파일을 찾아 고른 파일 하나만 읽고 빈 칸·바뀐 칸을 채웁니다">${c.bizDoc ? '등록증 다시 읽기' : '사업자등록증에서 채우기'}</button>
+          <button class="ghost" data-client-report="${esc(c.id)}" title="기간을 골라 이 업체의 업무 처리 내역서를 PDF로 만들거나 메일 본문 표로 복사">업무 내역서</button>
+          <button class="ghost" data-letter data-client="${esc(c.id)}">사유서 작성</button>
+          <button class="ghost" data-edit-client="${esc(c.id)}">업체 정보 수정</button>
+        </div></details>
       </div>
     </header>
     ${typeof clientMergedHTML === 'function' ? clientMergedHTML(c) : ''}
     ${typeof clientRouteHTML === 'function' ? clientRouteHTML(c) : ''}
-    ${c.address || c.openDate ? `<p class="client-meta">${[c.address, c.openDate && '개업 ' + c.openDate].filter(Boolean).map(esc).join(' / ')}</p>` : ''}
     ${c.notes ? `<p class="client-notes">${esc(c.notes)}</p>` : ''}
     ${typeof clientInsightHTML === 'function' ? clientInsightHTML(c) : ''}
-    ${typeof clientPayHTML === 'function' ? clientPayHTML(c) : ''}
-    ${clientContactsSection(c)}
-    ${kcSection(c)}
-    ${clientItemsSection(c, items)}
-    ${amendSection(c)}
-    ${clientInqSection(c)}
-    ${typeof clientUpdatesSection === 'function' ? clientUpdatesSection(c) : ''}
+    <div class="cpanel-bar" role="group" aria-label="업체 자료 펼치기">${ip.filter(x => x.k !== 'items').map(x => cpanelBtn(c, x)).join('')}</div>
+    ${cpanelsHTML(c, items, ip)}
     <div class="chips" role="group" aria-label="업무 유형">${['전체', ...types].map(t => `<button class="chip${t === typeFilter ? ' on' : ''}" data-chip="${esc(t)}">${esc(t)}</button>`).join('')}</div>
     <div class="client-grid">
       <section>
@@ -440,35 +438,122 @@ function viewClient(){
       </section>
       <section>
         <div class="sec-head"><h3>업무 히스토리 <span class="cnt">${fr.length}건${actCount ? `, 진행 ${actCount}건` : ''}${spCount ? `, 특이 ${spCount}건` : ''}</span></h3><button class="mini" data-new-rec data-client="${esc(c.id)}">기록 추가</button></div>
-        ${(() => {                                                          // 11/14 P3: 최근 10건 + 검색 + 더 보기
+        ${(() => {                                                          // 11/22 c: 진행 중은 항상 전부(누락 방지), 완료는 최근 5건 + 더 보기 + 검색, 완료 요약 한 줄
           if(!fr.length) return '<p class="empty">이 조건의 기록이 없습니다.</p>';
-          const q = (clientRecQ.cid === c.id ? clientRecQ.q : '').trim().toLowerCase(), lim = clientRecLimit[c.id] || 10;
+          const q = (clientRecQ.cid === c.id ? clientRecQ.q : '').trim().toLowerCase(), lim = clientRecLimit[c.id] || REC_DONE_TOP;
           const hit = q ? fr.filter(r => [r.title, r.bl, r.refNo, r.caseNo, ...(r.refs || []).map(x => x.no), r.summary, r.specialNote, (r.tags || []).join(' ')].join(' ').toLowerCase().includes(q)) : fr;
-          return `${fr.length > 10 ? `<div class="rec-q"><input type="search" id="cRecQ" data-cid="${esc(c.id)}" class="item-q" placeholder="이 업체 기록 검색 (제목·B/L·신고번호·태그)" value="${esc(clientRecQ.cid === c.id ? clientRecQ.q : '')}">${q ? ` <span class="hint">${hit.length}건 찾음</span>` : ''}</div>` : ''}
-            ${hit.slice(0, lim).map(r => recordHTML(r)).join('') || '<p class="empty">찾는 기록이 없습니다.</p>'}
-            ${hit.length > lim ? `<p class="more-row"><button class="ghost" data-crec-more="${esc(c.id)}">${Math.min(20, hit.length - lim)}건 더 보기</button> <span class="hint">남은 ${hit.length - lim}건</span></p>` : ''}`;
+          const act = hit.filter(r => r.status !== '완료'), done = hit.filter(r => r.status === '완료');
+          const allDone = fr.filter(r => r.status === '완료'), lastDone = allDone.map(recDate).filter(Boolean).sort().slice(-1)[0], since = addPeriod(today(), -12, 'm');
+          const sum = allDone.length ? `<p class="rec-sum-line">완료 ${allDone.length}건 · 최근 12개월 ${allDone.filter(r => recDate(r) >= since).length}건${lastDone ? ` · 마지막 완료 ${esc(lastDone)}` : ''}${allDone.filter(r => r.special).length ? ` · <b class="sp-n">특이 ${allDone.filter(r => r.special).length}건</b>` : ''}</p>` : '';
+          return `${sum}${fr.length > REC_DONE_TOP ? `<div class="rec-q"><input type="search" id="cRecQ" data-cid="${esc(c.id)}" class="item-q" placeholder="이 업체 기록 검색 (제목·B/L·신고번호·태그)" value="${esc(clientRecQ.cid === c.id ? clientRecQ.q : '')}">${q ? ` <span class="hint">${hit.length}건 찾음</span>` : ''}</div>` : ''}
+            ${act.length ? `<h4 class="sub">진행 중 ${act.length}건</h4>${act.map(r => recordHTML(r)).join('')}` : ''}
+            ${done.length ? `${act.length ? `<h4 class="sub">완료</h4>` : ''}${done.slice(0, lim).map(r => recordHTML(r)).join('')}` : ''}
+            ${!act.length && !done.length ? '<p class="empty">찾는 기록이 없습니다.</p>' : ''}
+            ${done.length > lim ? `<p class="more-row"><button class="ghost" data-crec-more="${esc(c.id)}">${Math.min(20, done.length - lim)}건 더 보기</button> <span class="hint">남은 완료 ${done.length - lim}건</span></p>` : ''}`;
         })()}
       </section>
     </div>`;
 }
 
+/* ---------- 11/22 c 업체 화면 패널: 품목·요건·담당자·관세 납부·정정·KC·질의·자료 갱신은 버튼을 눌러 같은 화면 위쪽에 펼침 ----------
+   버튼에 건수와 주의 표시(⚠)만 — 통관을 막는 요건(검역·세관장확인·화학물질·전기·약사)은 접혀 있어도 보이게.
+   N: 이 직원이 마지막으로 품목 패널을 펼친 뒤 새로 생기거나 바뀐 품목(본인이 바꾼 것은 제외). 펼치면 저절로 지워짐. */
+const REC_DONE_TOP = 5;
+const REQ_CATS = [['검역·식품', /검역|식물방역|가축전염병|수입식품|식품위생|축산물|사료|수산물|동물|식물|농산물/], ['화학물질', /화평법|화관법|화학물질|유해화학|살생물|CAS|성분\s*등록/i], ['전기·KC', /전기용품|전기\s*안전|전파법|(?<![A-Z])KC(?![A-Z])|어린이제품|생활용품/i], ['약사·화장품', /약사법|의약|의료기기|화장품|위생용품|마약/]];
+let cpanelOpen = (() => { try{ return JSON.parse(localStorage.getItem('bsgc-cpanel') || '{}') || {}; }catch(e){ return {}; } })();
+function cpanelIs(cid, k){ return (cpanelOpen[cid] || []).includes(k); }
+function cpanelToggle(cid, k){
+  const s = new Set(cpanelOpen[cid] || []); s.has(k) ? s.delete(k) : s.add(k);
+  if(s.size) cpanelOpen[cid] = [...s]; else delete cpanelOpen[cid];
+  try{ localStorage.setItem('bsgc-cpanel', JSON.stringify(cpanelOpen)); }catch(e){}
+  return s.has(k);
+}
+function itemReqInfo(it){
+  const txt = lines(it.reqs).filter(l => typeof NO_REQ === 'undefined' || !NO_REQ.test(l)).join(' ');
+  let rel = [], cond = []; try{ const e = it.ext && it.ext.ccct; if(e && !e.err && (e.list || []).length && typeof ccctSplit === 'function'){ const sp = ccctSplit(e.list, it); rel = sp.rel; cond = sp.cond.filter(x => (x.cond || {}).likely !== 'na'); } }catch(e){}
+  const laws = [...new Set(rel.map(x => x.law).filter(Boolean))], claws = [...new Set(cond.map(x => x.law).filter(Boolean))];   // 조건부(용도상 해당 없음 확인 전)도 분류에는 넣음
+  const hay = [txt, laws.join(' '), claws.join(' '), txt || rel.length || cond.length ? it.agency || '' : ''].join(' ');
+  const cats = REQ_CATS.filter(([, re]) => re.test(hay)).map(([k]) => k);
+  if(rel.length) cats.push('세관장확인');
+  if(!cats.length && (txt || cond.length)) cats.push(txt ? '기타 요건' : '조건부 요건');
+  return {cats, laws, alerts:openAlerts().filter(a => a.ttype === 'item' && a.tid === it.id).length};
+}
+function seenBase(){ if(!db.settings.itemNewFrom) db.settings.itemNewFrom = nowIso(); return db.settings.itemNewFrom; }
+function seenAt(cid){ const s = ((db.seen || {})[me ? me.id : ''] || {})[cid], b = seenBase(); return s && s > b ? s : b; }
+function markSeen(cid){ if(!me) return; db.seen = db.seen || {}; const u = db.seen[me.id] = db.seen[me.id] || {}; u[cid] = nowIso(); }
+function itemNewWhy(it, since){
+  const mine = x => !!(me && x && x === me.id);
+  const c = it.chg;
+  if(c && c.at > since && !mine(c.by)) return (c.what || []).join('·') || '변경';
+  if(it.createdAt && it.createdAt > since && !mine(it.createdBy)) return '새 품목';
+  return '';
+}
+/* 품목 변경 표시: 실제로 바뀐 때만(공공데이터 재조회 시각·updatedAt과 따로). 30일 안의 이전 변경 이유는 이어 붙임 */
+function itemChg(it, what){
+  const p = it.chg && it.chg.at > addPeriod(today(), -30, 'd') ? it.chg.what || [] : [];
+  it.chg = {at:nowIso(), by:me ? me.id : 'auto', what:[...new Set([...p, what])].slice(-4)};
+}
+function cpanelInfo(c, items){
+  const out = [], since = seenAt(c.id);
+  const ri = items.map(it => ({it, r:itemReqInfo(it), nw:itemNewWhy(it, since)}));
+  const cat = {}; ri.forEach(x => x.r.cats.forEach(k => { cat[k] = (cat[k] || 0) + 1; }));
+  const al = ri.reduce((a, x) => a + (x.r.alerts ? 1 : 0), 0), nN = ri.filter(x => x.nw).length;
+  const subs = Object.entries(cat).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`);
+  out.push({k:'items', t:'품목요건 보기', n:items.length, sub:[...subs.slice(0, 3), subs.length > 3 ? `외 ${subs.length - 3}` : '', al ? `확인 필요 ${al}` : ''].filter(Boolean), warn:!!(subs.length || al), nN, ri,
+    title:subs.length ? `요건 있는 품목 — ${subs.join(', ')}` : '등록된 요건 없음'});
+  const cc = typeof confirmedContacts === 'function' ? confirmedContacts(c).length : 0;
+  out.push({k:'contacts', t:'담당자', n:cc});
+  const payH = typeof clientPayHTML === 'function' ? clientPayHTML(c) : '';
+  if(payH){ const od = db.records.filter(r => r.clientId === c.id && isImp(r)).flatMap(r => (r.deadlines || []).filter(d => !d.done && d.kind === '관세 납부기한'));
+    out.push({k:'pay', t:'관세 납부', n:od.length || '', sub:od.length ? [`미처리 ${od.length}`] : [], warn:od.some(d => d.due < today()), html:payH}); }
+  const cs = typeof clientCauses === 'function' ? clientCauses(c.id) : {list:[]};
+  if(cs.list.length) out.push({k:'amend', t:'정정·보완 주의', n:cs.records, warn:true});
+  const kc = (db.kc || []).filter(k => k.c === c.id);
+  if(kc.length){ const bad = kc.filter(k => k.rm || (k.chk && k.chk.st !== 'ok')).length; out.push({k:'kc', t:'KC 인증', n:kc.length, sub:bad ? [`확인 필요 ${bad}`] : [], warn:bad > 0}); }
+  const rids = new Set(db.records.filter(r => r.clientId === c.id).map(r => r.id));
+  const qn = (db.inquiries || []).filter(q => q.clientId === c.id || (q.recId && rids.has(q.recId))).length;
+  if(qn) out.push({k:'inq', t:'세관 질의', n:qn});
+  if((c.updates || []).length) out.push({k:'upd', t:'자료 갱신 이력', n:c.updates.length});
+  return out;
+}
+function cpanelBtn(c, x, big){
+  if(!x) return '';
+  const on = cpanelIs(c.id, x.k);
+  return `<button class="cp-btn${big ? ' btn' : ''}${on ? ' on' : ''}${x.warn ? ' warn' : ''}" data-cpanel="${esc(c.id)}|${x.k}" aria-expanded="${on}"${x.title ? ` title="${esc(x.title)}"` : ''}>${esc(x.t)}${x.n !== '' && x.n !== undefined ? ` <span class="cp-n">${esc(String(x.n))}</span>` : ''}${(x.sub || []).length ? ` <span class="cp-sub">${x.warn ? '⚠ ' : ''}${esc(x.sub.join(' · '))}</span>` : ''}${x.nN ? ` <span class="cp-new" title="새로 생기거나 바뀐 품목">N ${x.nN}</span>` : ''} <span class="cp-arr" aria-hidden="true">${on ? '▴' : '▾'}</span></button>`;
+}
+function cpanelsHTML(c, items, ip){
+  const open = ip.filter(x => cpanelIs(c.id, x.k));
+  if(!open.length) return '';
+  const body = x => x.k === 'items' ? clientItemsSection(c, items, x) : x.k === 'contacts' ? clientContactsSection(c) : x.k === 'pay' ? x.html : x.k === 'amend' ? amendSection(c)
+    : x.k === 'kc' ? kcSection(c) : x.k === 'inq' ? (typeof clientInqSection === 'function' ? clientInqSection(c) : '') : x.k === 'upd' ? (typeof clientUpdatesSection === 'function' ? clientUpdatesSection(c).replace('<details class="old-mails client-updates">', '<details class="old-mails client-updates" open>') : '') : '';
+  const h = `<div class="cpanels">${open.map(x => `<div class="cpanel" data-cp="${x.k}"><button class="cp-close mini" data-cpanel="${esc(c.id)}|${x.k}" title="접기">접기 ✕</button>${body(x)}</div>`).join('')}</div>`;
+  const it = open.find(x => x.k === 'items');
+  if(it && it.nN){ markSeen(c.id); clearTimeout(cpSeenT); cpSeenT = setTimeout(() => { schedulePersist(); scheduleSync(); }, 1500); }   // 이번 화면은 N을 보여 주고, 다음부터 지움
+  return h;
+}
+let cpSeenT = 0;
+
 /* ---------- 업체 품목·요건 (11/13 g): 대표 품목 7개만 먼저 보이고, 나머지는 펼치기·검색 — 품목이 많은 업체의 긴 스크롤 방지 ----------
    대표 순서: 이 품목으로 처리한 기록 수(최근 24개월 가중) → 위험도(정정·검사·요건) → 최근 처리일 → 이름. 검색은 품목·HS·세율·요건·기관·메모 글자. */
 const ITEM_TOP = 7;
 let itemMoreOpen = new Set(), clientItemQ = {cid:'', q:''};
-function clientItemsSection(c, items){
+function clientItemsSection(c, items, info){
+  const nw = new Map(((info || {}).ri || []).filter(x => x.nw).map(x => [x.it.id, x.nw]));
   const since = addPeriod(today(), -24, 'm'), use = new Map();
   db.records.forEach(r => { if(!r.itemId) return; const u = use.get(r.itemId) || {n:0, last:''}; u.n += recDate(r) >= since ? 2 : 1; if(recDate(r) > u.last) u.last = recDate(r); use.set(r.itemId, u); });
   const risk = i => typeof itemRisk === 'function' ? itemRisk(i).score : 0;
-  const ranked = items.map(i => ({i, u:use.get(i.id) || {n:0, last:''}, k:risk(i)})).sort((a, b) => b.u.n - a.u.n || b.k - a.k || (b.u.last > a.u.last ? 1 : b.u.last < a.u.last ? -1 : 0) || a.i.name.localeCompare(b.i.name, 'ko'));
-  const split = items.length > ITEM_TOP, top = split ? ranked.slice(0, ITEM_TOP) : ranked, rest = split ? ranked.slice(ITEM_TOP).sort((a, b) => a.i.name.localeCompare(b.i.name, 'ko')) : [];
+  const ranked = items.map(i => ({i, u:use.get(i.id) || {n:0, last:''}, k:risk(i)})).sort((a, b) => (nw.has(b.i.id) ? 1 : 0) - (nw.has(a.i.id) ? 1 : 0) || b.u.n - a.u.n || b.k - a.k || (b.u.last > a.u.last ? 1 : b.u.last < a.u.last ? -1 : 0) || a.i.name.localeCompare(b.i.name, 'ko'));
+  const topN = Math.max(ITEM_TOP, nw.size), split = items.length > topN, top = split ? ranked.slice(0, topN) : ranked, rest = split ? ranked.slice(topN).sort((a, b) => a.i.name.localeCompare(b.i.name, 'ko')) : [];
   const q = clientItemQ.cid === c.id ? clientItemQ.q.trim().toLowerCase() : '';
   const hay = i => [i.name, i.hs, i.tariff, i.reqs, i.agency, i.notes].join(' ').toLowerCase();
-  const row = ({i, u}) => `<tr data-q="${esc(hay(i))}"${q && !hay(i).includes(q) ? ' hidden' : ''}><td><strong>${esc(i.name)}</strong>${typeof itemRiskHTML === 'function' ? itemRiskHTML(i) : ''}${u.n ? `<span class="hint"> · 처리 ${esc(String(db.records.filter(r => r.itemId === i.id).length))}건</span>` : ''}${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`;
+  const row = ({i, u}) => `<tr data-q="${esc(hay(i))}"${q && !hay(i).includes(q) ? ' hidden' : ''}${nw.has(i.id) ? ' class="is-new"' : ''}><td>${nw.has(i.id) ? `<span class="cp-new" title="${esc(nw.get(i.id))}">N</span> ` : ''}<strong>${esc(i.name)}</strong>${nw.has(i.id) && nw.get(i.id) !== '새 품목' ? ` <span class="hint">(${esc(nw.get(i.id))})</span>` : ''}${typeof itemRiskHTML === 'function' ? itemRiskHTML(i) : ''}${u.n ? `<span class="hint"> · 처리 ${esc(String(db.records.filter(r => r.itemId === i.id).length))}건</span>` : ''}${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}${extItemHTML(i)}</td><td class="hs">${esc(i.hs)}</td><td>${esc(i.tariff)}</td><td class="pre">${esc(i.reqs)}</td><td>${esc(i.agency)}</td><td><button class="mini" data-edit-item="${esc(i.id)}">수정</button></td></tr>`;
   const head = '<thead><tr><th>품목</th><th>HS 코드</th><th>세율·FTA</th><th>수입요건</th><th>요건 기관</th><th></th></tr></thead>';
   const hits = q ? ranked.filter(x => hay(x.i).includes(q)).length : 0;
+  const cats = {}, laws = new Set(); ((info || {}).ri || []).forEach(x => { x.r.cats.forEach(k => { cats[k] = (cats[k] || 0) + 1; }); x.r.laws.forEach(l => laws.add(l)); });
+  const reqLine = Object.keys(cats).length ? `<p class="hint req-line">요건 있는 품목: ${Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<b>${esc(k)} ${n}</b>`).join(' · ')}${laws.size ? ` <span>(세관장확인 법령: ${esc([...laws].slice(0, 6).join(', '))}${laws.size > 6 ? ' 외' : ''})</span>` : ''}</p>` : '';
   return `<section class="items">
-      <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개${split ? ` · 대표 ${ITEM_TOP}개 먼저` : ''}</span></h3><span class="btn-row">${split ? `<input type="search" id="cItemQ" data-cid="${esc(c.id)}" class="item-q" placeholder="품목·HS·요건 검색" value="${esc(clientItemQ.cid === c.id ? clientItemQ.q : '')}"><span class="hint" data-item-n>${q ? `${hits}개 찾음` : ''}</span>` : ''}<button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></span></div>
+      <div class="sec-head"><h3>품목·요건 <span class="cnt">${items.length}개${split ? ` · 대표 ${topN}개 먼저` : ''}${nw.size ? ` · 새로 바뀜 ${nw.size}` : ''}</span></h3><span class="btn-row">${split ? `<input type="search" id="cItemQ" data-cid="${esc(c.id)}" class="item-q" placeholder="품목·HS·요건 검색" value="${esc(clientItemQ.cid === c.id ? clientItemQ.q : '')}"><span class="hint" data-item-n>${q ? `${hits}개 찾음` : ''}</span>` : ''}<button class="mini" data-new-item data-client="${esc(c.id)}">품목 추가</button></span></div>
+      ${reqLine}
       ${items.length ? `<div class="table-wrap"><table class="grid">${head}<tbody>${top.map(row).join('')}</tbody></table></div>
         ${rest.length ? `<details class="items-more" data-items-more="${esc(c.id)}"${itemMoreOpen.has(c.id) || q ? ' open' : ''}><summary>나머지 품목 ${rest.length}개 펼치기 (가나다순)</summary><div class="table-wrap"><table class="grid">${head}<tbody>${rest.map(row).join('')}</tbody></table></div></details>` : ''}`
       : '<p class="empty">자주 들어오는 품목의 HS 코드와 수입요건을 정리해 두면 기록을 쓸 때 함께 보입니다.</p>'}

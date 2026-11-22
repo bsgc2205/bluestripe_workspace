@@ -67,7 +67,7 @@ function setBase(blob, data){
 /* 11/15 D-01: 같은 칸을 두 PC가 다르게 고친 경우 내 값을 남기되 상대 값을 mergeConf에 모아 기록 이력·확인함 '동시 수정'으로 보존.
    id 없는 목록(이력·문자열 목록)은 3자 집합 병합 — 한쪽이 지운 것은 지우고, 양쪽에서 더한 것은 모두 남김(예전: 문자열은 합집합, 객체는 내 쪽만). */
 let mergeConf = null;
-const CONF_IGNORE = /\/(updatedAt|createdAt|at|doneAt|lastSeen|certRead|unipass|autoDone)(\/|$)/;
+const CONF_IGNORE = /\/(updatedAt|createdAt|at|doneAt|lastSeen|certRead|unipass|autoDone|chg)(\/|$)/;
 function mergeSet(b, l, r){
   const key = x => typeof x === 'string' ? 's' + x : 'j' + jstr(x), B = new Set((Array.isArray(b) ? b : []).map(key)), L = new Set(l.map(key));
   const R = new Set(r.map(key)), out = l.filter(x => R.has(key(x)) || !B.has(key(x))), O = new Set(out.map(key));

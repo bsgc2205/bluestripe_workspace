@@ -580,9 +580,11 @@ function openItem(it, clientId){
       const ncid = fd.get('clientId') || item.clientId, ndir = fd.get('dir') || '';
       if(!isNew && (ncid !== item.clientId || ndir !== (item.dir || ''))){ item.ext = null; openAlerts().filter(a => a.tid === item.id).forEach(a => { a.status = 'done'; a.doneAt = nowIso(); a.doneBy = me ? me.id : ''; a.doneNote = '품목 업체·수출입 구분을 바꿔 다시 확인합니다.'; }); }
       if(ncid !== item.clientId) db.records.forEach(r => { if(r.itemId === item.id && r.clientId !== ncid) r.itemId = ''; });
+      const was0 = {reqs:item.reqs || '', hs:item.hs || '', tariff:item.tariff || '', agency:item.agency || ''};   // 11/22 c: 요건·HS·세율이 바뀌면 변경 표시(다른 직원에게 N)
       item.clientId = ncid; item.dir = ndir;
       Object.assign(item, {name: fd.get('name').trim(), hs: fd.get('hs').trim(), tariff: fd.get('tariff').trim(), reqs: fd.get('reqs').trim(), agency: fd.get('agency').trim(), notes: fd.get('notes').trim(), cas: fd.get('cas').trim(), raw: fd.get('raw').trim(), maker: fd.get('maker').trim(), country: fd.get('country').trim(), model: fd.get('model').trim(), updatedAt: nowIso()});
-      if(isNew){item.createdAt = nowIso(); db.items.push(item); toast('품목을 추가했습니다.');}
+      if(!isNew && typeof itemChg === 'function'){ const lab = {reqs:'요건 수정', hs:'HS 수정', tariff:'세율 수정', agency:'요건 기관 수정'}; Object.keys(lab).forEach(k => { if((item[k] || '') !== was0[k]) itemChg(item, lab[k]); }); }
+      if(isNew){item.createdAt = nowIso(); item.createdBy = item.createdBy || (me ? me.id : ''); db.items.push(item); toast('품목을 추가했습니다.');}
       else toast('품목을 수정했습니다.');
     },
     onDelete: isNew ? null : () => {
