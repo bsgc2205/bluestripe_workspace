@@ -428,17 +428,10 @@ function viewClient(){
     <div class="cpanel-bar" role="group" aria-label="업체 자료 펼치기">${ip.filter(x => x.k !== 'items').map(x => cpanelBtn(c, x)).join('')}</div>
     ${cpanelsHTML(c, items, ip)}
     <div class="chips" role="group" aria-label="업무 유형">${['전체', ...types].map(t => `<button class="chip${t === typeFilter ? ' on' : ''}" data-chip="${esc(t)}">${esc(t)}</button>`).join('')}</div>
-    <div class="client-grid">
-      <section>
-        <div class="sec-head"><h3>처리 절차</h3><span class="btn-row"><button class="mini" data-new-ov data-client="${esc(c.id)}" title="공통 절차 위에 이 업체만 다른 점을 덧붙임">업체 특이사항 추가</button><button class="mini" data-new-proc data-client="${esc(c.id)}">절차 추가</button></span></div>
-        ${fp.length || common.length
-          ? fp.map(p => procHTML(p)).join('') + common.map(p => procHTML(p, {common:true})).join('')
-          : '<p class="empty">이 업체만의 처리 순서를 정리해 두면 다음 건을 진행할 때 체크리스트로 바로 불러올 수 있습니다.</p>'}
-        ${typeFilter === '전체' && db.procedures.some(p => !p.clientId) ? '<p class="hint">업무 유형을 고르면 해당 공통 절차도 함께 보입니다.</p>' : ''}
-      </section>
+    <div class="client-grid hist-first">
       <section>
         <div class="sec-head"><h3>업무 히스토리 <span class="cnt">${fr.length}건${actCount ? `, 진행 ${actCount}건` : ''}${spCount ? `, 특이 ${spCount}건` : ''}</span></h3><button class="mini" data-new-rec data-client="${esc(c.id)}">기록 추가</button></div>
-        ${(() => {                                                          // 11/22 c: 진행 중은 항상 전부(누락 방지), 완료는 최근 5건 + 더 보기 + 검색, 완료 요약 한 줄
+        ${(() => {                                                          // 11/22 d: 히스토리를 왼쪽(먼저)으로. 11/22 c: 진행 중은 항상 전부(누락 방지), 완료는 최근 5건 + 더 보기 + 검색, 완료 요약 한 줄
           if(!fr.length) return '<p class="empty">이 조건의 기록이 없습니다.</p>';
           const q = (clientRecQ.cid === c.id ? clientRecQ.q : '').trim().toLowerCase(), lim = clientRecLimit[c.id] || REC_DONE_TOP;
           const hit = q ? fr.filter(r => [r.title, r.bl, r.refNo, r.caseNo, ...(r.refs || []).map(x => x.no), r.summary, r.specialNote, (r.tags || []).join(' ')].join(' ').toLowerCase().includes(q)) : fr;
@@ -451,6 +444,13 @@ function viewClient(){
             ${!act.length && !done.length ? '<p class="empty">찾는 기록이 없습니다.</p>' : ''}
             ${done.length > lim ? `<p class="more-row"><button class="ghost" data-crec-more="${esc(c.id)}">${Math.min(20, done.length - lim)}건 더 보기</button> <span class="hint">남은 완료 ${done.length - lim}건</span></p>` : ''}`;
         })()}
+      </section>
+      <section>
+        <div class="sec-head"><h3>처리 절차</h3><span class="btn-row"><button class="mini" data-new-ov data-client="${esc(c.id)}" title="공통 절차 위에 이 업체만 다른 점을 덧붙임">업체 특이사항 추가</button><button class="mini" data-new-proc data-client="${esc(c.id)}">절차 추가</button></span></div>
+        ${fp.length || common.length
+          ? fp.map(p => procHTML(p)).join('') + common.map(p => procHTML(p, {common:true})).join('')
+          : '<p class="empty">이 업체만의 처리 순서를 정리해 두면 다음 건을 진행할 때 체크리스트로 바로 불러올 수 있습니다.</p>'}
+        ${typeFilter === '전체' && db.procedures.some(p => !p.clientId) ? '<p class="hint">업무 유형을 고르면 해당 공통 절차도 함께 보입니다.</p>' : ''}
       </section>
     </div>`;
 }

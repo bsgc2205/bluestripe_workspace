@@ -743,3 +743,4 @@ tr.is-new td{background:var(--stamp-bg)}
 .proc.is-ov{border-left:3px solid var(--prog);padding-left:.7rem}
 .rec-sum-line{margin:.5rem 0 .25rem;font-size:.88rem;color:var(--muted)}
 .rec-sum-line .sp-n{color:var(--stamp)}
+@media (min-width:861px){.client-grid.hist-first{grid-template-columns:minmax(0,6fr) minmax(0,5fr)}}   /* 11/22 d 업무 히스토리(넓게) · 처리 절차, 좁은 화면은 위아래(히스토리 먼저) */
