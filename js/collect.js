@@ -132,7 +132,14 @@ function certQueue(){
   return q.sort((a, b) => b.hint - a.hint).slice(0, 6);
 }
 /* 필증의 수입자·수출화주 업체 (11/12): 사업자번호 → 이름. 기록의 업체와 다르면 품목은 필증 쪽 업체에 넣는다(다른 업체 필증이 잘못 붙은 경우) */
-function certParty(d){ return (d.bizNo && clientByBiz(d.bizNo)) || (d.party ? findClient(d.party) || fuzzyClient(d.party) : null); }
+/* 11/22 ①: 필증 화주 일치 방식 구분 — 'biz' 사업자번호 / 'name' 등록 이름 / 'fuzzy' 한 글자 다른 이름(글자 인식 오류 대비).
+   유사 이름은 사업자번호와 같은 근거가 아님: 지금 기록의 업체를 확인할 때만 쓰고, 다른 업체로 옮기거나 새로 정하는 데는 쓰지 않음 */
+function certPartyMatch(d){
+  if(d.bizNo){ const c = clientByBiz(d.bizNo); if(c) return {c, how:'biz'}; }
+  if(d.party){ const c = findClient(d.party); if(c) return {c, how:'name'}; const f = fuzzyClient(d.party); if(f) return {c:f, how:'fuzzy'}; }
+  return null;
+}
+function certParty(d, curId){ const m = certPartyMatch(d); return !m ? null : m.how !== 'fuzzy' || (curId && m.c.id === curId) ? m.c : null; }
 /* 11/15: 필증 글자 인식이 업체 이름 한 글자를 틀린 경우(예: 가나다→가니다) — 4글자 이상 이름에서 한 글자만 다르고 후보가 하나일 때만 */
 function fuzzyClient(name){
   const k = nameKey(name).replace(/\s/g, ''); if(k.length < 4) return null;
@@ -153,7 +160,7 @@ function itemFromLine(cid, ln, d){
   return {it, isNew:true};
 }
 function applyCert2Rec(r, d, fname){
-  const ch = [], pc0 = certParty(d), mine = !pc0 || pc0.id === r.clientId;
+  const ch = [], pc0 = certParty(d, r.clientId), mine = !pc0 || pc0.id === r.clientId;
   if(d.declNo && !r.refNo){ r.refNo = d.declNo; ch.push('신고번호'); }
   else if(d.declNo && mine && addRef(r, d.declNo, 'decl', `필증 ${fname} — 분할·정정 신고번호`)) ch.push('추가 신고번호');   // 같은 케이스의 두 번째 신고번호는 버리지 않고 refs로
   if(d.bl && !r.bl){ r.bl = d.bl; ch.push('B/L'); }
@@ -170,7 +177,7 @@ function applyCert2Rec(r, d, fname){
     const cl2 = db.clients.find(c => c.id === r.clientId); if(cl2 && (d.tax.vatDefer || d.tax.clct === '14') && !cl2.vatDeferAuto){ cl2.vatDeferAuto = {at:today(), declNo:d.declNo || ''}; cl2.updatedAt = nowIso(); }
   }
   let made = 0;
-  const pc = certParty(d), other = pc && pc.id !== r.clientId ? pc : null;
+  const pc = certParty(d, r.clientId), other = pc && pc.id !== r.clientId ? pc : null;
   (d.lines || []).forEach((ln, i) => { const x = itemFromLine(other ? other.id : r.clientId, ln, d); if(!x) return; if(x.isNew) made++; if(i === 0 && !r.itemId && !other) { r.itemId = x.it.id; ch.push('품목'); } });
   if(other){ r.certMismatch = {file:fname, declNo:d.declNo || '', party:other.name, at:today()}; addHist(r, `확인 필요: 필증(${fname})의 ${d.kind === 'E' ? '수출화주' : '수입자'}가 ‘${d.party || other.name}’(${other.name})로 이 업체와 다릅니다. 품목은 ${other.name}에 넣었습니다 — 자료가 다른 기록에 잘못 붙었는지 확인하세요.`); }
   addHist(r, `필증 읽기(${fname}): 신고 ${d.declNo || '-'}${(d.lines || []).length ? `, 품목 ${d.lines.length}란(HS ${[...new Set(d.lines.map(l => l.hs).filter(Boolean))].slice(0, 4).join(', ')})` : ''}${ch.length ? ` → ${ch.join('·')} 채움` : ''}${made ? `, 품목 DB ${made}개 추가` : ''}`);
@@ -221,7 +228,7 @@ function splitPending(x, docs){
 function fixAutoRecParty(r, docs, fname){
   const own = docs.find(d => d.declNo && r.refNo && refTail(d.declNo) === refTail(r.refNo));
   if(!own || !(r.createdBy === 'auto' && !(r.mails || []).length && (r.files || []).every(f => f.name === fname))) return false;
-  const pc = certParty(own), cid = pc ? pc.id : r.clientId;
+  const pc = certParty(own, r.clientId), cid = pc ? pc.id : r.clientId;
   const t = db.records.filter(x => x.id !== r.id && x.clientId === cid && recKeys(x, 'decl').map(refTail).includes(refTail(own.declNo)))
     .sort((a, b) => (a.createdBy === 'auto') - (b.createdBy === 'auto') || String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];   // 사람이 만든·먼저 만든 기록 우선
   if(t && typeof mergeRecords === 'function'){ mergeRecords(t.id, r.id); return 'merged'; }
@@ -253,7 +260,7 @@ function applyCertDocs(r, docs, file){
   docs = docs.filter(d => !d.idx);
   if(!docs.length){ r.updatedAt = nowIso(); return out; }
   docs.forEach(d => {
-    const pc = certParty(d);
+    const pc = certParty(d, r.clientId);
     const isMine = pc ? pc.id === r.clientId : (!d.party || partyIsClient(d.party, r.clientId) || (docs.length === 1 && !(d.lines || []).length));
     (isMine ? mine : others).push({d, pc});
   });

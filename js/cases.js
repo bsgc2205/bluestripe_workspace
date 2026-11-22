@@ -261,18 +261,42 @@ function stageActsHTML(r){
   if(b.length <= 1) return b.join('');                                     // 11/14 P3: 다음 단계 버튼 하나만 보이고 나머지는 '단계 ▾'
   return b[0] + `<details class="stage-more"><summary class="mini">단계 ▾</summary>${b.slice(1).join('')}</details>`;
 }
+/* 11/22 ③ 업무 범위별 필수 종결 조건 — 필수 항목만 종결을 막고, 참고 항목·수금 대기는 막지 않음.
+   필수: (공통) 통관(수입 수리 / 수출 선적) 확인 + 청구 완료(월 정산 업체는 월정산 인계) — 둘 다 '확인 필요'(chk)가 아니어야 함
+         (공통) 결과 전달 — 필증 송부 메일, 체크리스트 '필증 송부' 완료·해당 없음, 또는 직접 '전달함'(업체 설정 '결과 전달 별도'면 제외)
+         (수출 물류 포함 범위) 물류 후속 체크 항목 완료·해당 없음
+         (공통) 해소 근거 없는 대기 — 상대 회신 메일이 없고 수금 대기가 아닌 것
+   참고: 체크리스트의 나머지 항목, 참고 서류, 청구처·의뢰처 확인, 수금(입금) 상태는 종결을 막지 않음. */
+const PAY_WAIT = /입금|수금|결제|송금|대금|payment/i;
+function doneBlockers(r){
+  const out = [], st = stageOf(r), cl = db.clients.find(c => c.id === r.clientId) || {};
+  const ck = r.checklist || [], open = x => !x.done && !x.na;
+  const certStep = ck.find(x => STEP_EVENTS[1][1].test(x.text));
+  const deliv = r.delivered || recEvents(r).certSent || (certStep && !open(certStep)) || cl.delivSkip;
+  if(!deliv) out.push({k:'deliv', t:'결과(필증) 전달 근거 없음'});
+  if(typeof recScope === 'function' && recScope(r) === 'logi' && isExp(r)){
+    const lo = ck.filter(x => open(x) && typeof LOGI_RE !== 'undefined' && LOGI_RE.test(x.text));
+    if(lo.length) out.push({k:'logi', t:`물류 후속 ${lo.length}개 남음`});
+  }
+  const w = r.wait;
+  if(w && w.who && !PAY_WAIT.test(`${w.note || ''} ${w.who}`) && !(typeof waitReply === 'function' && waitReply(r))) out.push({k:'wait', t:`대기 중(${(typeof WAIT_PARTY !== 'undefined' && WAIT_PARTY[w.who]) || w.who})${w.note ? ' — ' + w.note : ''}`});
+  return out;
+}
 function autoComplete(r, why){
   if(r.status === '완료' || r.autoDoneOff) return false;
   if(r.cond && r.cond.kind && !r.cond.zero) return false;            // 재수출·재수입 잔량 관리 건은 잔량이 0이 될 때까지 진행 중
   const st = stageOf(r);
   if(!st.customs || !(st.settle || settleMode(r) === 'monthly')) return false;
-  if(st.customsLv === 'chk') return false;                             // 메일 글만 근거인 통관·선적은 UNI-PASS·직원 확인 뒤에 완료
+  if(st.customsLv === 'chk' || (st.settle && st.settleLv === 'chk')) return false;   // 메일 글만 근거인 통관·선적·청구는 확인 뒤에 완료(11/22: 청구 chk도)
+  const bl = doneBlockers(r), key = bl.map(x => x.t).join(' · ');
+  if(bl.length){ if((r.doneBlock || {}).why !== key){ r.doneBlock = {why:key, ks:bl.map(x => x.k), at:today()}; r.updatedAt = nowIso(); } return false; }   // 필수 항목이 남으면 종결 대기(확인함 '종결 대기')
+  delete r.doneBlock;
   r.status = '완료';
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
   const reason = [`${stageName(r, 'customs')} ${st.customs} (${st.customsBy || ''})`, st.settle ? `청구 완료 ${st.settle} (${st.settleBy || ''})` : '월 정산 업체 — 월정산 인계'].join(', ');
   r.autoDone = {at:nowIso(), reason};
   addHist(r, '자동 완료: ' + reason);
-  if(r.wait){ addHist(r, '대기 해제 (완료)'); delete r.wait; }
+  if(r.wait && typeof waitReply === 'function' && waitReply(r)){ addHist(r, '대기 해제 (완료 — 상대 회신 확인)'); delete r.wait; }   // 11/22 ③: 해소 근거가 있을 때만 대기 종료(수금 대기 등은 남김)
   proposeFromRecord(r);
   if(!String(r.summary || '').trim()){
     const ck = (r.checklist || []);
@@ -697,3 +721,17 @@ function lastActivity(r){
 function staleRecords(){
   return db.records.filter(r => r.status !== '완료' && r.status !== '보류' && !(typeof waitHold === 'function' && waitHold(r))).map(r => ({r, n:bizDaysSince(lastActivity(r))})).filter(x => x.n >= STALE_DAYS).sort((a, b) => b.n - a.n);
 }
+
+/* 11/22 ③: 종결 대기 — 결과 전달을 다른 경로로 했을 때 근거 남기기 / 업체가 결과 전달을 따로 받는 경우 */
+document.addEventListener('click', e => {
+  const b = db && e.target.closest('[data-deliv-set],[data-deliv-skip]'); if(!b || e.target.closest('dialog')) return;
+  e.preventDefault();
+  if(b.dataset.delivSet){ const r = db.records.find(x => x.id === b.dataset.delivSet); if(!r) return;
+    r.delivered = {at:today(), by:me ? me.id : ''}; addHist(r, '결과(필증) 전달 확인 — 직접'); r.updatedAt = nowIso();
+    const ok = autoComplete(r); commit(); toast(ok ? '결과 전달을 기록하고 자동 완료했습니다.' : '결과 전달을 기록했습니다.'); return; }
+  const c = db.clients.find(x => x.id === b.dataset.delivSkip); if(!c) return;
+  if(!confirm(`${c.name}: 결과(필증) 전달을 Workspace에서 확인하지 않고 종결할까요? (업체 설정 — 업체 창에서 되돌릴 수 있음)`)) return;
+  c.delivSkip = {at:today(), by:me ? me.id : ''}; c.updatedAt = nowIso();
+  let n = 0; db.records.filter(r => r.clientId === c.id && r.doneBlock).forEach(r => { if(autoComplete(r)) n++; });
+  commit(); toast(`${c.name}은 결과 전달 확인을 빼고 종결합니다.${n ? ` ${n}건 자동 완료.` : ''}`);
+});

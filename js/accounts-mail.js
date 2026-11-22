@@ -222,7 +222,8 @@ function subjClient(ms){
 }
 function namedIn(text, c){ const t = String(text || '').toLowerCase(), k = nameKey(c.name).toLowerCase(); return k.replace(/\s/g, '').length >= 2 && nameHit(t, t.replace(/[\s_-]+/g, ''), k); }
 function matchClient(m){
-  const ms = Array.isArray(m) ? m : [m];
+  let ms = Array.isArray(m) ? m : [m];
+  if(threadIO(ms) === 'E') ms = ms.map(x => { const y = {...x}; ['subject', 'snippet', 'body', 'hints'].forEach(k => { if(y[k]) y[k] = stripCnee(y[k]); }); return y; });   // 11/22 ①: 수출은 수하인(해외 구매자) 표기를 빼고 판별
   const snd = ms.map(mailSender).filter(Boolean).join(' '), rcv = ms.filter(x => isOwn(x.from) && !x.fwdFrom).map(x => [x.to, x.subject].filter(Boolean).join(' ')).join(' ');
   const byAddr = (snd && findClient(snd)) || (rcv && findClient(rcv));
   if(byAddr){ const sc = subjClient(ms); return sc && sc.id !== byAddr.id && !namedIn(ms.map(x => x.subject || '').join(' '), byAddr) ? sc : byAddr; }
@@ -249,12 +250,20 @@ function threadClientInfo(t){
   return v;
 }
 /* 수하인(C/…) 이름: 포워더 A/N 제목 'S/SHIPPER CO C/ABC TRADING H/ABCD2611001'에서 'ABC TRADING' */
+/* 수하인 역할 표기 (11/22 ①: 대소문자·언어 무관) — C/…, CNEE, CONSIGNEE, SHIP TO, NOTIFY (PARTY), BUYER, 수하인, 받는 분 */
+const CNEE_RE = [
+  /(?:^|[\s\[(,])C\s*\/\s*([A-Za-z][A-Za-z0-9&.'\- ]{1,40}?)\s*(?=\s(?:H|M|B|S)\s*\/|\s*\/\/|[\])/,]|\s{2,}|\s*[^A-Za-z0-9&.'\- ]|$)/gi,
+  /\b(?:CNEE|CONSIGNEE|SHIP\s*TO|NOTIFY(?:\s*PARTY)?|BUYER)\s*[:：\-]?\s*([A-Za-z][A-Za-z0-9&.'\- ]{1,40}?)\s*(?=[\])/,;]|\s{2,}|\s(?:H|M|B|S)\s*\/|\s*[^A-Za-z0-9&.'\- ]|$)/gi,
+  /(?:수하인|받는\s*분|수입자\(해외\))\s*[:：]?\s*([^\s,/\]\)]{2,30}(?:\s[^\s,/\]\)]{2,20})?)/g
+];
 function consigneeNames(text){
-  const out = [], re = /(?:^|[\s\[(,])C\s*\/\s*([A-Z][A-Z0-9&.'\- ]{1,40}?)\s*(?=\s(?:H|M|B|S)\s*\/|\s*\/\/|[\])/,]|\s{2,}|$)/g;
-  let m;
-  while((m = re.exec(String(text || '')))) { const v = m[1].trim(); if(v.length >= 2 && !/^(NO|PO|INV|CI)$|^O\b/i.test(v)) out.push(v); }
+  const out = [], t = String(text || '');
+  CNEE_RE.forEach(re => { re.lastIndex = 0; let m; while((m = re.exec(t))){ const v = m[1].trim(); if(v.length >= 2 && !/^(NO|PO|INV|CI)$|^O\b/i.test(v)) out.push(v); } });
   return [...new Set(out)];
 }
+/* 수하인 표기 부분을 지운 글 — 수출 건의 업체 판별(제목·본문)에서 해외 구매자 이름이 화주로 잡히지 않게 */
+function stripCnee(text){ let t = String(text || ''); CNEE_RE.forEach(re => { re.lastIndex = 0; t = t.replace(re, ' '); }); return t; }
+function threadIO(ms){ if(typeof classifyIO !== 'function') return ''; const subj = ms.map(m => m.subject || '').join(' '); const d = ms.map(m => m.declNo || '').join(' '); return classifyIO(subj + ' ' + d, '', null).k || ''; }
 function findRefNo(text){const m = String(text||'').match(/\b\d{5}-\d{2}-\d{6,7}[A-Z]?\b/); return m ? m[0] : '';}
 const refKey = s => String(s || '').toUpperCase().replace(/[-\s]/g, '');
 /* B/L 여러 건 (11/9): 메일 한 통에 B/L이 여러 개면 모두 찾는다(색인의 bl 칸은 첫 번째 하나뿐이라 제목·첨부 파일명에서 다시 찾음).
@@ -714,6 +723,7 @@ function inferClient(t, ix){
 /* 포워더로 등록된 업체(업종에 '포워더·물류·운송·해운' 등): 그 업체 메일의 수하인·화주는 다른 업체일 수 있다 */
 function isFwdClient(c){ return !!c && /포워더|포워딩|물류|운송|해운|항공화물|forward|logis|shipping|freight/i.test(`${c.industry || ''} ${c.name || ''}`); }
 function cneeClient(t, ix){
+  if(threadIO(t.ms) === 'E') return null;                                  // 11/22 ①: 수출의 수하인은 해외 구매자 — 화주 근거로 쓰지 않음
   const names = [...new Set(t.ms.flatMap(m => consigneeNames(m.subject)))];
   for(const n of names){
     const c = findClient(n);
@@ -1212,6 +1222,7 @@ function moveMails(r, ids, to, why){
   }
   stageSrcLost(r, 'mail', moved.map(x => ({...x, files:x.files || []})), to ? `${to.caseNo || '다른 기록'}으로 옮김` : '연결 끊음');   // S-01: 근거 메일 id로 판단 (11/15 b)
   if(typeof billSrcLost === 'function') billSrcLost(r, moved.map(x => x.id));   // 11/21 F5: 청구처 근거 메일이면 재확인
+  if(typeof viaRecheck === 'function'){ [r, to].filter(Boolean).forEach(x => { if(x.via) viaRecheck(x); if(typeof resolveBillTo === 'function') resolveBillTo(x); }); }   // 11/22 ②: 근거 메일이 옮겨지면 바로 의뢰처 다시 판단
   addHist(r, `메일 ${moved.length}통 ${to ? `옮김 → ${to.caseNo || to.title}` : '연결 끊음'}: “${moved[0].subject || ''}”${sfx}`.slice(0, 280));
   r.updatedAt = nowIso();
   if(typeof autoLog === 'function') autoLog('mailMove', moved.length, {from:r.id, to:to ? to.id : ''});

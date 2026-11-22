@@ -16,8 +16,16 @@ function mailDomainsOf(m){ return (String([m.from, m.fwdFrom, m.to].join(' ')).t
    자동 판단은 확정(sure)·재확인(re)을 덮어쓰지 않는다. 추정은 다른 추정의 근거가 되지 않는다(F4). */
 const ST_LAB = {'':'미정', guess:'추정', auto:'자동 확인', sure:'수동 확인', re:'재확인', old:'기존'};   // 11/21 b: 객관적 근거(사건에 확실히 붙은 메일 등)로 정한 것은 '자동 확인'
 const SURE_HOW = new Set(['case', 'decl', 'bl', 'manual']);
-/* 청구처·의뢰처 확인이 필요한 시점 — 청구 단계(수리·선적·정산 근거가 있거나 완료). 그 전에는 불확실해도 다른 자동 처리를 막지 않고 확인함에도 올리지 않음 */
-function billDue(r){ const s = r.stage || {}; return r.status === '완료' || !!(s.customs || s.accept || s.settle); }
+/* 청구처·의뢰처 확인 시점 (11/22 ⑤) — 업무별 청구 시점: 수입 = 수리 뒤, 수출 = 선적 뒤(수리만 됐으면 적재기한 30일이 지나서도 선적 확인이 없을 때),
+   청구 단계(정산)가 시작됐거나 완료된 건, 접수 45일이 지나도록 진행 중인 건(오래 멈춘 건도 놓치지 않게). 그 전에는 다른 자동 처리를 막지 않고 확인함에도 올리지 않음 */
+function billDue(r){
+  const s = r.stage || {}, io = typeof recIO === 'function' ? recIO(r) : '';
+  if(r.status === '완료' || s.settle) return true;
+  if(s.customs) return true;                                               // 수입 수리 / 수출 선적
+  if(io === 'E' && s.accept && daysLeft(s.accept) <= -30) return true;
+  if(io !== 'E' && s.accept) return true;
+  return r.status !== '보류' && !!r.startDate && daysLeft(r.startDate) <= -45;
+}
 function viaStOf(r){ return r.viaSt || (r.viaBy === 'manual' ? 'sure' : r.via ? (r.viaBy === 'auto' ? 'guess' : 'old') : ''); }
 function billStOf(r){ return r.billSt || (r.billBy === 'manual' ? 'sure' : r.billTo ? 'guess' : ''); }
 function billSure(r){ return billStOf(r) === 'sure'; }
@@ -48,7 +56,8 @@ function forwarderPick(ms, clientId){
 function forwarderOf(ms, clientId){ return forwarderPick(ms, clientId).f; }
 /* 자동 판단 결과 적용 — 확정·재확인은 건드리지 않음. 같은 후보면 다시 기록하지 않음(확인 항목·이력 중복 방지) */
 function applyViaPick(r, p){
-  if(viaStOf(r) === 'sure' && r.via) return '';                           // 사람이 정한 것은 그대로(재확인은 새 근거로 자동 해소)
+  if(viaStOf(r) === 'sure' && r.via) return '';
+  r.viaSig = viaSig(r);                                                    // 이 근거로 판단했음(근거가 바뀌면 viaRecheck)                           // 사람이 정한 것은 그대로(재확인은 새 근거로 자동 해소)
   if(p.f){ const st = p.st || 'guess'; if(r.via === p.f.id && r.viaSt === st && !r.viaCands) return ''; const was = r.via || ''; r.via = p.f.id; r.viaBy = 'auto'; r.viaSt = st; r.viaWhy = p.why; delete r.viaCands; if(was && was !== r.via) viaChanged(r, was); return 'set'; }
   const ids = (p.cands || []).map(f => f.id);
   if(ids.length > 1 && String(r.viaCands || '') !== ids.join(',')){ r.viaCands = ids; r.viaWhy = p.why; r.viaSt = r.via ? 're' : ''; return 'cands'; }
@@ -109,64 +118,133 @@ function viaChanged(r, was){
   if(billStOf(r) === 'sure' && r.billTo === 'via'){ r.billSt = 're'; r.billWhy = `의뢰처가 ${clientName(was)} → ${clientName(r.via)}로 바뀜`; addHist(r, `청구처 재확인: 의뢰처가 바뀜(포워더 청구를 사람이 정했던 건)`); return; }
   if(billStOf(r) !== 'sure'){ setBill(r, '', '', null, ''); resolveBillTo(r); }
 }
-/* 메일을 불러올 때·기록을 저장할 때: 의뢰처 없는 최근 기록에 의뢰처 채우기 + 청구처 정하기 */
+/* 11/22 ②: 근거(붙은 메일·필증)가 바뀌면 자동으로 정한 의뢰처를 다시 판단 — 근거 서명(viaSig)이 같으면 아무것도 안 함(중복 이력·알림 없음).
+   추정·자동 확인 → 지금 근거로 다시 고름(더 강한 근거면 바뀌고, 근거가 약해지면 상태를 낮춤). 수동 확인 → 덮어쓰지 않고 객관적 근거가 다른 곳을 가리킬 때만 viaConflict 표시 */
+const VIA_RANK = {'':0, old:1, guess:2, re:2, auto:3, sure:4};
+function viaSig(r){ return [...(r.mails || []).map(m => m.id), ...(r.certs || []).map(c => 'c:' + (c.declNo || c.file || ''))].sort().join(','); }
+function viaRecheck(r){
+  const c = db.clients.find(x => x.id === r.clientId);
+  if(!c || isFwd(c) || r.viaOff) return '';
+  const sig = viaSig(r); if(r.viaSig === sig) return '';
+  const first = r.viaSig == null; r.viaSig = sig;
+  const st = viaStOf(r);
+  if(first) return '';                                                      // 처음 본 기록은 근거 서명만 저장(배포 직후 일괄 변경 방지) — 다음 근거 변화부터 다시 판단
+  if(r.viaBy === 'moved') return '';                                       // 포워더 기록을 옮긴 건: 의뢰처 = 원래 기록 업체(메일과 무관)
+  const p = forwarderPick(recMailsFull(r), r.clientId);
+  if(st === 'sure'){
+    const cf = p.f && p.st === 'auto' && p.f.id !== r.via ? {id:p.f.id, why:p.why} : null;
+    if(JSON.stringify(cf) === JSON.stringify(r.viaConflict || null)) return '';
+    if(cf){ r.viaConflict = cf; addHist(r, `의뢰처 충돌: 사람이 정한 ${clientName(r.via)}와 다르게 ${clientName(cf.id)}를 가리키는 근거(${cf.why}) — 값은 그대로`); return 'conflict'; }
+    delete r.viaConflict; return '';
+  }
+  const was = `${clientName(r.via)}(${ST_LAB[st]})`;
+  if(p.f){
+    if(p.f.id === r.via && (p.st || 'guess') === r.viaSt && !r.viaCands) return '';
+    const old = r.via; r.via = p.f.id; r.viaBy = 'auto'; r.viaSt = p.st || 'guess'; r.viaWhy = p.why; delete r.viaCands;
+    if(old !== r.via) viaChanged(r, old);
+    addHist(r, `의뢰처 다시 판단: ${was} → ${clientName(r.via)}(${ST_LAB[r.viaSt]} — ${p.why})`); return 'set';
+  }
+  const ids = (p.cands || []).map(f => f.id);
+  if(ids.length > 1){ if(r.viaSt === 're' && String(r.viaCands || '') === ids.join(',')) return ''; r.viaCands = ids; r.viaSt = 're'; r.viaWhy = p.why; addHist(r, `의뢰처 다시 판단: ${was} — ${p.why}(값은 두고 재확인)`); return 'cands'; }
+  if(st === 'auto' || st === 're'){ r.viaSt = 'guess'; r.viaWhy = '근거 메일이 없어짐 — 예전 판단을 추정으로 유지'; delete r.viaCands; addHist(r, `의뢰처: ${was} → ${clientName(r.via)}(추정 — 근거 메일이 없어짐)`); return 'down'; }
+  return '';
+}
+/* 메일을 불러올 때·기록을 저장할 때: 의뢰처 채우기·다시 판단 + 청구처 정하기 */
 function routeRecords(){
   const cut = addPeriod(today(), -90, 'd');
   let n = fixRouteOnce() + autoMoveFwd();
   db.records.filter(r => recDate(r) >= cut || r.status !== '완료').forEach(r => {
     const c = db.clients.find(x => x.id === r.clientId);
-    if((!r.via || (viaStOf(r) === 're' && (r.viaCands || []).length)) && !r.viaOff && c && !isFwd(c) && (r.mails || []).length){   // 미정·재확인은 메일이 늘 때마다 다시 판단
-      const p = forwarderPick(recMailsFull(r), r.clientId), k = applyViaPick(r, p);
-      if(k === 'set'){ addHist(r, `의뢰처: ${p.f.name}(${ST_LAB[r.viaSt]} — ${p.why})`); n++; }
-      else if(k === 'cands'){ addHist(r, `의뢰처 미정: ${p.why} — 확인함에서 고르기`); n++; }
-    }
+    if(!r.via && !r.viaOff && c && !isFwd(c) && (r.mails || []).length){
+      const sig = viaSig(r);
+      if(r.viaSig !== sig){ r.viaSig = sig;
+        const p = forwarderPick(recMailsFull(r), r.clientId), k = applyViaPick(r, p);
+        if(k === 'set'){ addHist(r, `의뢰처: ${p.f.name}(${ST_LAB[r.viaSt]} — ${p.why})`); n++; }
+        else if(k === 'cands'){ addHist(r, `의뢰처 미정: ${p.why} — 확인함에서 고르기`); n++; } }
+    } else if(r.via && c && !isFwd(c) && viaRecheck(r)) n++;                // 11/22 ②: 근거가 바뀐 기록만 다시 판단
     if(resolveBillTo(r)) n++;
   });
   return n;
 }
-/* 11/21 한 번(재실행해도 같은 결과, settings.routeFix): 기존 데이터 보정 — 바꾸기 전 값은 db.routeFixLog에 남기고 되돌릴 수 있음
-   ① 의뢰처: 자동 근거(이력 '의뢰처: … (메일 주소·제목)' 또는 자동접수 기록)가 있으면 추정, 그 상태에서 후보가 여럿이면 재확인(값 유지). 사람 확정 흔적이 없고 자동 근거도 없으면 '기존'.
-   ② 청구처 manual: '화주로 옮김' 처리가 넣은 값이 확실한 것(옮기기 전 의뢰처·청구처 이력 없음, 옮긴 뒤 직접 지정·기록 수정 없음)만 추정으로, 옮긴 뒤 기록을 고친 흔적이 있으면 재확인, 그 밖의 manual은 그대로 확정.
-   ③ 청구처 pair: 근거가 된 지난 건이 확정이 아니었을 수 있으므로 다시 판단(근거 없으면 미정). */
-function fixRouteOnce(){
-  if(db.settings.routeFix) return 0;                                       // '20261121' 실행함 · 'undone' 되돌림 — 둘 다 다시 안 함
-  const log = [], cut = addPeriod(today(), -90, 'd');
-  const snap = r => ({via:r.via || '', viaBy:r.viaBy || '', viaSt:r.viaSt || '', viaCands:r.viaCands || null, viaWhy:r.viaWhy || '', billTo:r.billTo || '', billBy:r.billBy || '', billSt:r.billSt || '', billWhy:r.billWhy || '', billRef:r.billRef || null});
-  let nFix = 0, nRe = 0;
-  db.records.forEach(r => {
-    const before = snap(r), H = (r.history || []).map(h => String(h.text || '')), notes = [];
-    if(r.via && !r.viaBy){
-      const auto = H.some(t => t.startsWith(`의뢰처: ${clientName(r.via)} (메일 주소`)) || ((r.tags || []).includes('자동접수') && !H.some(t => /^의뢰처: .*직접/.test(t)));
-      r.viaBy = auto ? 'auto' : ''; r.viaSt = auto ? 'guess' : 'old';
-      if(auto && (recDate(r) >= cut || r.status !== '완료') && (r.mails || []).length){
-        const p = forwarderPick(recMailsFull(r), r.clientId), ids = (p.cands || []).map(f => f.id);
-        if(!p.f && ids.length > 1 && ids.includes(r.via)){ r.viaCands = ids; r.viaSt = 're'; r.viaWhy = `자동으로 ${clientName(r.via)}로 정했지만 ${p.why}`; notes.push(`의뢰처 재확인(후보 ${ids.map(clientName).join('·')})`); nRe++; }
-      }
-    }
-    if(r.billBy === 'manual' && !r.billSt){
-      const iMv = H.map((t, i) => t.startsWith('화주로 옮김:') ? i : -1).filter(i => i >= 0).pop();
-      if(iMv != null && r.billTo === 'via'){
-        const pre = H.slice(0, iMv).some(t => /^청구처|^의뢰처/.test(t));
-        const post = H.slice(iMv + 1).some(t => /^청구처: .*직접 지정/.test(t));
-        const edited = H.slice(iMv + 1).some(t => /→|수정/.test(t) && !/^메일|^자료|^단계|^청구처 재확인/.test(t));
-        if(!pre && !post && !edited){ setBill(r, 'via', 'move', null, 'guess', '화주로 옮길 때 자동으로 넣은 값(11/21 보정: 확정 → 추정)'); notes.push('청구처 확정 → 추정(옮길 때 자동 생성)'); nFix++; }
-        else if(!post){ r.billSt = 're'; r.billWhy = '화주로 옮길 때 넣은 값인지 사람이 정한 값인지 구분 안 됨'; notes.push('청구처 재확인(구분 불가)'); nRe++; }
-        else r.billSt = 'sure';
-      } else r.billSt = 'sure';
-    }
-    if(r.billBy === 'pair'){ const was = billLabel(r); setBill(r, '', '', null, ''); resolveBillTo(r); notes.push(`청구처 다시 판단(지난 건 추정 연쇄 차단): ${was} → ${r.billTo ? billLabel(r) + '(추정)' : '미정'}`); nFix++; }
-    if(notes.length){ log.push({id:r.id, at:nowIso(), before, after:snap(r), why:notes.join(' · ')}); addHist(r, `11/21 보정: ${notes.join(' · ')}`); }
+/* 기존 데이터 보정 (11/22 ④ 엄격판, settings.routeFix2 — 한 번만, 재실행해도 변경 없음). 바꾸기 전·후 값은 db.routeFixLog, 기록 이력에도.
+   ① 의뢰처(근거 기록 없는 예전 값): 예전 자동 지정 문구('의뢰처: X (메일 주소…')가 이력에 있을 때만 추정(그중 후보 여럿이면 재확인, 값 유지). 그 밖은 '기존'(값·상태 보존).
+   ② 청구처 manual: '화주로 옮김'이 넣은 값이라는 근거가 분명할 때만 추정 — 이력이 잘리지 않았고(40개 미만), 옮기기 전 의뢰처·청구처 이력이 없고,
+      옮긴 뒤 사람이 고친 흔적(기록 창 수정·직접 지정·수동 확인)이 없을 때. 조금이라도 불분명하면 수동 확인 그대로(확정 해제 안 함).
+   ③ 청구처 pair(지난 건 추정): 다시 판단.
+   11/21 첫 보정이 이미 돌았으면 그 결과를 이 기준으로 다시 보고, 기준에 안 맞는 보정은 '현재 값이 보정 직후 값과 같을 때만' 되돌림. */
+const FIX_KEYS = ['via', 'viaBy', 'viaSt', 'viaCands', 'viaWhy', 'billTo', 'billBy', 'billSt', 'billWhy', 'billRef'];
+const fixNorm = v => v == null || v === '' || (Array.isArray(v) && !v.length) ? null : v;   // '' · null · 없음 · 빈 목록은 같은 값
+const fixEq = (a, b) => JSON.stringify(fixNorm(a)) === JSON.stringify(fixNorm(b));
+function fixSnap(r){ const o = {}; FIX_KEYS.forEach(k => { o[k] = fixNorm(r[k]); }); return o; }
+function restoreFields(r, before, after){
+  let done = 0, skip = 0;
+  FIX_KEYS.forEach(k => {
+    if(!(k in before)) return;
+    if(fixEq(r[k], before[k])) return;
+    if(!fixEq(r[k], after[k])){ skip++; return; }                          // 보정 뒤 바뀐 값은 보호
+    const v = fixNorm(before[k]); if(v === null) delete r[k]; else r[k] = v; done++;
   });
+  return {done, skip};
+}
+const HUMAN_HIST = /^(상태|담당|업체|유형|제목|신고번호|B\/L|접수일|완료일|특이|원인|단계 수|서류 수|기한 수|수수료) .* → |진행 요약 수정|직접 지정|수동 확인|직접 고름/;
+function moveFillSure(r){                                                  // 청구처 manual이 '화주로 옮김'이 넣은 값이라는 근거가 분명한가
+  const H = (r.history || []).map(h => String(h.text || '')).filter(t => !/^11\/2[12] 보정/.test(t));
+  if((r.history || []).length >= 40) return false;                         // 이력이 잘렸을 수 있음
+  const iMv = H.map((t, i) => t.startsWith('화주로 옮김') ? i : -1).filter(i => i >= 0).pop();
+  if(iMv == null || r.billTo !== 'via') return false;
+  if(H.slice(0, iMv).some(t => /^청구처|^의뢰처/.test(t))) return false;
+  if(H.slice(iMv + 1).some(t => HUMAN_HIST.test(t))) return false;
+  return true;
+}
+function viaAutoEvidence(r){ return (r.history || []).some(h => String(h.text || '').startsWith(`의뢰처: ${clientName(r.via)} (메일 주소`)); }
+function fixRouteOnce(){
+  if(db.settings.routeFix2) return 0;
+  const log = [], cut = addPeriod(today(), -90, 'd'); let nFix = 0, nRe = 0, nBack = 0, nKeep = 0;
+  if(db.settings.routeFix === '20261121' && (db.routeFixLog || []).length){   // 11/21 첫 보정 결과를 엄격 기준으로 다시 봄
+    db.routeFixLog.forEach(x => {
+      const r = db.records.find(y => y.id === x.id); if(!r) return;
+      const b = x.before || {}, wrongBill = b.billBy === 'manual' && (x.after || {}).billSt !== 'sure' && !moveFillSure(r);
+      const wrongVia = !b.viaBy && b.via && (x.after || {}).viaBy === 'auto' && !viaAutoEvidence(r);
+      if(!wrongBill && !wrongVia) return;
+      const keys = wrongBill && wrongVia ? FIX_KEYS : wrongBill ? FIX_KEYS.filter(k => k.startsWith('bill')) : FIX_KEYS.filter(k => k.startsWith('via'));
+      const bf = {}, af = {}; keys.forEach(k => { bf[k] = fixNorm(b[k]); af[k] = fixNorm((x.after || {})[k]); });
+      const before = fixSnap(r), res = restoreFields(r, bf, af);
+      if(wrongBill && r.billBy === 'manual' && !r.billSt) r.billSt = 'sure';
+      if(wrongVia && r.via && !r.viaBy) r.viaSt = 'old';
+      if(res.done){ nBack++; log.push({id:r.id, at:nowIso(), before, after:fixSnap(r), why:'11/22 보정: 11/21 보정 중 근거가 불분명한 것을 되돌림'}); addHist(r, `11/22 보정: 11/21 보정 중 근거가 불분명한 ${wrongBill ? '청구처' : ''}${wrongBill && wrongVia ? '·' : ''}${wrongVia ? '의뢰처' : ''}를 원래 값으로${res.skip ? `(그 뒤 고친 칸 ${res.skip}개는 유지)` : ''}`); }
+      else if(res.skip) nKeep++;
+    });
+  } else if(!db.settings.routeFix){
+    db.records.forEach(r => {
+      const before = fixSnap(r), notes = [];
+      if(r.via && !r.viaBy){
+        if(viaAutoEvidence(r)){
+          r.viaBy = 'auto'; r.viaSt = 'guess';
+          if((recDate(r) >= cut || r.status !== '완료') && (r.mails || []).length){
+            const p = forwarderPick(recMailsFull(r), r.clientId), ids = (p.cands || []).map(f => f.id);
+            if(!p.f && ids.length > 1 && ids.includes(r.via)){ r.viaCands = ids; r.viaSt = 're'; r.viaWhy = `자동으로 ${clientName(r.via)}로 정했지만 ${p.why}`; notes.push(`의뢰처 재확인(후보 ${ids.map(clientName).join('·')})`); nRe++; }
+          }
+        } else r.viaSt = 'old';
+      }
+      if(r.billBy === 'manual' && !r.billSt){
+        if(moveFillSure(r)){ setBill(r, 'via', 'move', null, 'guess', '화주로 옮길 때 자동으로 넣은 값(11/22 보정: 수동 확인 → 추정)'); notes.push('청구처 수동 확인 → 추정(옮길 때 자동 생성이 분명)'); nFix++; }
+        else r.billSt = 'sure';
+      }
+      if(r.billBy === 'pair'){ const was = billLabel(r); setBill(r, '', '', null, ''); resolveBillTo(r); notes.push(`청구처 다시 판단(추정 연쇄 차단): ${was} → ${r.billTo ? billLabel(r) + '(' + ST_LAB[billStOf(r)] + ')' : '미정'}`); nFix++; }
+      if(notes.length){ log.push({id:r.id, at:nowIso(), before, after:fixSnap(r), why:notes.join(' · ')}); addHist(r, `11/22 보정: ${notes.join(' · ')}`); }
+    });
+  }
   db.routeFixLog = [...(db.routeFixLog || []), ...log].slice(-2000);
-  db.settings.routeFix = '20261121';
-  if(log.length && typeof logProc === 'function') logProc('mail', `의뢰처·청구처 보정: 보정 ${nFix}건 · 재확인 ${nRe}건 (되돌리기: 관리 › 수집 상태)`);
+  db.settings.routeFix2 = '20261122'; if(!db.settings.routeFix) db.settings.routeFix = '20261122';
+  if((nFix || nRe || nBack || nKeep) && typeof logProc === 'function') logProc('mail', `의뢰처·청구처 보정: 보정 ${nFix}건 · 재확인 ${nRe}건 · 11/21 보정 되돌림 ${nBack}건${nKeep ? ` · 그 뒤 고쳐져 유지 ${nKeep}건` : ''} (되돌리기: 관리 › 수집 상태)`);
   return log.length;
 }
+/* 보정 되돌리기 — 현재 값이 보정 직후 값과 같은 칸만 되돌림(그 뒤 사람이 고친 값은 보호). 되돌린 뒤 다시 보정하지 않음 */
 function undoRouteFix(){
-  const log = db.routeFixLog || []; let n = 0;
-  log.forEach(x => { const r = db.records.find(y => y.id === x.id); if(!r) return; Object.entries(x.before).forEach(([k, v]) => { if(v === '' || v === null) delete r[k]; else r[k] = v; }); addHist(r, '11/21 보정 되돌림'); n++; });
-  db.routeFixLog = []; db.settings.routeFix = 'undone';                     // 되돌린 뒤에는 다시 실행하지 않음(관리자가 다시 켤 때까지)
-  return n;
+  const log = db.routeFixLog || []; let n = 0, kept = 0;
+  [...log].reverse().forEach(x => { const r = db.records.find(y => y.id === x.id); if(!r) return; const res = restoreFields(r, x.before || {}, x.after || {}); if(res.done){ addHist(r, `보정 되돌림${res.skip ? `(그 뒤 고친 칸 ${res.skip}개는 유지)` : ''}`); n++; } kept += res.skip; });
+  db.routeFixLog = []; db.settings.routeFix = 'undone'; db.settings.routeFix2 = 'undone';
+  return {n, kept};
 }
 /* 기존 정리: 포워더 업체로 접수된 기록 중 제목에 다른 화주가 보이는 건 → 화주로 옮기고 의뢰처는 그 포워더 */
 /* 11/21 F2: 포워더로 접수된 기록 중 화주로 옮길 후보 — 근거별로
@@ -175,10 +253,13 @@ function fwdMoveCands(fid){
   return db.records.filter(r => r.clientId === fid).map(r => {
     const io = typeof recIO === 'function' ? recIO(r) : '', exp = io === 'E';   // 'E' 수출 · 'I' 수입 · '' 불명확
     const ok = c => c && c.id !== fid && !isFwd(c);
-    const cp = (r.certs || []).map(cd => typeof certParty === 'function' ? certParty(cd) : null).filter(Boolean);
-    if(cp.some(c => c.id === fid)) return null;                             // 필증의 수입자·수출자가 포워더 자신 → 포워더 자기 일
-    const cert = [...new Set(cp.filter(ok).map(c => c.id))].map(id => db.clients.find(c => c.id === id));   // 필증의 수입자·수출자(사업자번호) — 가장 강한 근거
-    const title = String(r.title || '').replace(/(^|[\s\[(,])C\s*\/\s*[A-Z][A-Z0-9&.'\- ]{1,40}/g, ' ');   // 수하인 표기(C/…)는 '제목의 업체명' 근거에서 뺌
+    const cm = (r.certs || []).map(cd => typeof certPartyMatch === 'function' ? certPartyMatch(cd) : null).filter(Boolean);
+    if(cm.some(x => x.c.id === fid && x.how !== 'fuzzy')) return null;      // 필증의 수입자·수출자가 포워더 자신 → 포워더 자기 일
+    const uniq = arr => [...new Set(arr.map(c => c.id))].map(id => db.clients.find(c => c.id === id));
+    const certBiz = uniq(cm.filter(x => x.how === 'biz' && ok(x.c)).map(x => x.c));    // 필증 화주 사업자번호 일치 — 자동 이동 근거
+    const certName = uniq(cm.filter(x => x.how === 'name' && ok(x.c)).map(x => x.c)); // 필증 화주 이름 일치 — 기본 선택까지만(유사 이름은 근거 아님)
+    const cert = uniq([...certBiz, ...certName]);
+    const title = typeof stripCnee === 'function' ? stripCnee(r.title) : String(r.title || '');   // 수하인 표기(C/·CNEE·수하인 등)는 '제목의 업체명' 근거에서 뺌
     const subj = [...new Set((typeof clientCands === 'function' ? clientCands(title) : []).filter(ok).map(c => c.id))].map(id => db.clients.find(c => c.id === id));
     let cn = [];
     if(io === 'I' && typeof consigneeNames === 'function'){                 // 수하인은 수입 건만(수출의 수하인 = 해외 구매자, 유형 불명확도 제외)
@@ -187,29 +268,30 @@ function fwdMoveCands(fid){
     }
     const all = [...new Set([...cert, ...subj, ...cn])];
     if(!all.length) return null;
-    const why = c => [cert.includes(c) && `필증의 ${exp ? '수출자' : '수입자'}`, subj.includes(c) && '제목의 업체명', cn.includes(c) && '수하인 표기(C/)'].filter(Boolean).join('·');
+    const why = c => [certBiz.includes(c) && `필증의 ${exp ? '수출자' : '수입자'}(사업자번호)`, certName.includes(c) && !certBiz.includes(c) && `필증의 ${exp ? '수출자' : '수입자'}(이름)`, subj.includes(c) && '제목의 업체명', cn.includes(c) && '수하인 표기'].filter(Boolean).join('·');
     const others = c => [...subj, ...cn].filter(x => x !== c).length === 0;
     const sure = cert.length === 1 ? others(cert[0])                         // 필증 화주가 하나이고 다른 업체 단서가 없으면 확실
-      : !cert.length && !!io && subj.length === 1 && (!cn.length || (cn.length === 1 && cn[0] === subj[0]));   // 유형이 분명하고 제목의 업체명이 하나
+      : !cert.length && io === 'I' && subj.length === 1 && (!cn.length || (cn.length === 1 && cn[0] === subj[0]));   // 11/22 ①: 수출은 제목 업체명만으로 기본 선택 안 함(해외 구매자일 수 있음)   // 유형이 분명하고 제목의 업체명이 하나
     const to = cert.length === 1 ? cert[0] : subj.length === 1 ? subj[0] : all.length === 1 ? all[0] : null;
-    return {r, to, cands:all, sure, cert:cert.length === 1 && sure, why:(to ? why(to) : `후보 ${all.length}곳 — 고르세요`) + (io || cert.length ? '' : ' · 업무 유형 불명확'), exp, io};
+    const autoOk = certBiz.length === 1 && others(certBiz[0]) && (!certName.length || (certName.length === 1 && certName[0] === certBiz[0]));   // 11/22 ①: 자동 이동은 필증 사업자번호로 확인된 경우만(제목 업체명만으로는 안 함)
+    return {r, to, cands:all, sure, autoOk, cert:cert.length === 1 && sure, why:(to ? why(to) : `후보 ${all.length}곳 — 고르세요`) + (io || cert.length ? '' : ' · 업무 유형 불명확'), exp, io};
   }).filter(Boolean);
 }
 /* 포워더 기록 → 화주 기록 (자동·직접 공통). 의뢰처 = 원래 기록 업체(포워더)라 객관적(자동 확인), 청구처는 비어 있으면 '포워더' 추정 */
 function moveToShipper(r, f, to, why, auto){
   const wasVia = r.via || '', wasClient = r.clientId;
-  r.clientId = to.id; r.via = f.id; r.viaBy = auto ? 'auto' : 'manual'; r.viaSt = auto ? 'auto' : 'sure'; r.viaWhy = `포워더 기록을 화주로 옮김(${auto ? '자동' : '직접'})`; delete r.viaCands;
+  r.clientId = to.id; r.via = f.id; r.viaBy = auto ? 'moved' : 'manual'; r.viaSt = auto ? 'auto' : 'sure'; r.viaWhy = `포워더 기록을 화주로 옮김(${auto ? '자동' : '직접'})`; delete r.viaCands;
   if(wasVia && wasVia !== f.id) viaChanged(r, wasVia);
   if(!r.billTo) setBill(r, 'via', 'move', null, 'guess');                  // F3: 추정으로만
   if(!r.assignee && typeof clientAssignee === 'function') r.assignee = clientAssignee(to.id) || '';
   r.updatedAt = nowIso();
   addHist(r, `화주로 옮김${auto ? '(자동)' : ''}: ${clientName(wasClient)} → ${to.name} (근거: ${why}, 의뢰처 ${f.name}, 청구처 ${billLabel(r)} ${ST_LAB[billStOf(r)]})`);
 }
-/* F2 자동: 근거가 분명한 건(필증 화주 하나, 또는 유형이 분명하고 제목의 업체명 하나)은 승인 없이 옮김 — 진행 중·최근 90일, 사람이 옮긴 적 없는 기록 */
+/* F2 자동(11/22 ①): 필증의 수입자·수출자가 사업자번호로 확인된 업체 하나일 때만 승인 없이 옮김(제목 업체명·이름·유사 이름은 화면 '화주로 옮기기'에서) — 진행 중·최근 90일, 사람이 옮긴 적 없는 기록 */
 function autoMoveFwd(){
   const cut = addPeriod(today(), -90, 'd'); let n = 0; const done = [];
   fwdClients().forEach(f => fwdMoveCands(f.id).forEach(x => {
-    if(!x.sure || !x.to || (x.r.status === '완료' && recDate(x.r) < cut)) return;
+    if(!x.autoOk || !x.to || (x.r.status === '완료' && recDate(x.r) < cut)) return;
     if((x.r.history || []).some(h => /^업체:|업체 .* → |화주로 옮김/.test(String(h.text || '')))) return;   // 사람이 업체를 바꾼 기록은 건드리지 않음
     moveToShipper(x.r, f, x.to, x.why, true); n++; done.push(`${x.r.caseNo || x.r.title} ${f.name} → ${x.to.name}`);
   }));
@@ -222,7 +304,7 @@ function openFwdMove(fid){
   const row = (x, i) => `<tr><td><input type="checkbox" name="mv" value="${i}"${x.sure ? ' checked' : ''}></td><td>${esc(x.r.caseNo || '')} ${esc(x.r.title)}<div class="hint">${x.io === 'E' ? '수출' : x.io === 'I' ? '수입' : '유형 불명확'} · ${esc(recDate(x.r))}</div></td>
     <td><select name="to${i}">${opts([...(x.to ? [] : [['', '— 화주 고르기 —']]), ...x.cands.map(c => [c.id, c.name])], x.to ? x.to.id : '')}</select><div class="hint">근거: ${esc(x.why)}${x.sure ? '' : ' — <b>확인 필요</b>(기본 선택 안 함)'}</div></td></tr>`;
   openDialog({title:`${f.name} 기록을 화주로 옮기기 — ${list.length}건`, saveLabel:'선택한 기록 옮기기',
-    body:`<p class="hint">‘${esc(f.name)}’(포워더)로 접수된 기록 중 화주가 보이는 건입니다. <b>근거가 분명한 건(필증 화주 하나, 유형이 분명하고 제목의 업체명 하나)은 메일을 불러올 때 자동으로 옮겨지고</b>, 여기 남은 것은 그 밖의 건입니다. 기본 선택은 근거가 분명한 것만, 수하인 표기(C/)로만 찾은 건·후보가 여럿인 건은 고른 뒤 체크하세요(수하인 표기는 수입 건에서만 참고 — 수출의 수하인은 해외 구매자, 유형이 불명확한 건은 기본 선택 안 함). 옮기면 기록 업체는 화주로, <b>의뢰처는 ${esc(f.name)}</b>로 남습니다. 청구처가 비어 있으면 '포워더(추정)'로 두고, 확정은 기록에서 직접 고를 때만입니다.</p>
+    body:`<p class="hint">‘${esc(f.name)}’(포워더)로 접수된 기록 중 화주가 보이는 건입니다. <b>필증의 수입자·수출자가 사업자번호로 확인된 건은 메일을 불러올 때 자동으로 옮겨지고</b>, 여기 남은 것은 그 밖의 건입니다. 기본 선택은 근거가 분명한 것만, 수하인 표기(C/)로만 찾은 건·후보가 여럿인 건은 고른 뒤 체크하세요(수하인 표기는 수입 건에서만 참고 — 수출의 수하인은 해외 구매자, 유형이 불명확한 건은 기본 선택 안 함). 옮기면 기록 업체는 화주로, <b>의뢰처는 ${esc(f.name)}</b>로 남습니다. 청구처가 비어 있으면 '포워더(추정)'로 두고, 확정은 기록에서 직접 고를 때만입니다.</p>
       ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th></th><th>기록</th><th>옮길 화주</th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>` : '<p class="empty">옮길 후보가 없습니다.</p>'}`,
     onSave(fd){
       const picks = fd.getAll('mv').map(Number); let n = 0, skip = 0;
@@ -291,7 +373,7 @@ document.addEventListener('click', e => {
   e.preventDefault();
   const [rid, fid] = b.dataset.viaSet.split('|'), r = db.records.find(x => x.id === rid); if(!r) return;
   const was = r.via || '', cands = (r.viaCands || []).map(clientName).join('·');
-  r.via = fid || ''; r.viaOff = !fid; r.viaBy = 'manual'; r.viaSt = fid ? 'sure' : ''; r.viaWhy = fid ? `직접 지정(후보: ${cands})` : '직거래로 지정'; delete r.viaCands;
+  r.via = fid || ''; r.viaOff = !fid; r.viaBy = 'manual'; r.viaSt = fid ? 'sure' : ''; r.viaWhy = fid ? `직접 지정(후보: ${cands})` : '직거래로 지정'; delete r.viaCands; delete r.viaConflict; r.viaSig = viaSig(r);
   viaChanged(r, was);
   if(fid && !r.billTo) resolveBillTo(r);
   addHist(r, fid ? `의뢰처: ${was ? clientName(was) + '(' + (was === fid ? '추정' : '자동') + ')' : '미정'} → ${clientName(fid)}(수동 확인 — 직접 지정)` : `의뢰처: ${was ? clientName(was) : '미정'} → 없음(직거래, 수동 확인)`);
@@ -309,10 +391,10 @@ function routeTagHTML(r){
 /* 11/21 보정 되돌리기(관리 › 수집 상태) */
 function routeFixHTML(){
   const log = db.routeFixLog || []; if(!log.length) return '';
-  return `<p class="hint">11/21 의뢰처·청구처 보정 ${log.length}건(${esc(log[0].at.slice(0, 10))}) — 바꾸기 전 값 보관 중 ${isAdmin() ? '<button class="mini" data-route-undo>보정 되돌리기</button>' : ''}</p>`;
+  return `<p class="hint">의뢰처·청구처 보정 ${log.length}건(${esc(log[0].at.slice(0, 10))}) — 바꾸기 전 값 보관 중 ${isAdmin() ? '<button class="mini" data-route-undo>보정 되돌리기</button>' : ''}</p>`;
 }
 document.addEventListener('click', e => {
   const b = db && e.target.closest('[data-route-undo]'); if(!b || !isAdmin()) return;
-  if(!confirm('11/21 의뢰처·청구처 보정을 모두 되돌릴까요? 보정 전 값으로 돌아갑니다(그 뒤 직접 고른 값도 보정 전 값으로 바뀜).')) return;
-  const n = undoRouteFix(); if(typeof logProc === 'function') logProc('move', `의뢰처·청구처 보정 되돌림 ${n}건`); commit(); toast(`${n}건을 되돌렸습니다.`);
+  if(!confirm('의뢰처·청구처 보정을 되돌릴까요? 보정 직후 그대로인 칸만 보정 전 값으로 돌아가고, 그 뒤 직접 고친 값은 그대로 둡니다.')) return;
+  const u = undoRouteFix(); if(typeof logProc === 'function') logProc('move', `의뢰처·청구처 보정 되돌림 ${u.n}건${u.kept ? ` (그 뒤 고친 칸 ${u.kept}개 유지)` : ''}`); commit(); toast(`${u.n}건을 되돌렸습니다.${u.kept ? ` 그 뒤 고친 칸 ${u.kept}개는 그대로 두었습니다.` : ''}`);
 });
