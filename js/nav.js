@@ -105,7 +105,7 @@ function procLogHTML(){
 /* 11/15: 확인함 처리 뜻 통일 — 확정(근거 보고 반영) · 연결 변경(기록·업체 바꿈) · 나중에(날짜까지 숨김) · 업무 아님(목록에서 빼되 '나중에·제외' 탭에서 복구)
    종류별 탭 + 20건 페이지. 행마다 key가 있어 '나중에'를 기억한다(db.checkLater). */
 const CHK_PAGE = 20;
-const CHK_BUNDLES = [['link', '메일·자료 연결', ['mail', 'nocl', 'amb', 'pend', 'cert', 'recdup', 'viachk']], ['stage', '업무 단계', ['collchk', 'ledger', 'typechk', 'procpick', 'pver', 'doneblk', 'billtbd']], ['money', '정산·관세', ['stlduty', 'stlun']], ['etc', '알림·기타', []]];   // 11/20
+const CHK_BUNDLES = [['link', '메일·자료 연결', ['mail', 'nocl', 'amb', 'pend', 'cert', 'recdup', 'viachk']], ['stage', '업무 단계', ['collchk', 'ledger', 'typechk', 'procpick', 'pver', 'doneblk', 'billtbd']], ['money', '정산·관세', ['stlduty', 'stlun']], ['ask', '문의 회신', ['rvdraft']], ['etc', '알림·기타', []]];   // 11/20
 function chkBundleOf(k){ if(k === 'off') return 'off'; const b = CHK_BUNDLES.find(x => x[2].includes(k)); return b ? b[0] : 'etc'; }
 let checkTab = '', checkPage = 0;
 const BTN = {
@@ -156,6 +156,11 @@ function checkGroups(){
     const lab = r => `${r.caseNo ? r.caseNo + ' ' : ''}${r.title}`.slice(0, 50) + ` (${r.status}, ${recDate(r)})`;
     if(rd.length) g.push({k:'recdup', s:'중복 기록', title:'같은 신고번호·B/L 기록', why:'두 PC·Drive 합치기·묶음 필증 등으로 한 건이 두 기록이 됐을 수 있습니다 — 합치면 메일·자료·단계가 한 기록에 모입니다', rows:rd.map(x => { const [k, o] = recKeepFirst(x.a, x.b) <= 0 ? [x.a, x.b] : [x.b, x.a], key = 'rdup:' + dupPairKey(k.id, o.id);
       return {key, t1:`${clientName(k.clientId)} · ${x.why}`, t2:`남김: ${lab(k)} ← ${lab(o)}`, lvl:x.lvl === 3 ? 'chk' : 'ref', acts:BTN.ok(`data-rdup-merge="${esc(k.id)}|${esc(o.id)}"`, '합치기') + BTN.link(`data-rdup-swap="${esc(o.id)}|${esc(k.id)}" title="반대쪽을 남기고 합치기"`, '반대로') + BTN.link(`data-rdup-no="${esc(k.id)}|${esc(o.id)}"`, '다른 건') + BTN.later(key)}; })});
+  }
+  if(typeof rvCheckRows === 'function'){                                    // 11/22 e: 검토 문의 — 자동 1차 초안(규칙 기반), 우리가 답장을 보내면 저절로 빠짐
+    const rr = rvCheckRows();
+    if(rr.length) g.push({k:'rvdraft', s:'문의 답변 초안', title:'문의 답변 초안 — HS·요건·FTA·통관 문의', why:'자동 처리 PC가 품목 DB·UNI-PASS 조회로 1차 초안을 만들어 둡니다(AI 아님). 확인·수정 후 회신하면 저절로 빠집니다. 판단이 필요하면 창 안의 검토 요청문을 Claude 앱에 붙여 넣으세요',
+      rows:rr.map(x => ({...x.row, acts:BTN.ok(`data-rv="${esc(x.t.key)}"`, x.rv ? '초안 보기' : '초안 만들기') + BTN.later(x.row.key) + `<button class="mini ghosty" data-rv-skip="${esc(x.t.key)}" title="회신할 필요가 없는 문의로 뺍니다. 이 대화에 새 메일이 오면 다시 봅니다">답변 불필요</button>`}))});
   }
   { const db2 = db.records.filter(r => r.status !== '완료' && r.doneBlock && ((r.doneBlock.ks || []).some(k => k !== 'duty') || (r.doneBlock.due && r.doneBlock.due < today())));   // 11/22 b: 관세 납부만 남은 건은 UNI-PASS·정산서로 저절로 풀리므로 기한이 지났을 때만   // 11/22 ③: 통관·청구는 확인됐는데 필수 업무가 남아 자동 종결을 멈춘 건(새 근거가 오면 저절로 풀림)
     if(db2.length) g.push({k:'doneblk', s:'종결 대기', title:'종결 대기 — 통관·청구는 확인, 필수 업무 남음', why:'결과(필증) 전달·물류 후속·회신 대기·관세 납부가 확인되면 저절로 완료됩니다(관세 납부만 남은 건은 납부기한이 지났을 때만 보임). 다른 경로로 처리했으면 아래 버튼으로 근거를 남기세요', rows:db2.map(r => ({key:'done:' + r.id, t1:`${r.caseNo || ''} ${clientName(r.clientId)} · ${r.title}`.slice(0, 90), t2:r.doneBlock.why, lvl:'chk',

@@ -1017,7 +1017,8 @@ async function loadMail0(manual){
     const n = autoAttachMails(), made = autoIntake(), cs = certStages(), ev = evalStages(), cu = typeof applyCautions === 'function' ? applyCautions() : 0;
     const rt = typeof routeRecords === 'function' ? routeRecords() : 0;      // 의뢰처·청구처 (11/14 P2)
     if(fx || dc || pm.cl || pm.rec || dd || sa.kw || sa.cc || sa.rec || ft.n || ft.chk || n || made.length || (made.linked || []).length || cs || ev.n || ev.done || ev.ck || cu || rt){ pruneThreads(); commit(); }
-    if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
+    if(made.length){ setTimeout(() => refreshCustoms(true), 800); renderSidebar(); }
+    if(typeof rvAutoRun === 'function') setTimeout(() => rvAutoRun(), 6000);   // 11/22 e: 검토 문의 자동 1차 초안(규칙 기반, 자동 처리 PC·직접 불러올 때)                     // 새로 접수한 건은 UNI-PASS로 수리일·적재기한 바로 확인
     const ln = (made.linked || []).length;
     if(fx || n || made.length || ln || cs || ev.done || cu){ const tmsg = [fx && `서명 이미지 번호로 잘못 붙은 메일을 ${fx}건의 기록에서 뗐습니다(확인 알림)`, n && `customs@ 메일 ${n}통을 기존 기록에 붙였습니다`, made.length && `메일로 ${made.length}건을 자동 접수했습니다(진행 중 업무에서 확인)`, ln && `B/L이 같은 기존 기록 ${ln}건에 메일을 붙였습니다`, cs && `필증 송부로 ${cs}건의 단계를 반영했습니다`, ev.done && `통관·정산이 확인된 ${ev.done}건을 자동 완료했습니다`, cu && `의뢰 메일의 신고 유의사항 ${cu}건을 체크리스트에 넣었습니다`].filter(Boolean).join(' · '); logProc('mail', tmsg);
       toast('메일 자동 처리: ' + [made.length && `접수 ${made.length}`, (n + ln) && `연결 ${n + ln}`, cs && `단계 ${cs}`, ev.done && `완료 ${ev.done}`, cu && `유의사항 ${cu}`, fx && `잘못 붙은 메일 정리 ${fx}`].filter(Boolean).join(' · ') + ' — 자세한 내용은 관리 › 처리 기록'); }   // 11/20: 토스트는 한 줄, 문장은 처리 기록에
