@@ -202,6 +202,7 @@ function setStage(r, k, date, by, lv, src){
     if(r.stage[k + 'Lv'] !== 'chk' || lv !== 'ok') return false;
     delete r.stage[k + 'Lv']; delete r.stage[k + 'Re'];
     if(/^UNI-PASS/.test(by) && date) r.stage[k] = String(date).slice(0, 10);
+    else if(src && src.est) r.stage[k + 'Est'] = today();            // 11/22 b: 확정 근거는 왔지만 실제 날짜가 없으면 '날짜 미확인'
     r.stage[k + 'By'] = `${r.stage[k + 'By'] || ''} → ${by}`;
     addHist(r, `${stageName(r, k)} 확인됨 (${by})`);
     r.updatedAt = nowIso();
@@ -226,7 +227,7 @@ function stageHTML(r){
     if(st.accept) out.push(btn('accept', '수리완료'));
     if(st.customs) out.push(btn('customs', '선적완료'));
     else if(st.accept || u.accepted) out.push(`<span class="stg">선적 전${ld && !ld.done ? ' · 적재기한 ' + esc(ld.due.slice(5)) : ''}</span>`);
-  } else if(st.customs) out.push(btn('customs', '통관완료'));
+  } else if(st.customs){ out.push(btn('customs', '통관완료')); if(u.paid === false && dutyNeedsPay(r) && (r.deadlines || []).some(x => x.kind === '관세 납부기한' && !x.done)) out.push('<span class="stg">관세 납부 확인 전</span>'); }
   else if(u.cleared && !u.paid && !u.released) out.push('<span class="stg">수리 · 납부 확인 전</span>');
   if(st.settle) out.push(btn('settle', '청구 완료'));
   const pc = payChipHTML(r); if(pc) out.push(pc);
@@ -265,6 +266,7 @@ function stageActsHTML(r){
    필수: (공통) 통관(수입 수리 / 수출 선적) 확인 + 청구 완료(월 정산 업체는 월정산 인계) — 둘 다 '확인 필요'(chk)가 아니어야 함
          (공통) 결과 전달 — 필증 송부 메일, 체크리스트 '필증 송부' 완료·해당 없음, 또는 직접 '전달함'(업체 설정 '결과 전달 별도'면 제외)
          (수출 물류 포함 범위) 물류 후속 체크 항목 완료·해당 없음
+         (수입) 관세 납부기한이 열려 있음 — UNI-PASS 납부 확인·정산서 영수일로 저절로 풀림(기한 전에는 확인함에 올리지 않음)
          (공통) 해소 근거 없는 대기 — 상대 회신 메일이 없고 수금 대기가 아닌 것
    참고: 체크리스트의 나머지 항목, 참고 서류, 청구처·의뢰처 확인, 수금(입금) 상태는 종결을 막지 않음. */
 const PAY_WAIT = /입금|수금|결제|송금|대금|payment/i;
@@ -278,6 +280,8 @@ function doneBlockers(r){
     const lo = ck.filter(x => open(x) && typeof LOGI_RE !== 'undefined' && LOGI_RE.test(x.text));
     if(lo.length) out.push({k:'logi', t:`물류 후속 ${lo.length}개 남음`});
   }
+  const dd = isImp(r) && (r.deadlines || []).filter(x => x.kind === '관세 납부기한' && !x.done).sort((a, b) => String(a.due).localeCompare(String(b.due)))[0];
+  if(dd) out.push({k:'duty', t:`관세 납부 확인 전(기한 ${dd.due})`, due:dd.due});   // 11/22 b: UNI-PASS 납부 확인·정산서 영수일로 저절로 풀림
   const w = r.wait;
   if(w && w.who && !PAY_WAIT.test(`${w.note || ''} ${w.who}`) && !(typeof waitReply === 'function' && waitReply(r))) out.push({k:'wait', t:`대기 중(${(typeof WAIT_PARTY !== 'undefined' && WAIT_PARTY[w.who]) || w.who})${w.note ? ' — ' + w.note : ''}`});
   return out;
@@ -289,7 +293,7 @@ function autoComplete(r, why){
   if(!st.customs || !(st.settle || settleMode(r) === 'monthly')) return false;
   if(st.customsLv === 'chk' || (st.settle && st.settleLv === 'chk')) return false;   // 메일 글만 근거인 통관·선적·청구는 확인 뒤에 완료(11/22: 청구 chk도)
   const bl = doneBlockers(r), key = bl.map(x => x.t).join(' · ');
-  if(bl.length){ if((r.doneBlock || {}).why !== key){ r.doneBlock = {why:key, ks:bl.map(x => x.k), at:today()}; r.updatedAt = nowIso(); } return false; }   // 필수 항목이 남으면 종결 대기(확인함 '종결 대기')
+  if(bl.length){ if((r.doneBlock || {}).why !== key){ r.doneBlock = {why:key, ks:bl.map(x => x.k), at:today(), ...(bl.find(x => x.due) ? {due:bl.find(x => x.due).due} : {})}; r.updatedAt = nowIso(); } return false; }   // 필수 항목이 남으면 종결 대기(확인함 '종결 대기')
   delete r.doneBlock;
   r.status = '완료';
   r.date = [st.customs, st.settle].filter(Boolean).sort().slice(-1)[0];
@@ -451,26 +455,41 @@ function applySuggestion(r, key){
 /* ---------- UNI-PASS로 통관 단계 확인 (진행 중 수입·수출 건, 12시간마다, 한 번에 15건) ---------- */
 async function uni(api, params){ return collectApi({uni:api, ...params}); }
 const pick = (j, k) => { if(!j) return ''; if(j.info && j.info[k]) return j.info[k]; const it = (j.items || []).find(x => x[k]); return it ? it[k] : ''; };
-async function checkImport(r, u){
+/* 11/22 b: 화물 진행 조회 — B/L(Master·House) → 없거나 결과가 없으면 필증의 화물관리번호로. 결과와 조회 방법을 돌려줌 */
+async function uniCargo(r){
+  let j = null, how = '';
   if(r.bl){
-    let j = null;
     for(const blType of ['M', 'H']){
-      try{ j = await collectApi({bl:r.bl, blType, year:(r.startDate || today()).slice(0, 4)}); if(j && (j.main || []).length) break; }
-      catch(e){ j = {err:e.message}; if(/인증키|연결하지/.test(e.message)) break; }
+      try{ j = await collectApi({bl:r.bl, blType, year:(r.startDate || today()).slice(0, 4)}); if(j && (j.main || []).length){ how = 'bl'; break; } }
+      catch(e){ j = {err:e.message}; if(/인증키|연결하지/.test(e.message)) return {j, how}; }
     }
+  }
+  const cg = String(r.cargoNo || '').replace(/[^0-9A-Za-z]/g, '');
+  if(!how && cg){
+    try{ const k = await collectApi({cargMtNo:cg}); if(k && (k.main || []).length){ j = k; how = 'cargo'; } else if(!j) j = k; }
+    catch(e){ if(!j || !r.bl) j = {err:e.message}; }
+  }
+  return {j, how};
+}
+async function checkImport(r, u){
+  if(r.bl || r.cargoNo){
+    const {j, how} = await uniCargo(r);
     if(j && !j.err && (j.main || []).length){
       const m = j.main[0], det = (j.details || []).slice().sort((a, b) => String(a.prcsDttm || '').localeCompare(String(b.prcsDttm || '')));
       const last = det[det.length - 1] || {};
       const all = det.map(x => x.cargTrcnRelaBsopTpcd || '').join(' ') + ' ' + (m.csclPrgsStts || '') + ' ' + (m.prgsStts || '');
       const dcl = det.slice().reverse().find(x => x.dclrNo && /수입신고/.test(x.cargTrcnRelaBsopTpcd || ''));
       Object.assign(u, {stts:m.prgsStts || '', cscl:m.csclPrgsStts || '', last:last.cargTrcnRelaBsopTpcd || '', lastAt:last.prcsDttm || m.prcsDttm || '',
-        cleared:/수입신고수리|수리/.test(all), released:/반출신고/.test(all), dclrNo:dcl ? dcl.dclrNo : (u.dclrNo || '')});
+        cleared:/수입신고수리|수리/.test(all), released:/반출신고/.test(all), dclrNo:dcl ? dcl.dclrNo : (u.dclrNo || ''), by:how});
       const rel = det.find(x => /반출신고/.test(x.cargTrcnRelaBsopTpcd || ''));
       if(rel) u.releasedAt = fmtYmd(rel.prcsDttm);
       const clr = det.find(x => /수입신고수리/.test(x.cargTrcnRelaBsopTpcd || ''));
       if(clr) u.clearedAt = fmtYmd(clr.prcsDttm);
       const inn = det.slice().reverse().find(x => x.shedSgn && /반입/.test(x.cargTrcnRelaBsopTpcd || ''));
       if(inn){ u.shedSgn = inn.shedSgn; u.shedNm = inn.shedNm || ''; u.shedIn = fmtYmd(inn.rlbrDttm || inn.prcsDttm); }
+      if(!r.cargoNo && m.cargMtNo){ r.cargoNo = m.cargMtNo; }                        // 관세청 값
+      const b = String(m.hblNo || m.mblNo || '').trim();
+      if(how === 'cargo' && !r.bl && b){ r.bl = b; addHist(r, `B/L ${b} 채움 (UNI-PASS 화물관리번호 조회)`); }
     } else if(j && j.err) u.err = j.err;
   }
   if(!r.refNo && u.dclrNo) r.refNo = u.dclrNo;                         // 신고번호는 관세청 값이므로 바로 넣음
@@ -504,7 +523,12 @@ async function checkImport(r, u){
   if(u.clearedAt && u.paid === false && dutyNeedsPay(r) && !r.deadlines.some(x => x.kind === '관세 납부기한'))                 // 수리 후 미납이면 납부기한(수리일 + 15일), 납부 확인되면 처리 표시
     r.deadlines.push({id:uid(), kind:'관세 납부기한', base:u.clearedAt, due:dutyDue(r, u.clearedAt), done:false, auto:true, ...(dutyNote(r) ? {note:dutyNote(r)} : {})});
   if(u.paid) r.deadlines.filter(x => x.kind === '관세 납부기한' && x.auto).forEach(x => x.done = true);
-  if(u.cleared && (u.paid || u.released || !dutyNeedsPay(r))) setStage(r, 'customs', u.paidAt || u.releasedAt || u.clearedAt || '', `UNI-PASS: 수입신고수리${u.paid ? ', 납부 확인' : !dutyNeedsPay(r) ? ', 납부할 세액 없음(부가세 납부유예·관세 0)' : ''}${u.released ? ', 반출신고' : ''}${u.paidAt || u.releasedAt || u.clearedAt ? '' : ' (날짜 미확인)'}`, 'ok', u.paidAt || u.releasedAt || u.clearedAt ? null : {est:true});   // 11/16: 날짜 없으면 오늘을 실제 날짜로 넣지 않음
+  /* 11/22 b: 수입 통관 단계 = UNI-PASS 수입신고수리(수리일). 관세 납부는 단계와 따로 '관세 납부기한'으로 관리하고, 납부 확인 전이면 종결만 대기(doneBlockers) */
+  if(u.cleared){
+    const dt = u.clearedAt || u.releasedAt || u.paidAt || '';
+    const pay = u.paid ? ', 납부 확인' : !dutyNeedsPay(r) ? ', 납부할 세액 없음(부가세 납부유예·관세 0)' : u.paid === false ? ', 관세 납부 확인 전(납부기한으로 관리)' : '';
+    setStage(r, 'customs', dt, `UNI-PASS: 수입신고수리${u.by === 'cargo' ? '(화물관리번호 조회)' : ''}${pay}${u.released ? ', 반출신고' : ''}${dt ? '' : ' (날짜 미확인)'}`, 'ok', dt ? null : {est:true});
+  }
 }
 async function checkExport(r, u){
   const decl = kDecl(r.refNo);
@@ -571,7 +595,7 @@ async function refreshCustoms0(force){
   const cfg = db.settings.mail || {};
   if(!cfg.endpoint || !cfg.token) return;
   const cutoff = new Date(Date.now() - 12 * 3600e3).toISOString();
-  const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && recIO(r) && (r.bl || r.refNo || r.mdfy || r.reqApreNo || r.reqRqstNo)
+  const list = db.records.filter(r => r.status !== '완료' && r.status !== '보류' && recIO(r) && (r.bl || r.cargoNo || r.refNo || r.mdfy || r.reqApreNo || r.reqRqstNo)
     && (force || !r.unipass || (r.unipass.at || '') < cutoff))
     .sort((a, b) => ((a.unipass || {}).at || '') < ((b.unipass || {}).at || '') ? -1 : 1).slice(0, 15);   // 한 번도 확인 안 한 기록(새로 접수한 건)부터 15건씩
   for(const r of list){

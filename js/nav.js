@@ -139,7 +139,7 @@ function checkGroups(){
   const isColl = (r, k) => /^자동 수집/.test(String((r.stage || {})[k + 'By'] || ''));
   const chkAll = db.records.filter(r => chkK(r)), chk = chkAll.filter(r => !isColl(r, chkK(r))), coll = chkAll.filter(r => isColl(r, chkK(r)));
   if(coll.length) g.push({k:'collchk', s:'UNI-PASS 확인 대기', title:'폴더 자료로 생긴 기록 — UNI-PASS·필증 확인 대기', why:'자료를 올린 날로 단계를 임시 표시했습니다. UNI-PASS 조회(12시간마다)나 필증 읽기로 실제 날짜가 확인되면 저절로 빠집니다', rows:coll.map(r => { const k = chkK(r);
-    return {key:`stage:${r.id}|${k}`, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} (자료 올린 날)`, lvl:'ref',
+    return {key:`stage:${r.id}|${k}`, t1:`${r.caseNo || ''} ${r.title}`, t2:`${clientName(r.clientId)} · ${stageName(r, k)}? ${(r.stage || {})[k]} (자료 올린 날)${k === 'customs' && !r.bl && !r.cargoNo ? ' · B/L·화물관리번호 없음 — 필증 읽기로 채워지면 조회' : ''}${(r.unipass || {}).err ? ' · 조회 오류: ' + String(r.unipass.err).slice(0, 40) : ''}`, lvl:'ref',
       acts:BTN.ok(`data-stage-ok="${esc(r.id)}|${k}"`) + BTN.link(`data-run-uni`, 'UNI-PASS 지금 확인') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later(`stage:${r.id}|${k}`)}; })});
   const led = openAlerts().filter(a => a.kind === 'ledger');
   if(chk.length || led.length) g.push({k:'ledger', s:'단계 근거 확인', title:'근거 확인이 필요한 단계 · UNI-PASS와 다름', why:'필증 파일 없이 글로만 “필증 송부”한 메일, 근거 메일·자료가 빠진 단계 — UNI-PASS나 필증으로 확인', rows:[
@@ -157,8 +157,8 @@ function checkGroups(){
     if(rd.length) g.push({k:'recdup', s:'중복 기록', title:'같은 신고번호·B/L 기록', why:'두 PC·Drive 합치기·묶음 필증 등으로 한 건이 두 기록이 됐을 수 있습니다 — 합치면 메일·자료·단계가 한 기록에 모입니다', rows:rd.map(x => { const [k, o] = recKeepFirst(x.a, x.b) <= 0 ? [x.a, x.b] : [x.b, x.a], key = 'rdup:' + dupPairKey(k.id, o.id);
       return {key, t1:`${clientName(k.clientId)} · ${x.why}`, t2:`남김: ${lab(k)} ← ${lab(o)}`, lvl:x.lvl === 3 ? 'chk' : 'ref', acts:BTN.ok(`data-rdup-merge="${esc(k.id)}|${esc(o.id)}"`, '합치기') + BTN.link(`data-rdup-swap="${esc(o.id)}|${esc(k.id)}" title="반대쪽을 남기고 합치기"`, '반대로') + BTN.link(`data-rdup-no="${esc(k.id)}|${esc(o.id)}"`, '다른 건') + BTN.later(key)}; })});
   }
-  { const db2 = db.records.filter(r => r.status !== '완료' && r.doneBlock);   // 11/22 ③: 통관·청구는 확인됐는데 필수 업무가 남아 자동 종결을 멈춘 건(새 근거가 오면 저절로 풀림)
-    if(db2.length) g.push({k:'doneblk', s:'종결 대기', title:'종결 대기 — 통관·청구는 확인, 필수 업무 남음', why:'결과(필증) 전달·물류 후속·회신 대기가 확인되면 저절로 완료됩니다. 다른 경로로 처리했으면 아래 버튼으로 근거를 남기세요', rows:db2.map(r => ({key:'done:' + r.id, t1:`${r.caseNo || ''} ${clientName(r.clientId)} · ${r.title}`.slice(0, 90), t2:r.doneBlock.why, lvl:'chk',
+  { const db2 = db.records.filter(r => r.status !== '완료' && r.doneBlock && ((r.doneBlock.ks || []).some(k => k !== 'duty') || (r.doneBlock.due && r.doneBlock.due < today())));   // 11/22 b: 관세 납부만 남은 건은 UNI-PASS·정산서로 저절로 풀리므로 기한이 지났을 때만   // 11/22 ③: 통관·청구는 확인됐는데 필수 업무가 남아 자동 종결을 멈춘 건(새 근거가 오면 저절로 풀림)
+    if(db2.length) g.push({k:'doneblk', s:'종결 대기', title:'종결 대기 — 통관·청구는 확인, 필수 업무 남음', why:'결과(필증) 전달·물류 후속·회신 대기·관세 납부가 확인되면 저절로 완료됩니다(관세 납부만 남은 건은 납부기한이 지났을 때만 보임). 다른 경로로 처리했으면 아래 버튼으로 근거를 남기세요', rows:db2.map(r => ({key:'done:' + r.id, t1:`${r.caseNo || ''} ${clientName(r.clientId)} · ${r.title}`.slice(0, 90), t2:r.doneBlock.why, lvl:'chk',
       acts:((r.doneBlock.ks || []).includes('deliv') ? BTN.ok(`data-deliv-set="${esc(r.id)}"`, '결과 전달함') + BTN.link(`data-deliv-skip="${esc(r.clientId)}"`, '이 업체는 결과 전달 별도') : '') + ((r.doneBlock.ks || []).includes('wait') ? BTN.link(`data-cs-clear="${esc(r.id)}"`, '대기 해제') : '') + BTN.link(`data-edit-rec="${esc(r.id)}"`, '기록 열기') + BTN.later('done:' + r.id)}))}); }
   if(typeof resolveBillTo === 'function'){                                 // 11/14 P2: 포워더 의뢰 건 청구처 미정 — 11/21: '옮길 때 넣은 추정'도
     const cut = addPeriod(today(), -60, 'd');
